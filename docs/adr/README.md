@@ -22,6 +22,7 @@ otherwise.
 | [0009](0009-adoption-vs-fork.md) | Adoption vs fork | Proposed |
 | [0010](0010-one-lifecycle-owner-per-resource.md) | One lifecycle owner per resource | Proposed |
 | [0011](0011-first-integration-experiment.md) | First integration experiment + state interpretations | Accepted (provisional) |
+| [0012](0012-adoption-decision-occ.md) | Adopt OCC or lighter route | Draft (evidence missing) |
 
 ADR-0006..0008 numbers are not assigned by the spec; they are used here for decisions the spec lists
 in §26/§31 without a number.
