@@ -76,7 +76,7 @@ describe("event ingestion compatibility (§14)", () => {
 describe("capability manifest (§16, §33)", () => {
   const caps = { structured_events: true, permission_callbacks: true, follow_up: "queued", cancel: "native_then_process_stop",
     recovery: "restart_from_artifacts", usage: "partial", concurrent_turns: false, secure_auth_handoff: false } as const;
-  const m: CapabilityManifest = { adapter: "example@1.0", runtime: "pinned-version", protocol: "negotiated-and-pinned", tier: "B", capabilities: caps, conformance_report_ref: "r" };
+  const m: CapabilityManifest = { adapter: "example@1.0", runtime: "pinned-version", protocol: "negotiated-and-pinned", tier: "B", isolation_scope: "per_task", capabilities: caps, conformance_report_ref: "r" };
   it("illustrative manifest from §33 is Tier B and schema-valid", () => {
     expect(deriveTier(caps)).toBe("B");
     expect(manifestProblems(m)).toEqual([]);
@@ -84,6 +84,13 @@ describe("capability manifest (§16, §33)", () => {
   });
   it("over-declared tier and missing conformance report are flagged", () => {
     expect(manifestProblems({ ...m, tier: "A", conformance_report_ref: null })).toHaveLength(2);
+  });
+  it("OCE dedicated Codex manifest (documented, unverified) is flagged for shared isolation and no report", () => {
+    const oce: CapabilityManifest = { adapter: "oce-codex@0", runtime: "openclaw@90d30a1/codex@0.163.0-alpha.2", protocol: "openclaw-gateway-ws",
+      tier: "B", isolation_scope: "per_agent_revision", conformance_report_ref: null,
+      capabilities: { ...caps, recovery: "restart_from_artifacts", native_resume_after_gateway_restart: false } };
+    expect(v("capability-manifest.schema.json", oce)).toBe(true);
+    expect(manifestProblems(oce)).toHaveLength(2);
   });
   it("Tier C adapters never advertise action approvals", () => {
     const c = { ...m, tier: "C" as const, capabilities: { ...caps, structured_events: false } };

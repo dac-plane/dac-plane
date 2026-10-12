@@ -1,28 +1,108 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.dacp.invalid/v1/capability-manifest.schema.json",
-  "title": "Runtime capability manifest (spec §16, §33)",
+  "title": "Runtime capability manifest (spec \u00a716, \u00a733)",
   "type": "object",
-  "required": ["adapter","runtime","protocol","tier","capabilities","conformance_report_ref"],
+  "required": [
+    "adapter",
+    "runtime",
+    "protocol",
+    "tier",
+    "capabilities",
+    "conformance_report_ref",
+    "isolation_scope"
+  ],
   "properties": {
-    "adapter": { "type": "string" },
-    "runtime": { "type": "string" },
-    "protocol": { "type": "string" },
-    "tier": { "enum": ["A","B","C"] },
+    "adapter": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "protocol": {
+      "type": "string"
+    },
+    "tier": {
+      "enum": [
+        "A",
+        "B",
+        "C"
+      ]
+    },
     "capabilities": {
       "type": "object",
-      "required": ["structured_events","permission_callbacks","follow_up","cancel","recovery","usage","concurrent_turns","secure_auth_handoff"],
+      "required": [
+        "structured_events",
+        "permission_callbacks",
+        "follow_up",
+        "cancel",
+        "recovery",
+        "usage",
+        "concurrent_turns",
+        "secure_auth_handoff"
+      ],
       "properties": {
-        "structured_events": { "type": "boolean" },
-        "permission_callbacks": { "type": "boolean" },
-        "follow_up": { "enum": ["queued","interrupt","unsupported"] },
-        "cancel": { "enum": ["native","native_then_process_stop","process_stop","unsupported"] },
-        "recovery": { "enum": ["exact_resume","restart_from_artifacts","unsupported"] },
-        "usage": { "enum": ["full","partial","none"] },
-        "concurrent_turns": { "type": "boolean" },
-        "secure_auth_handoff": { "type": "boolean" }
+        "structured_events": {
+          "type": "boolean"
+        },
+        "permission_callbacks": {
+          "type": "boolean"
+        },
+        "follow_up": {
+          "enum": [
+            "queued",
+            "interrupt",
+            "unsupported"
+          ]
+        },
+        "cancel": {
+          "enum": [
+            "native",
+            "native_then_process_stop",
+            "process_stop",
+            "unsupported"
+          ]
+        },
+        "recovery": {
+          "enum": [
+            "exact_resume",
+            "restart_from_artifacts",
+            "unsupported"
+          ]
+        },
+        "usage": {
+          "enum": [
+            "full",
+            "partial",
+            "none"
+          ]
+        },
+        "concurrent_turns": {
+          "type": "boolean"
+        },
+        "secure_auth_handoff": {
+          "type": "boolean"
+        },
+        "native_resume_after_gateway_restart": {
+          "type": "boolean",
+          "description": "OCE pinned Codex plugin: false (documented)."
+        }
       }
     },
-    "conformance_report_ref": { "type": ["string","null"] }
+    "conformance_report_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "isolation_scope": {
+      "enum": [
+        "per_task",
+        "per_session",
+        "per_agent_revision",
+        "shared"
+      ],
+      "description": "Smallest unit with its own execution environment. OCE dedicated Codex: per_agent_revision (one Harness shared by all sessions of a revision)."
+    }
   }
 }
