@@ -1,0 +1,20 @@
+#!/bin/bash
+REAL=$(PATH=$(echo "$PATH" | tr : "\n" | grep -v "/spike/shim" | paste -sd:) command -v k3d)
+# Local workaround: k3d 5.8.3 'image import' deadlocks (fatal: all goroutines asleep) against Docker 28 here.
+# Import tarballs directly with containerd in each server node instead; other k3d commands pass through.
+if [ "$1 $2" = "image import" ]; then
+  shift 2; cluster=""; files=()
+  while [ $# -gt 0 ]; do case "$1" in -c|--cluster) cluster="$2"; shift 2;; -m|--mode) shift 2;; --cluster=*) cluster="${1#*=}"; shift;; -*) shift;; *) files+=("$1"); shift;; esac; done
+  for node in $(docker ps --format '{{.Names}}' | grep "^k3d-${cluster}-server-"); do
+    for i in $(seq 1 60); do docker exec "$node" test -S /run/k3s/containerd/containerd.sock && break; sleep 3; done
+    for f in "${files[@]}"; do
+      docker cp "$f" "$node:/tmp/import.tar" || exit 1
+      ok=0; for i in 1 2 3 4 5 6; do sleep 10; docker exec "$node" ctr -n k8s.io images import /tmp/import.tar && { ok=1; break; }; done
+      docker exec "$node" rm -f /tmp/import.tar; [ $ok = 1 ] || exit 1
+    done
+  done
+  exit 0
+fi
+# Local workaround: this kernel has no vxlan support; single-node k3s uses flannel host-gw instead.
+if [ "$1 $2" = "cluster create" ]; then exec "$REAL" "$@" --k3s-arg "--flannel-backend=host-gw@server:*"; fi
+exec "$REAL" "$@"
