@@ -1,0 +1,22 @@
+{
+  "name": "delegated-agent-control-plane",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Product task/attention/result layer for delegated agent work (spec v1.1)",
+  "workspaces": ["packages/*", "services/*"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "yaml": "^2.6.0"
+  }
+}

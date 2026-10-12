@@ -1,0 +1,9 @@
+{
+  "name": "@dacp/product-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "description": "Stable surface contracts: domain model, state machines, JSON Schemas and OpenAPI (WP02)"
+}
