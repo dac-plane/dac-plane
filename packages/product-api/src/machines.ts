@@ -7,8 +7,8 @@ export const TASK_STATES = [
 ] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 export type TaskEvent =
-  | "submit" | "dispatch" | "cancel" | "wait" | "output" | "error" | "stop"
-  | "response_consumed" | "attention_unresolved" | "verification_passed" | "verification_mismatch"
+  | "submit" | "dispatch" | "cancel" | "wait" | "output" | "error"
+  | "response_consumed" | "attention_denied" | "attention_unresolved" | "verification_passed" | "verification_mismatch"
   | "accept" | "request_changes" | "stop_reconciled" | "stop_uncertain";
 
 export const taskMachine = defineMachine<TaskState, TaskEvent>(
@@ -16,22 +16,26 @@ export const taskMachine = defineMachine<TaskState, TaskEvent>(
   {
     draft: { submit: ["queued"] },
     queued: { dispatch: ["running"], cancel: ["cancelled"] },
-    running: { wait: ["waiting_attention"], output: ["verifying"], error: ["failed"], stop: ["cancelling"] },
+    // ADR-0011(b): during active execution cancel records `cancelling` until stop is confirmed
+    running: { wait: ["waiting_attention"], output: ["verifying"], error: ["failed"], cancel: ["cancelling"] },
     waiting_attention: {
       response_consumed: ["running"],
-      // timeout/denial -> running with restriction, failed or cancelling according to request policy
+      // ADR-0011(b): deny closes that request as denied and blocks that action only; work continues.
+      attention_denied: ["running"],
+      // timeout -> running with restriction, failed or cancelling according to request policy
       attention_unresolved: ["running", "failed", "cancelling"],
-      // §13: cancelling an attempt invalidates pending authorizations and native waits
-      stop: ["cancelling"],
+      // Cancel allowed while waiting; the native wait/process may be live, so stop must be confirmed.
+      cancel: ["cancelling"],
     },
     verifying: {
       // pass -> ready_for_review, or succeeded only under explicit auto-accept policy (see guard below)
       verification_passed: ["ready_for_review", "succeeded"],
       verification_mismatch: ["running", "failed"],
-      stop: ["cancelling"],
+      cancel: ["cancelling"],
     },
     ready_for_review: { accept: ["succeeded"], request_changes: ["queued"], cancel: ["cancelled"] },
-    // uncertainty -> remains cancelling with escalation
+    // uncertainty -> remains cancelling with escalation. No verification/output events are accepted
+    // here: a late verification result can never move a cancelling/cancelled task to success.
     cancelling: { stop_reconciled: ["cancelled"], stop_uncertain: ["cancelling"] },
     succeeded: {}, failed: {}, cancelled: {},
   },
@@ -52,9 +56,17 @@ export function taskEventForStopReason(reason: StopReason): TaskEvent | null {
   switch (reason) {
     case "proposed_result": return "output";
     case "error": return "error";
-    case "user_cancel": return "stop";
+    case "user_cancel": return "cancel";
     default: return null; // stays running; needs follow-up or user decision
   }
+}
+
+/**
+ * Late observations (e.g. a verification result arriving after cancel) are retained for audit but
+ * never applied. Returns the event to apply, or "audit_only".
+ */
+export function routeTaskObservation(state: TaskState, event: TaskEvent): TaskEvent | "audit_only" {
+  return taskMachine.targets(state, event).length > 0 ? event : "audit_only";
 }
 
 /* ---------- Attempt (spec §11) ---------- */

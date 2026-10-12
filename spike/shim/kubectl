@@ -1,0 +1,5 @@
+#!/bin/sh
+REAL=$(PATH=$(echo "$PATH" | tr : "\n" | grep -v "/spike/shim" | paste -sd:) command -v kubectl)
+# Local workaround: retry the one-shot API readiness probe in 'occ dev up' (k3d LB warm-up race on this box).
+case "$*" in *"get --raw=/version"*) for i in $(seq 1 30); do "$REAL" "$@" 2>/dev/null && exit 0; sleep 3; done ;; esac
+exec "$REAL" "$@"

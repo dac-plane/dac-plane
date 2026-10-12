@@ -10,13 +10,18 @@ export interface RuntimeCapabilities {
   usage: "full" | "partial" | "none";
   concurrent_turns: boolean;
   secure_auth_handoff: boolean;
+  native_resume_after_gateway_restart?: boolean;
 }
+
+/** Smallest unit with its own execution environment (spike finding, ADR-0012). */
+export type IsolationScope = "per_task" | "per_session" | "per_agent_revision" | "shared";
 
 export interface CapabilityManifest {
   adapter: string;
   runtime: string;
   protocol: string;
   tier: CapabilityTier;
+  isolation_scope: IsolationScope;
   capabilities: RuntimeCapabilities;
   conformance_report_ref: string | null;
 }
@@ -36,6 +41,7 @@ export function manifestProblems(m: CapabilityManifest): string[] {
   if (m.tier === "C" && m.capabilities.permission_callbacks) {
     p.push("Tier C adapter must not advertise action-level approvals");
   }
+  if (m.isolation_scope !== "per_task") p.push(`isolation scope ${m.isolation_scope}: tasks share an execution environment (ADR-0003 needs a trust group)`);
   if (m.conformance_report_ref === null) p.push("no conformance report: capabilities are unverified");
   return p;
 }
