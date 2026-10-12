@@ -1,0 +1,7 @@
+{
+  "name": "@dacp/product-tasks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Product task service: outcomes, attention, budgets, acceptance (milestone 1: storage schema only)"
+}
