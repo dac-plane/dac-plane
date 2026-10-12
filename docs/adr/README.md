@@ -21,6 +21,7 @@ otherwise.
 | [0008](0008-sandbox-provider.md) | Sandbox / compute provider selection | Open |
 | [0009](0009-adoption-vs-fork.md) | Adoption vs fork | Proposed |
 | [0010](0010-one-lifecycle-owner-per-resource.md) | One lifecycle owner per resource | Proposed |
+| [0011](0011-first-integration-experiment.md) | First integration experiment + state interpretations | Accepted (provisional) |
 
 ADR-0006..0008 numbers are not assigned by the spec; they are used here for decisions the spec lists
 in §26/§31 without a number.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attemptMachine, attentionMachine, connectionMachine, environmentMachine, taskMachine,
-  taskEventForStopReason, verificationPassedTarget, TransitionError,
+  taskEventForStopReason, verificationPassedTarget, routeTaskObservation, TransitionError,
   type StateMachine,
 } from "../src/index.js";
 
@@ -17,7 +17,7 @@ function reachable<S extends string, E extends string>(m: StateMachine<S, E>, st
 function allEvents<S extends string, E extends string>(m: StateMachine<S, E>): E[] {
   const out = new Set<E>();
   const probe = ["submit","dispatch","cancel","wait","output","error","stop","response_consumed","attention_unresolved",
-    "verification_passed","verification_mismatch","accept","request_changes","stop_reconciled","stop_uncertain",
+    "verification_passed","verification_mismatch","attention_denied","accept","request_changes","stop_reconciled","stop_uncertain",
     "provision","start","runtime_started","resume","finalize","complete","fail","lease_expired","request_cancel",
     "terminated_confirmed","reconcile","publish","answer","deny","redeliver","delivered","consumed","close","expire",
     "supersede","ready","activate","drain","destroy","quarantine","authorize","authorized","refresh_due","refreshed",
@@ -72,8 +72,8 @@ describe("task machine (spec §11)", () => {
   });
 
   it("cannot cancel a running task directly; it goes through cancelling", () => {
-    expect(taskMachine.can("running", "cancel")).toBe(false);
-    expect(taskMachine.apply({ state: "running", version: 1 }, "stop", 1).state).toBe("cancelling");
+    expect(taskMachine.targets("running", "cancel")).toEqual(["cancelling"]);
+    expect(taskMachine.apply({ state: "running", version: 1 }, "cancel", 1).state).toBe("cancelling");
   });
 
   it("cancelling remains until stop is reconciled; uncertainty keeps it cancelling", () => {
@@ -99,7 +99,7 @@ describe("task machine (spec §11)", () => {
   it("idle/token limit stop reasons are not task completion", () => {
     expect(taskEventForStopReason("idle")).toBeNull();
     expect(taskEventForStopReason("token_limit")).toBeNull();
-    expect(taskEventForStopReason("user_cancel")).toBe("stop");
+    expect(taskEventForStopReason("user_cancel")).toBe("cancel");
     expect(taskEventForStopReason("proposed_result")).toBe("output");
   });
 
@@ -107,6 +107,27 @@ describe("task machine (spec §11)", () => {
     for (const s of taskMachine.states) for (const e of allEvents(taskMachine)) {
       if (taskMachine.targets(s, e).includes("succeeded")) expect(["accept", "verification_passed"]).toContain(e);
     }
+  });
+});
+
+describe("ADR-0011(b) interpretations", () => {
+  it("deny returns the task to running (blocks the action only, not the task)", () => {
+    expect(taskMachine.apply({ state: "waiting_attention", version: 2 }, "attention_denied", 2).state).toBe("running");
+    expect(attentionMachine.apply({ state: "pending", version: 1 }, "deny", 1).state).toBe("denied");
+    expect(attentionMachine.isTerminal("denied")).toBe(true);
+  });
+  it("cancel is allowed while waiting and verifying and goes through cancelling", () => {
+    expect(taskMachine.targets("waiting_attention", "cancel")).toEqual(["cancelling"]);
+    expect(taskMachine.targets("verifying", "cancel")).toEqual(["cancelling"]);
+  });
+  it("late verification results never move cancelling/cancelled to success", () => {
+    for (const s of ["cancelling", "cancelled"] as const) {
+      for (const e of ["verification_passed", "output", "accept", "response_consumed"] as const) {
+        expect(routeTaskObservation(s, e)).toBe("audit_only");
+      }
+    }
+    expect(() => taskMachine.apply({ state: "cancelling", version: 4 }, "verification_passed", 4, "succeeded")).toThrow(TransitionError);
+    expect(() => taskMachine.apply({ state: "cancelled", version: 5 }, "verification_passed", 5, "succeeded")).toThrow(/terminal/);
   });
 });
 
