@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dacp.invalid/v1/attention-response.schema.json",
+  "title": "Attention response (spec §13, §15). Principal is derived from authentication, never from the body.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_version","decision"],
+  "properties": {
+    "request_version": { "type": "integer", "minimum": 1 },
+    "decision": { "enum": ["approve_once","deny","answer"] },
+    "answer": { "type": "string", "maxLength": 20000 }
+  },
+  "if": { "properties": { "decision": { "const": "answer" } } },
+  "then": { "required": ["answer"] }
+}

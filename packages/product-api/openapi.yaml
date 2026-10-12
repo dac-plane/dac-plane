@@ -1,0 +1,275 @@
+openapi: 3.1.0
+info:
+  title: Delegated Agent Control Plane — Product API
+  version: 1.0.0-draft
+  description: >
+    Public task/attention/result API (spec §15). Draft contract for phase 0; not yet implemented by a
+    running service. Principal identity always comes from authentication, never from request bodies.
+    Errors: 401 unauthenticated, 403 unauthorized, 404 absent or hidden, 409 stale version/state,
+    422 unsupported capability or invalid input, 429 quota.
+servers:
+  - url: https://api.example.invalid
+security:
+  - bearerAuth: []
+paths:
+  /v1/tasks:
+    post:
+      operationId: createTask
+      summary: Create and submit a task
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './schemas/task-submission.schema.json' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /v1/tasks/{id}:
+    get:
+      operationId: getTask
+      summary: Current snapshot, version, active attempt, attention summary and result references
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Task snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskSnapshot' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/tasks/{id}/events:
+    get:
+      operationId: streamTaskEvents
+      summary: SSE / replay with cursor; preserves per-task sequence
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: after_sequence
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: Event stream; if the cursor expired, client fetches the snapshot
+          content:
+            text/event-stream:
+              schema: { type: string }
+            application/json:
+              schema:
+                type: array
+                items: { $ref: './schemas/event-envelope.schema.json' }
+        '404': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+  /v1/tasks/{id}/messages:
+    post:
+      operationId: addTaskMessage
+      summary: Add an instruction; adapter declares queue vs interrupt semantics
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id, text]
+              properties:
+                message_id: { type: string }
+                text: { type: string, maxLength: 20000 }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /v1/tasks/{id}/cancel:
+    post:
+      operationId: cancelTask
+      summary: Request cancellation; 202 until execution stop is reconciled
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expected_version: { type: integer }
+                reason: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Error' }
+  /v1/tasks/{id}/retry:
+    post:
+      operationId: retryTask
+      summary: Start a new attempt after explicit recovery checks; never silently repeats uncertain effects
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_version, reason]
+              properties:
+                expected_version: { type: integer }
+                reason: { type: string }
+                recovery_mode: { enum: [exact_resume, restart_from_artifacts] }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /v1/attention:
+    get:
+      operationId: listAttention
+      summary: Current user-actionable requests scoped to tenant and responder authority
+      responses:
+        '200':
+          description: Attention requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: './schemas/attention-request.schema.json' }
+  /v1/attention/{id}/responses:
+    post:
+      operationId: respondToAttention
+      summary: Validate typed answer/decision and expected version; persist before dispatch
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './schemas/attention-response.schema.json' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /v1/tasks/{id}/reviews:
+    post:
+      operationId: reviewTask
+      summary: Accept result or request changes; requires result version and reviewer authority
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_version, result_revision, decision]
+              properties:
+                expected_version: { type: integer }
+                result_revision: { type: string }
+                decision: { enum: [accept, request_changes] }
+                comment: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Error' }
+  /v1/artifacts/{id}:
+    get:
+      operationId: getArtifact
+      summary: Authorize view/download; short-lived access, no public object-store URLs
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Artifact metadata with short-lived access URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [artifact_id, digest, classification, source_revision, access_url, access_expires_at]
+                properties:
+                  artifact_id: { type: string }
+                  digest: { type: string }
+                  classification: { type: string }
+                  source_revision: { type: string }
+                  access_url: { type: string }
+                  access_expires_at: { type: string, format: date-time }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/connections:
+    post:
+      operationId: startConnection
+      summary: Start a secure connection flow (OAuth redirect); secrets never pass through chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider: { type: string }
+                requested_scopes: { type: array, items: { type: string } }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/connections/{id}/revoke:
+    post:
+      operationId: revokeConnection
+      summary: Revoke authority and propagate to live tasks
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Supported runtimes, environments and tested feature constraints
+      responses:
+        '200':
+          description: Capability manifests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: './schemas/capability-manifest.schema.json' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 255 }
+  responses:
+    Accepted:
+      description: Accepted; durable operation ID for async work
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [operation_id]
+            properties:
+              operation_id: { type: string }
+              task_id: { type: string }
+              version: { type: integer }
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: './schemas/error.schema.json' }
+  schemas:
+    TaskSnapshot:
+      type: object
+      required: [id, state, version, objective, acceptance_criteria]
+      properties:
+        id: { type: string }
+        state:
+          enum: [draft, queued, running, waiting_attention, verifying, ready_for_review, cancelling, succeeded, failed, cancelled]
+        version: { type: integer }
+        objective: { type: string }
+        acceptance_criteria: { type: array, items: { type: string } }
+        active_attempt_id: { type: [string, 'null'] }
+        attention_summary:
+          type: object
+          properties:
+            pending: { type: integer }
+        result_refs: { type: array, items: { type: string } }

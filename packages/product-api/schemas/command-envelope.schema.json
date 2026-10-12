@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dacp.invalid/v1/command-envelope.schema.json",
+  "title": "Command envelope v1 (spec §14)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id","type","tenant_id","target_id","deadline","idempotency_key"],
+  "properties": {
+    "command_id": { "type": "string", "pattern": "^cmd_[A-Za-z0-9]{8,64}$" },
+    "type": { "enum": ["StartAttempt","SubmitTurn","DeliverDecision","CancelAttempt","VerifyResult","CleanupEnvironment"] },
+    "tenant_id": { "type": "string", "pattern": "^ten_[A-Za-z0-9]{8,64}$" },
+    "target_id": { "type": "string", "minLength": 1 },
+    "expected_version": { "type": ["integer","null"], "minimum": 0 },
+    "lease_epoch": { "type": ["integer","null"], "minimum": 0 },
+    "deadline": { "type": "string", "format": "date-time" },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "payload_ref": { "type": ["string","null"] }
+  }
+}

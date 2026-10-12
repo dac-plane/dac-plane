@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dacp.invalid/v1/attention-request.schema.json",
+  "title": "Attention request (spec §13, §33)",
+  "type": "object",
+  "required": ["request_id","request_version","type","task_id","attempt_id","native_request_ref","expires_at","authorized_responders","policy_version"],
+  "properties": {
+    "request_id": { "type": "string" },
+    "request_version": { "type": "integer", "minimum": 1 },
+    "type": { "enum": ["question","action_approval","authentication_handoff","blocked_work"] },
+    "task_id": { "type": "string" },
+    "attempt_id": { "type": "string" },
+    "native_request_ref": { "type": "string" },
+    "operation": { "type": "string" },
+    "target": { "type": "object" },
+    "inputs": { "type": "object" },
+    "action_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "policy_version": { "type": "string" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "authorized_responders": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "question": { "type": "string" },
+    "options": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "action_approval" } } },
+      "then": { "required": ["operation","target","inputs","action_hash"] } },
+    { "if": { "properties": { "type": { "const": "question" } } },
+      "then": { "required": ["question"] } }
+  ]
+}

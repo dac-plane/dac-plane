@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dacp.invalid/v1/error.schema.json",
+  "title": "Error response (spec §15)",
+  "type": "object",
+  "required": ["error_code","correlation_id","message"],
+  "properties": {
+    "error_code": { "type": "string" },
+    "correlation_id": { "type": "string" },
+    "message": { "type": "string" },
+    "current": { "type": "object", "description": "On 409, the recorded state/decision." }
+  }
+}

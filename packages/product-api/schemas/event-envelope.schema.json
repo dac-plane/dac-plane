@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dacp.invalid/v1/event-envelope.schema.json",
+  "title": "EventEnvelope v1 (spec §14)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version","event_id","tenant_id","task_id","sequence","type","occurred_at","received_at","producer","correlation_id","classification"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+    "event_id": { "type": "string", "pattern": "^evt_[A-Za-z0-9]{8,64}$" },
+    "tenant_id": { "type": "string", "pattern": "^ten_[A-Za-z0-9]{8,64}$" },
+    "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9]{8,64}$" },
+    "attempt_id": { "type": ["string","null"], "pattern": "^att_[A-Za-z0-9]{8,64}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "type": { "type": "string", "pattern": "^[a-z_]+\\.[a-z_]+$" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "received_at": { "type": "string", "format": "date-time" },
+    "producer": { "type": "string", "minLength": 1, "description": "adapter/runtime@version" },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "causation_id": { "type": ["string","null"] },
+    "payload_ref": { "type": ["string","null"], "description": "Authorized object reference; large/sensitive content is never inline." },
+    "classification": { "enum": ["public","project_internal","confidential","restricted"] }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dacp.invalid/v1/task-submission.schema.json",
+  "title": "Task submission (spec §15, §21, §32)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_id","profile_version","objective","acceptance_criteria"],
+  "properties": {
+    "project_id": { "type": "string" },
+    "profile_version": { "type": "string", "pattern": "^[a-z0-9_-]+@[0-9]+$" },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 10000 },
+    "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "runtime_constraints": { "type": "object" },
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "max_duration_seconds": { "type": "integer", "minimum": 1 },
+        "max_cost_minor_units": { "type": "integer", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "external_effects": { "enum": ["none","no_publish","draft_only","ask"], "default": "no_publish" },
+    "auto_accept": { "type": "boolean", "default": false }
+  }
+}
