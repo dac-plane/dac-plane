@@ -51,6 +51,11 @@ psql -v ON_ERROR_STOP=1 -d dacp -f services/product-tasks/test/sql/0001_constrai
   keys, per-task event sequence, transactional outbox, append-only audit, immutable artifacts/events,
   lease-fencing claim function.
 
+## Integration spike (ADR-0011)
+OCE + dedicated Codex on local k3d: stopped at Q1 on the agent box (no kernel `ip_set`, no model key).
+See [spike/README.md](spike/README.md), [capability report](docs/qualification/capability-report.md),
+[responsibility map](docs/qualification/responsibility-map.md), draft [ADR-0012](docs/adr/0012-adoption-decision-occ.md).
+
 ## Next (backlog, spec §30)
 1. WP01 reuse qualification: Q1 OCC deployment, Q2 native attention, Q6 sandbox alternative -> choose Option A or B.
 2. WP02 finish: tenant identity mapping to the chosen platform auth; publish contract versioning/deprecation policy.
