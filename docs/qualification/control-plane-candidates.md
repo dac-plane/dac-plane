@@ -20,6 +20,38 @@ our task/result record and deployable operational boundaries?
 If yes, integrate it as a foundation or adapter target. If no, build only the missing product-owned
 control-plane core and use existing sandbox/runtime services as backends.
 
+## Product boundary that must not move
+
+The product is a **universal delegated-agent control plane**: one accountable work lifecycle across
+surfaces, runtimes and execution environments. It is not a wrapper around one provider, one coding agent
+or one sandbox vendor.
+
+```text
+Surface interface
+  Chat, Slack, IDE, tickets, dashboard, schedules or API submit work and respond to waits.
+
+Product work contract
+  Owns objective, owner, task, attempt, attention request, decision, budget, artifact, audit,
+  result review, cancellation intent, retry/continue intent and portability across integrations.
+
+Runtime adapter
+  Starts or steers Codex, Claude Code, OpenCode, Cursor, OpenClaw or another tested runtime.
+  Reports native events, approvals, artifacts and cancellation/continuation capability.
+
+Environment adapter
+  Provisions or attaches local machines, containers, Coder workspaces, Kubernetes, cloud VMs
+  or managed sandboxes. Reports isolation, storage, secrets and cleanup state.
+
+Policy and event interface
+  Evaluates authority and budgets, records approval decisions and publishes lifecycle events.
+```
+
+A candidate may replace or implement part of the lower layers only if it preserves that product work
+contract. Passing a candidate test means "usable foundation or adapter target", not "the product becomes
+that platform." Candidate-native terms such as issue, task, session, workspace, run, recipe, worker pool
+or approval must map back to the product contract without making the product state dependent on that
+platform's UI or storage semantics.
+
 ## Candidate order
 
 | Order | Candidate | Why test it | Initial risk to prove or reject |
@@ -72,10 +104,11 @@ base URL setting, credential injection path and whether the value is visible to 
 | CP4 approval authority | Candidate blocks before the write and resumes only after the intended approval. | Approval record includes requester, responder/authority, action identity, expiry or invalidation behavior. |
 | CP5 result evidence | Candidate exposes artifact, logs/events, model/provider metadata and final outcome through API/CLI. | Product can map native evidence to ResultRevision and Artifact without scraping a UI only. |
 | CP6 cancellation/cleanup | Cancel or timeout stops work and leaves no active orphan worker/session. | Remaining resources are inspectable and either gone or marked for explicit cleanup. |
-| CP7 product mapping | Candidate state can map cleanly to task, attempt, attention request, decision, artifact and audit event. | No dual owner conflict with the product schema. |
-| CP8 deployment fit | Candidate can be self-hosted or operated in the target environment with acceptable secrets, auth and upgrade story. | Real deployment path is plausible; local-only demos do not pass. |
+| CP7 product mapping | Candidate state can map cleanly to task, attempt, attention request, decision, budget, artifact, audit event and result review. | No dual owner conflict with the product schema. |
+| CP8 adapter portability | Candidate can be used through explicit APIs/adapters without hard-coding one surface, runtime or environment into the product model. | A second runtime or environment can be modeled without changing product task semantics. |
+| CP9 deployment fit | Candidate can be self-hosted or operated in the target environment with acceptable secrets, auth and upgrade story. | Real deployment path is plausible; local-only demos do not pass. |
 
-Any FAIL in CP2, CP4, CP6 or CP7 disqualifies the candidate as the primary control-plane foundation.
+Any FAIL in CP2, CP4, CP6, CP7 or CP8 disqualifies the candidate as the primary control-plane foundation.
 It may still be reused as a narrow adapter or component.
 
 ## First run: Paperclip
@@ -89,7 +122,7 @@ The first run is not a full integration. It is a fast disqualification or fit ch
 3. Configure an agent adapter for Codex or HTTP/custom runtime using the OpenCodex/Camer route.
 4. Run the bounded scenario.
 5. Export API/CLI evidence for task state, approval state, budget/cost record, artifact/result and cleanup.
-6. Write `docs/qualification/CP1-paperclip.md` with PASS/PARTIAL/FAIL for CP1-CP8.
+6. Write `docs/qualification/CP1-paperclip.md` with PASS/PARTIAL/FAIL for CP1-CP9.
 
 Do not build a product integration until this report exists.
 
@@ -113,6 +146,8 @@ After Paperclip and Kelos:
 - If both fail only on provider routing, do not repeat the OCE mistake: reject stock adoption unless the
   candidate exposes a supported base-url/provider configuration path.
 - If both fail only on sandbox/runtime isolation, evaluate one sandbox provider under ADR-0008.
+- If a candidate passes execution but fails adapter portability, keep it as one backend integration only;
+  do not let it define the product control-plane state.
 
 ## Evidence standard
 
@@ -127,4 +162,5 @@ Every run must include:
 - Logs or screenshots only when an API/CLI record is unavailable.
 - Cleanup command and observed cleanup result.
 - Explicit product mapping table.
+- Explicit adapter boundary: what the candidate owns, what the product owns and what remains replaceable.
 
