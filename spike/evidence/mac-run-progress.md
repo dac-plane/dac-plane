@@ -15,3 +15,11 @@
   (OCC expects flannel's `dev cni0` for `ip route get <podCIDR+2>`). Attempt 7: shim adds a dummy `cni0` with a /32 route for
   podCIDR+2 sourced from the cilium_host address (the real Pod-proxy source under Cilium). Spike-only workaround.
 - 03-slice.mjs written (native gateway session/turn/approval scenarios; mapping persisted to spike/out/slice-mapping.json).
+- 13:27 WAT: in-cluster OpenCodex proxy path is configured (`opencodex` Service on port 10100, Secret-backed Camer key and
+  admission token). Manual pod-to-proxy probes succeeded earlier, proving labeled OCC-style pods can call the proxy through
+  NetworkPolicy. Dedicated Codex Agent deployment still fails at `codex.model_probe` with `RUNTIME_AUTHENTICATION_FAILED`.
+  Latest bounded run `spike/out/q1-spike-codex-incluster3.json` retried three revisions of the same Agent and all failed.
+  Agent pod logs show workspace setup, Codex login, node setup and gateway connection succeed before the single Codex model
+  probe exits 1. OpenCodex logs from the same run family show Camer upstream failures (`502`, then `429`) for
+  `camer-digital/glm-5.3-flash`; do not spend more retries until upstream capacity/key behavior is addressed or the probe
+  path is made to report 429/5xx as transient instead of authentication failure.

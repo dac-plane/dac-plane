@@ -52,5 +52,37 @@ This is a CNI feasibility result only. **OCC on a Cilium cluster is NOT RUN**: `
 the next step is a shim (like the existing `k3d cluster create` one) that disables flannel and installs Cilium before OCC's
 isolation check. Q1 stays FAIL until OCC's own check passes. The model credential (item 2 above) is still missing.
 
+## Update 2026-10-13: Mac Cilium OCC run reached the dedicated Codex model probe
+
+The Mac run moved past the earlier blockers:
+
+- The k3d shim disables flannel/network-policy, installs Cilium with pod/node CIDR policy matching, and adds the spike-only
+  bridge-route workaround needed by OCC's API-server Pod proxy check.
+- OCC's NetworkPolicy verification passed on the Mac cluster.
+- A Secret-backed in-cluster OpenCodex proxy was deployed as `opencodex:10100` in the OCC namespace. It reads the Camer key and
+  a separate admission token from Kubernetes Secret data; the Agent receives only the admission token.
+- Manual pod-to-proxy probes from OCC-style, labeled pods succeeded through NetworkPolicy and returned real model completions
+  via `camer-digital/glm-5.3-flash`.
+
+The dedicated Codex Agent deployment still does **not** pass Q1. Evidence:
+
+- `spike/out/q1-spike-codex-incluster.json`: first in-cluster proxy deployment failed during `codex.model_probe`.
+- `spike/out/q1-spike-codex-incluster2.json`: interrupted/restarted deployment also failed with
+  `RUNTIME_AUTHENTICATION_FAILED`.
+- `spike/out/q1-spike-codex-incluster3.json`: bounded redeploy retry of the same Agent tried three revisions and all three
+  failed with `RUNTIME_AUTHENTICATION_FAILED`.
+- Agent pod logs for the latest revision show workspace setup, Codex login, node setup, and gateway connection succeed before
+  the single Codex model probe exits 1 with `AUTHENTICATION_FAILED`.
+- OpenCodex logs from this run family show upstream Camer failures for `camer-digital/glm-5.3-flash`: one `502` followed by
+  `429` responses.
+
+Interpretation: the cluster/proxy/admission-token path is working, but Q1 remains **FAIL** because OCC will not mark the
+dedicated Codex revision ready until its startup model probe completes. The current failure is at the provider/probe boundary,
+not at Kubernetes isolation, Secret delivery, or Agent-to-proxy routing.
+
+Next closure step: run the same `02-deploy-codex-agent.mjs` path after Camer capacity recovers, or change the proxy/probe path
+so upstream `429`/`5xx` is surfaced as a transient model-probe failure instead of a credential rejection. Only after a
+deployment reaches `succeeded` should `03-slice.mjs` run the smoke/approval/deny/cancel/stale/history scenarios.
+
 ## Cost / operator time
 ~1 h to reach step 9 on this box, 5 local workarounds; ~20 GB container storage; first build ~10 min.

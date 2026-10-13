@@ -18,7 +18,8 @@ const name = args.find((a) => !a.startsWith("--")) ?? (negative ? "spike-codex-n
 const model = process.env.SPIKE_MODEL ?? "gpt-6-astra";
 const origin = process.env.OCC_URL ?? "http://127.0.0.1:3000";
 const keyFile = process.env.OCC_SERVICE_KEY_FILE ?? "/tmp/openclaw-development/initial-admin-service-key.json";
-const serviceKey = JSON.parse(readFileSync(keyFile, "utf8")).key;
+const serviceKeyObj = JSON.parse(readFileSync(keyFile, "utf8"));
+const serviceKey = serviceKeyObj.key ?? serviceKeyObj.data?.key;
 
 function modelCredential() {
   if (negative) return "invalid-negative-fixture-not-a-credential";
@@ -133,20 +134,33 @@ try {
   if (!creds.transportConfigured) await api("POST", `${base}/agents/${agent.id}/runtime-credentials`, {});
   step("runtime_credentials.provisioned");
 
-  const rev = await api("POST", `${base}/agents/${agent.id}/deploy`);
-  record.revisionId = rev.id; step("deploy.requested", { revisionId: rev.id, revision: rev.revision });
-  save();
+  const retryErrors = new Set((process.env.SPIKE_RETRY_DEPLOY_ERRORS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  const maxDeployAttempts = 1 + Number(process.env.SPIKE_DEPLOY_RETRIES ?? 0);
+  let deploymentId;
+  for (let attempt = 1; attempt <= maxDeployAttempts; attempt++) {
+    const rev = await api("POST", `${base}/agents/${agent.id}/deploy`);
+    record.revisionId = rev.id;
+    deploymentId = rev.id;
+    step("deploy.requested", { attempt, revisionId: rev.id, revision: rev.revision });
+    save();
 
-  const deadline = Date.now() + Number(process.env.SPIKE_DEPLOY_TIMEOUT_MS ?? 20 * 60_000);
-  let last;
-  while (Date.now() < deadline) {
-    const d = await api("GET", `${base}/agents/${agent.id}/deployments/${rev.id}`);
-    const summary = { status: d.status, phase: d.phase, error: d.error?.code, cause: d.error?.causeKind ?? d.cause?.kind };
-    if (JSON.stringify(summary) !== JSON.stringify(last)) { step("deployment.observed", summary); last = summary; }
-    if (d.status === "succeeded" || d.status === "failed") { record.deployment = d; break; }
-    await new Promise((r) => setTimeout(r, 10_000));
+    const deadline = Date.now() + Number(process.env.SPIKE_DEPLOY_TIMEOUT_MS ?? 20 * 60_000);
+    let last;
+    while (Date.now() < deadline) {
+      const d = await api("GET", `${base}/agents/${agent.id}/deployments/${rev.id}`);
+      const summary = { attempt, status: d.status, phase: d.phase, error: d.error?.code, cause: d.error?.causeKind ?? d.cause?.kind };
+      if (JSON.stringify(summary) !== JSON.stringify(last)) { step("deployment.observed", summary); last = summary; }
+      if (d.status === "succeeded" || d.status === "failed") { record.deployment = d; break; }
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
+    if (record.deployment?.status === "succeeded") break;
+    const retryable = record.deployment?.status === "failed" && retryErrors.has(record.deployment.error?.code);
+    if (!retryable || attempt >= maxDeployAttempts) break;
+    const delayMs = Number(process.env.SPIKE_DEPLOY_RETRY_DELAY_MS ?? 60_000);
+    step("deploy.retrying", { attempt, nextAttempt: attempt + 1, error: record.deployment.error?.code, delayMs });
+    await new Promise((r) => setTimeout(r, delayMs));
   }
-  try { record.runtime = await api("GET", `${base}/agents/${agent.id}/deployments/${rev.id}/runtime`); } catch (e) { record.runtimeError = e.message; }
+  try { record.runtime = await api("GET", `${base}/agents/${agent.id}/deployments/${deploymentId}/runtime`); } catch (e) { record.runtimeError = e.message; }
   try { record.runtimeImages = await api("GET", `${base}/agents/${agent.id}/runtime-images`); } catch (e) { record.runtimeImagesError = e.message; }
   try { record.agentAfter = await api("GET", `${base}/agents/${agent.id}`); } catch {}
   step("done", { deploymentStatus: record.deployment?.status ?? "timeout", activeRevisionId: record.agentAfter?.activeRevisionId });
