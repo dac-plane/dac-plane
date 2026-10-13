@@ -23,6 +23,7 @@ otherwise.
 | [0010](0010-one-lifecycle-owner-per-resource.md) | One lifecycle owner per resource | Proposed |
 | [0011](0011-first-integration-experiment.md) | First integration experiment + state interpretations | Accepted (provisional) |
 | [0012](0012-adoption-decision-occ.md) | Do not adopt OCC/OCE as the project runtime dependency now | Rejected for current adoption |
+| [0013](0013-control-plane-candidate-qualification.md) | Qualify existing delegated-work control planes before building lifecycle machinery | Proposed |
 
 ADR-0006..0008 numbers are not assigned by the spec; they are used here for decisions the spec lists
 in §26/§31 without a number.
