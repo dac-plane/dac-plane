@@ -7,10 +7,10 @@ if [ "$1 $2" = "cluster create" ]; then
     docker exec $n sh -c 'mount | grep -q /sys/fs/bpf || mount bpffs /sys/fs/bpf -t bpf; mount --make-shared /sys/fs/bpf; mkdir -p /run/cilium/cgroupv2; mount | grep -q /run/cilium/cgroupv2 || mount -t cgroup2 none /run/cilium/cgroupv2; mount --make-shared /run/cilium/cgroupv2; iptables -t nat -C POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE'; done
   KC=$(mktemp); "$REAL" kubeconfig get "$C" > $KC || exit 1; export KUBECONFIG=$KC
   helm repo add cilium https://helm.cilium.io >/dev/null 2>&1; helm repo update cilium >/dev/null
-  helm install cilium cilium/cilium --version 1.16.5 -n kube-system \
+  helm install cilium cilium/cilium --version 1.20.2 -n kube-system \
    --set routingMode=native --set autoDirectNodeRoutes=true --set ipv4NativeRoutingCIDR=10.42.0.0/16 \
    --set ipam.mode=kubernetes --set kubeProxyReplacement=false --set enableIPv4Masquerade=false --set ipv6.enabled=false --set operator.replicas=1 \
-   --set bpf.autoMount.enabled=false --set cgroup.autoMount.enabled=false --set cgroup.hostRoot=/run/cilium/cgroupv2 --set hubble.enabled=false >&2 || exit 1
+   --set bpf.autoMount.enabled=false --set cgroup.autoMount.enabled=false --set cgroup.hostRoot=/run/cilium/cgroupv2 --set hubble.enabled=false --set policyCIDRMatchMode="{pods,nodes}" >&2 || exit 1
   kubectl -n kube-system rollout status ds/cilium --timeout=600s >&2 || exit 1
   rm -f $KC; exit 0
 fi
