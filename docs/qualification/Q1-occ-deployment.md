@@ -1,7 +1,7 @@
 # Q1: OCC real deployment (OCE + dedicated Codex, local k3d)
 
 - Date: 12 Oct 2026, 22:40–23:40 WAT
-- **Result: FAIL (environment) — real execution NOT RUN**
+- **Final result: FAIL — stock OCE dedicated Codex did not reach runtime readiness with a custom OpenAI-compatible endpoint**
 - Upstream: openclaw/openclaw-enterprise `07590c64e27ac61c9ad60d9ab61424b70281011a` (same commit the spec inspected)
 - Runtime image (built locally by `occ dev up` from `deploy/runtime/Dockerfile`):
   `docker.io/library/openclaw-enterprise-runtime@sha256:2b6c2829072d7464e4f0419c8612039517eb71411dc0095be7081a14112d4919`
@@ -11,7 +11,7 @@
 - k3s node image: `rancher/k3s:v1.36.4-k3s1@sha256:edad48e12bf81c3a09ac1c05c0c0ffaaa22145980b989d6fae84543a76b83657`
 - Tools (OCE `mise.toml`): node 24.16.0, go 1.27.1, pnpm 11.15.1, k3d 5.8.3, kubectl 1.35.0, helm 3.19.2; Docker 28.5.1
 
-## Commands
+## Initial Linux run commands
 `spike/scripts/00-prereqs.sh`, then `spike/scripts/01-occ-up.sh` (= quickstart: `pnpm cli:build`;
 `OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes OCC_DEVELOPMENT_SANDBOX_DRIVER=none ./bin/occ dev up`).
 Agent deployment script prepared but not reached: `spike/scripts/02-deploy-codex-agent.mjs`.
@@ -31,10 +31,10 @@ Agent deployment script prepared but not reached: `spike/scripts/02-deploy-codex
 
 Evidence: `spike/evidence/q1-occ-dev-up.trimmed.log` (build layer noise removed).
 
-## Not reached
+## Not reached in the initial Linux run
 Namespace ready, Agent create/deploy, Harness model probe, runtime readiness, bounded model task.
-Additionally **no model credential is available** (`OPENAI_API_KEY` / `OPENAI_API_KEY_FILE` unset), so even on a
-capable host the model probe and a real turn would be NOT RUN until one is supplied.
+Additionally, on that Linux host **no model credential was available** (`OPENAI_API_KEY` / `OPENAI_API_KEY_FILE` unset), so
+even on a capable host the model probe and a real turn would have been NOT RUN until one was supplied.
 
 ## What is needed to close Q1
 1. A host whose kernel has `ip_set` (+ `xt_set`) and ideally `vxlan` — e.g. a normal VM/bare-metal Linux with Docker,
@@ -48,9 +48,61 @@ kube-proxy kept, Cilium masquerade off plus one manual iptables MASQUERADE rule)
 allowed-label pod reached the target, wrong-label pod was blocked; DNS, ClusterIP services and pod HTTPS egress worked.
 Script: `spike/scripts/05-cilium-networkpolicy-probe.sh`; evidence: `spike/evidence/cilium-networkpolicy-probe.log`.
 
-This is a CNI feasibility result only. **OCC on a Cilium cluster is NOT RUN**: `occ dev up` creates its own k3d cluster, so
-the next step is a shim (like the existing `k3d cluster create` one) that disables flannel and installs Cilium before OCC's
-isolation check. Q1 stays FAIL until OCC's own check passes. The model credential (item 2 above) is still missing.
+This was a CNI feasibility result only at that point. It was later superseded by the Mac run below, where the k3d shim did
+install Cilium before OCC's isolation check and OCC progressed to Agent deployment.
+
+## Update 2026-10-13: Mac Cilium OCC run reached the dedicated Codex model probe
+
+The Mac run moved past the earlier blockers:
+
+- The k3d shim disables flannel/network-policy, installs Cilium with pod/node CIDR policy matching, and adds the spike-only
+  bridge-route workaround needed by OCC's API-server Pod proxy check.
+- OCC's NetworkPolicy verification passed on the Mac cluster.
+- A Secret-backed in-cluster OpenCodex proxy was deployed as `opencodex:10100` in the OCC namespace. It reads the Camer key and
+  a separate admission token from Kubernetes Secret data; the Agent receives only the admission token.
+- Manual pod-to-proxy probes from OCC-style, labeled pods succeeded through NetworkPolicy and returned real model completions
+  via `camer-digital/glm-5.3-flash`.
+
+The dedicated Codex Agent deployment still does **not** pass Q1. Evidence from the OCC deployment path:
+
+- `spike/out/q1-spike-codex-incluster.json`: first in-cluster proxy deployment failed during `codex.model_probe`.
+- `spike/out/q1-spike-codex-incluster2.json`: interrupted/restarted deployment also failed with
+  `RUNTIME_AUTHENTICATION_FAILED`.
+- `spike/out/q1-spike-codex-incluster3.json`: bounded redeploy retry of the same Agent tried three revisions and all three
+  failed with `RUNTIME_AUTHENTICATION_FAILED`.
+- `spike/out/q1-spike-codex-incluster5.json`: clean rerun after freeing quota failed again with
+  `RUNTIME_AUTHENTICATION_FAILED`.
+- Agent pod logs for the latest revision show workspace setup, Codex login, node setup, and gateway connection succeed before
+  the single Codex model probe exits 1 with `AUTHENTICATION_FAILED`.
+- Direct manual probes from inside the failed Agent pod showed the decisive cause:
+  - Running the same Codex startup probe **without** an explicit `openai_base_url` attempted OpenAI endpoints
+    (`api.openai.com` / `chatgpt.com`) and failed with the OpenCodex admission token as an invalid OpenAI credential.
+  - Running the same Codex startup probe **with** `-c openai_base_url=http://opencodex:10100/v1` succeeded and returned
+    `READY`.
+- The generated runtime ConfigMap for the failed dedicated Codex revision did not include `openai_base_url`; its
+  `config.toml` only contained approval/plugin defaults.
+
+Interpretation: the cluster, Cilium NetworkPolicy, Kubernetes Secret delivery, OpenCodex service, Camer key, and
+Agent-to-gateway startup all progressed far enough to isolate the failure. Q1 remains **FAIL** because OCC's dedicated Codex
+startup probe does not propagate the configured OpenAI-compatible provider base URL into the Codex CLI invocation. The
+configured provider `baseUrl` reaches the OCC/OpenClaw configuration layer, but the readiness gate runs `codex exec
+--ignore-user-config` without the required `openai_base_url`, so the deployed Agent is tested against OpenAI instead of the
+in-cluster OpenCodex endpoint.
+
+This is not a Camer Digital credential failure and not an OpenCodex compatibility failure: both `/v1/chat/completions` and
+`/v1/responses` returned `200 OK` through OpenCodex for the configured Camer models during manual checks. Earlier Camer
+`502`/`429` responses were real transient upstream symptoms, but they are not the adoption-blocking root cause after the
+manual in-pod probe reproduced the OpenAI routing failure.
+
+An attempted local patch to OCE's controller entrypoint can make the probe pass in principle by adding
+`openai_base_url=http://opencodex:10100/v1` to the generated Codex invocation, but that requires modifying OCE internals and
+rolling a patched controller image. That is outside the acceptance bar for adopting OCE as an off-the-shelf control-plane
+dependency.
+
+Decision for this spike: **Q1 FAIL / do not adopt OCE as the project runtime dependency in its current form.** Running
+`03-slice.mjs` is intentionally blocked because the OCC Agent never reaches runtime readiness. A future retry would need
+either an upstream OCE fix that propagates custom provider base URLs into the dedicated Codex startup probe, or a deliberate
+project-owned fork/patch of OCE.
 
 ## Cost / operator time
 ~1 h to reach step 9 on this box, 5 local workarounds; ~20 GB container storage; first build ~10 min.

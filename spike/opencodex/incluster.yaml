@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencodex
+  labels:
+    app: opencodex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opencodex
+  template:
+    metadata:
+      labels:
+        app: opencodex
+    spec:
+      containers:
+        - name: opencodex
+          image: opencodex-proxy:2.84.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: OPENCODEX_HOME
+              value: /opt/opencodex
+            - name: CAMER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opencodex-secrets
+                  key: camer-api-key
+            - name: OCX_ADMISSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opencodex-secrets
+                  key: ocx-admission-token
+          ports:
+            - containerPort: 10100
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 10100
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 10100
+            initialDelaySeconds: 20
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencodex
+  labels:
+    app: opencodex
+spec:
+  selector:
+    app: opencodex
+  ports:
+    - name: http
+      port: 10100
+      targetPort: 10100

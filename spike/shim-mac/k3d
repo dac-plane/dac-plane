@@ -1,0 +1,22 @@
+#!/bin/bash
+# Mac (OrbStack, no ip_set) shim: cluster create => flannel off, k3s netpol off, then Cilium 1.16.5 installed before returning.
+REAL=$(PATH=$(echo "$PATH" | tr : "\n" | grep -v "shim-mac" | paste -sd: -) command -v k3d)
+if [ "$1 $2" = "cluster create" ]; then
+  "$REAL" "$@" --k3s-arg "--flannel-backend=none@server:*" --k3s-arg "--disable-network-policy@server:*" || exit $?
+  C="$3"; for n in $(docker ps --format '{{.Names}}' | grep "^k3d-$C-\(server\|agent\)-"); do
+    docker exec $n sh -c 'mount | grep -q /sys/fs/bpf || mount bpffs /sys/fs/bpf -t bpf; mount --make-shared /sys/fs/bpf; mkdir -p /run/cilium/cgroupv2; mount | grep -q /run/cilium/cgroupv2 || mount -t cgroup2 none /run/cilium/cgroupv2; mount --make-shared /run/cilium/cgroupv2; iptables -t nat -C POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE'; done
+  KC=$(mktemp); "$REAL" kubeconfig get "$C" > $KC || exit 1; export KUBECONFIG=$KC
+  helm repo add cilium https://helm.cilium.io >/dev/null 2>&1; helm repo update cilium >/dev/null
+  helm install cilium cilium/cilium --version 1.20.2 -n kube-system \
+   --set routingMode=native --set autoDirectNodeRoutes=true --set ipv4NativeRoutingCIDR=10.42.0.0/16 \
+   --set ipam.mode=kubernetes --set kubeProxyReplacement=false --set enableIPv4Masquerade=false --set ipv6.enabled=false --set operator.replicas=1 \
+   --set bpf.autoMount.enabled=false --set cgroup.autoMount.enabled=false --set cgroup.hostRoot=/run/cilium/cgroupv2 --set hubble.enabled=false --set policyCIDRMatchMode="{pods,nodes}" >&2 || exit 1
+  kubectl -n kube-system rollout status ds/cilium --timeout=600s >&2 || exit 1
+  # OCC dev up derives the API server Pod-proxy source from `ip route get <podCIDR+2>` matching `dev cni0` (flannel).
+  # With Cilium the node reaches Pods via cilium_host; expose that same source via a dummy cni0 /32 route (spike-only).
+  for n in $(docker ps --format '{{.Names}}' | grep "^k3d-$C-server-"); do
+    docker exec $n sh -c 'CH=$(ip -4 -o addr show cilium_host | awk "{print \$4}" | cut -d/ -f1); ip link add cni0 type dummy 2>/dev/null; ip link set cni0 up; ip route replace 10.42.0.2/32 dev cni0 src $CH; ip route get 10.42.0.2' >&2 || exit 1
+  done
+  rm -f $KC; exit 0
+fi
+exec "$REAL" "$@"

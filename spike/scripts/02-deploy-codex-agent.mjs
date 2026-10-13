@@ -18,10 +18,19 @@ const name = args.find((a) => !a.startsWith("--")) ?? (negative ? "spike-codex-n
 const model = process.env.SPIKE_MODEL ?? "gpt-6-astra";
 const origin = process.env.OCC_URL ?? "http://127.0.0.1:3000";
 const keyFile = process.env.OCC_SERVICE_KEY_FILE ?? "/tmp/openclaw-development/initial-admin-service-key.json";
-const serviceKey = JSON.parse(readFileSync(keyFile, "utf8")).key;
+const serviceKeyObj = JSON.parse(readFileSync(keyFile, "utf8"));
+const serviceKey = serviceKeyObj.key ?? serviceKeyObj.data?.key;
 
 function modelCredential() {
   if (negative) return "invalid-negative-fixture-not-a-credential";
+  // MODEL_KEY_JSON=<file>#<dotted.path>: read one field from a JSON file in-process (Mac run: the
+  // camer-digital key in ~/.opencodex/config.json). The value goes straight into the OCC Secret API body.
+  if (process.env.MODEL_KEY_JSON) {
+    const [file, ptr] = process.env.MODEL_KEY_JSON.split("#");
+    let v = JSON.parse(readFileSync(file, "utf8")); for (const k of ptr.split(".")) v = v?.[k];
+    if (typeof v !== "string" || !v) throw new Error("NO_CREDENTIAL: MODEL_KEY_JSON field missing");
+    return v;
+  }
   const f = process.env.OPENAI_API_KEY_FILE, e = process.env.OPENAI_API_KEY;
   if (f && e) throw new Error("Set only one of OPENAI_API_KEY_FILE / OPENAI_API_KEY");
   const v = f ? readFileSync(f, "utf8").trim() : e;
@@ -47,7 +56,31 @@ async function api(method, path, body, okStatuses = [200, 201, 202]) {
 // Dedicated Codex native configuration, derived from OCE scripts/first-agent.mjs (pinned commit).
 // Spike change: Codex app-server approvalPolicy "on-request" with workspace-write sandbox so that
 // command execution can raise native approval requests (Q2). Unverified until a real turn runs.
+// SPIKE_VARIANT (Mac run with an OpenAI-compatible Chat Completions endpoint, SPIKE_BASE_URL):
+//   codex-custom    dedicated Codex, `openai` provider with custom baseUrl (tests whether OCE accepts it)
+//   embedded-custom embedded OpenClaw, `openai` provider, api openai-completions (DEVIATION from ADR-0011)
+const variant = process.env.SPIKE_VARIANT ?? "codex";
+const baseUrl = process.env.SPIKE_BASE_URL;
+const executionMode = variant === "embedded-custom" ? "embedded" : "dedicated";
 function configuration() {
+  if (variant !== "codex") {
+    const selected = `openai/${model}`;
+    const runtime = variant === "embedded-custom" ? "openclaw" : "codex";
+    const values = {
+      gateway: {
+        mode: "local", bind: "lan", controlUi: { enabled: false },
+        auth: { password: { source: "env", provider: "default", id: "OPENCLAW_GATEWAY_PASSWORD" } },
+        http: { endpoints: { chatCompletions: { enabled: true } } },
+      },
+      agents: { defaults: { model: selected, skipBootstrap: true, models: { [selected]: { agentRuntime: { id: runtime } } } } },
+      models: { providers: { openai: { baseUrl, api: runtime === "codex" ? "openai-responses" : "openai-completions", models: [{ id: model, name: model }] } } },
+    };
+    if (runtime === "codex") values.plugins = { allow: ["codex"], entries: { codex: { enabled: true, config: { appServer: {
+      mode: "guardian", approvalPolicy: "on-request", sandbox: process.env.SPIKE_CODEX_SANDBOX ?? "read-only",
+      transport: "websocket", url: "${APP_SERVER_URL}", authToken: "${APP_SERVER_TOKEN}" } } } } };
+    else values.tools = { exec: { ask: "always", security: "allowlist" } };
+    return { kind: "agent", values };
+  }
   const selected = `codex/${model}`;
   return {
     kind: "agent",
@@ -67,7 +100,7 @@ function configuration() {
   };
 }
 
-const record = { startedAt: new Date().toISOString(), name, model, negativeFixture: negative, steps: [] };
+const record = { startedAt: new Date().toISOString(), name, model, variant, executionMode, baseUrl, negativeFixture: negative, steps: [] };
 const step = (s, d) => { record.steps.push({ at: new Date().toISOString(), step: s, ...d }); log(s, d); };
 const save = () => writeFileSync(join(out, `q1-${name}.json`), JSON.stringify(record, null, 2));
 
@@ -85,7 +118,7 @@ try {
   const cfg = await api("POST", `${base}/configurations`, configuration());
   record.configurationId = cfg.id; step("configuration.created", { id: cfg.id, generation: cfg.generation });
   const agent = await api("POST", `${base}/agents`, {
-    name, configurationId: cfg.id, executionMode: "dedicated",
+    name, configurationId: cfg.id, executionMode,
     harnessAuth: { method: "api_key", source: { kind: "secret", namespaceId: ns.id, id: secret.id } },
   });
   record.agentId = agent.id; record.agentServicePrincipalId = agent.servicePrincipalId;
@@ -101,20 +134,33 @@ try {
   if (!creds.transportConfigured) await api("POST", `${base}/agents/${agent.id}/runtime-credentials`, {});
   step("runtime_credentials.provisioned");
 
-  const rev = await api("POST", `${base}/agents/${agent.id}/deploy`);
-  record.revisionId = rev.id; step("deploy.requested", { revisionId: rev.id, revision: rev.revision });
-  save();
+  const retryErrors = new Set((process.env.SPIKE_RETRY_DEPLOY_ERRORS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  const maxDeployAttempts = 1 + Number(process.env.SPIKE_DEPLOY_RETRIES ?? 0);
+  let deploymentId;
+  for (let attempt = 1; attempt <= maxDeployAttempts; attempt++) {
+    const rev = await api("POST", `${base}/agents/${agent.id}/deploy`);
+    record.revisionId = rev.id;
+    deploymentId = rev.id;
+    step("deploy.requested", { attempt, revisionId: rev.id, revision: rev.revision });
+    save();
 
-  const deadline = Date.now() + Number(process.env.SPIKE_DEPLOY_TIMEOUT_MS ?? 20 * 60_000);
-  let last;
-  while (Date.now() < deadline) {
-    const d = await api("GET", `${base}/agents/${agent.id}/deployments/${rev.id}`);
-    const summary = { status: d.status, phase: d.phase, error: d.error?.code, cause: d.error?.causeKind ?? d.cause?.kind };
-    if (JSON.stringify(summary) !== JSON.stringify(last)) { step("deployment.observed", summary); last = summary; }
-    if (d.status === "succeeded" || d.status === "failed") { record.deployment = d; break; }
-    await new Promise((r) => setTimeout(r, 10_000));
+    const deadline = Date.now() + Number(process.env.SPIKE_DEPLOY_TIMEOUT_MS ?? 20 * 60_000);
+    let last;
+    while (Date.now() < deadline) {
+      const d = await api("GET", `${base}/agents/${agent.id}/deployments/${rev.id}`);
+      const summary = { attempt, status: d.status, phase: d.phase, error: d.error?.code, cause: d.error?.causeKind ?? d.cause?.kind };
+      if (JSON.stringify(summary) !== JSON.stringify(last)) { step("deployment.observed", summary); last = summary; }
+      if (d.status === "succeeded" || d.status === "failed") { record.deployment = d; break; }
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
+    if (record.deployment?.status === "succeeded") break;
+    const retryable = record.deployment?.status === "failed" && retryErrors.has(record.deployment.error?.code);
+    if (!retryable || attempt >= maxDeployAttempts) break;
+    const delayMs = Number(process.env.SPIKE_DEPLOY_RETRY_DELAY_MS ?? 60_000);
+    step("deploy.retrying", { attempt, nextAttempt: attempt + 1, error: record.deployment.error?.code, delayMs });
+    await new Promise((r) => setTimeout(r, delayMs));
   }
-  try { record.runtime = await api("GET", `${base}/agents/${agent.id}/deployments/${rev.id}/runtime`); } catch (e) { record.runtimeError = e.message; }
+  try { record.runtime = await api("GET", `${base}/agents/${agent.id}/deployments/${deploymentId}/runtime`); } catch (e) { record.runtimeError = e.message; }
   try { record.runtimeImages = await api("GET", `${base}/agents/${agent.id}/runtime-images`); } catch (e) { record.runtimeImagesError = e.message; }
   try { record.agentAfter = await api("GET", `${base}/agents/${agent.id}`); } catch {}
   step("done", { deploymentStatus: record.deployment?.status ?? "timeout", activeRevisionId: record.agentAfter?.activeRevisionId });
