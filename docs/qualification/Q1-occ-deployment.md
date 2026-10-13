@@ -42,5 +42,15 @@ capable host the model probe and a real turn would be NOT RUN until one is suppl
 2. `OPENAI_API_KEY_FILE` pointing to a private file with an OpenAI API key able to use the chosen Codex model
    (`SPIKE_MODEL`, default `gpt-6-astra` as in OCE docs). Dedicated Codex receives it as `OPENAI_API_KEY` via an OCC Secret.
 
+## Update 2026-10-13: possible way around the ip_set blocker on this box
+A disposable single-node k3d cluster with **Cilium 1.16.5 as the CNI** (flannel and the k3s NetworkPolicy controller off,
+kube-proxy kept, Cilium masquerade off plus one manual iptables MASQUERADE rule) **enforced a NetworkPolicy on this box**:
+allowed-label pod reached the target, wrong-label pod was blocked; DNS, ClusterIP services and pod HTTPS egress worked.
+Script: `spike/scripts/05-cilium-networkpolicy-probe.sh`; evidence: `spike/evidence/cilium-networkpolicy-probe.log`.
+
+This is a CNI feasibility result only. **OCC on a Cilium cluster is NOT RUN**: `occ dev up` creates its own k3d cluster, so
+the next step is a shim (like the existing `k3d cluster create` one) that disables flannel and installs Cilium before OCC's
+isolation check. Q1 stays FAIL until OCC's own check passes. The model credential (item 2 above) is still missing.
+
 ## Cost / operator time
 ~1 h to reach step 9 on this box, 5 local workarounds; ~20 GB container storage; first build ~10 min.
