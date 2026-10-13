@@ -23,3 +23,14 @@
   probe exits 1. OpenCodex logs from the same run family show Camer upstream failures (`502`, then `429`) for
   `camer-digital/glm-5.3-flash`; do not spend more retries until upstream capacity/key behavior is addressed or the probe
   path is made to report 429/5xx as transient instead of authentication failure.
+- 14:00 WAT: corrected root-cause after in-pod repro. The Camer/OpenCodex path is not the decisive blocker: direct
+  OpenCodex checks for `camer-digital/glm-5.3-flash` and `camer-digital/deepseek-v4-flash-0731` returned `200 OK` for
+  `/v1/chat/completions` and `/v1/responses`. The deployed Agent still failed because OCE's dedicated Codex startup probe
+  runs Codex with `--ignore-user-config` and no `openai_base_url`, so Codex defaults to `api.openai.com`/`chatgpt.com` and
+  rejects the OpenCodex admission token as an invalid OpenAI credential. Running the same probe manually inside the failed
+  Agent pod with `-c openai_base_url=http://opencodex:10100/v1` returned `READY`. Clean rerun
+  `spike/out/q1-spike-codex-incluster5.json` failed again with `RUNTIME_AUTHENTICATION_FAILED`.
+- 14:20 WAT: attempted a local OCE controller patch to pass `openai_base_url` into the generated Codex probe. The patch
+  requires rolling a custom OCE controller image (`openclaw-enterprise-controller:probe-base-url`) and is therefore evidence
+  that adoption would require carrying an OCE fork/patch, not evidence that stock OCE qualifies. Stop the qualification here:
+  **Q1 FAIL / do not adopt stock OCE for this project's runtime path.**
