@@ -16,3 +16,7 @@ it is never counted as PASS.
 
 Decision: [ADR-0012](../adr/0012-adoption-decision-occ.md) rejects adopting stock OCE for this phase. See also:
 [responsibility map and gaps](responsibility-map.md). Template: `TEMPLATE.md`.
+
+Next qualification track: [control-plane candidates](control-plane-candidates.md). This tests whether an
+existing delegated-work control plane such as Paperclip, Kelos or AgentOven can replace the rejected OCE
+foundation before the project builds more lifecycle machinery itself.

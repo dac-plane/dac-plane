@@ -14,4 +14,6 @@ controller, VMM fleet, agent harness, vault, chat transport or workflow platform
 gap (spec §41 "Do not build yet").
 
 ## Open
-Choice between Option A and B depends on qualification experiments Q1-Q5 (spec §42). None have been run.
+Choice between Option A and B originally depended on qualification experiments Q1-Q5 (spec §42). Q1 now
+fails for stock OCE; see ADR-0012. The next evidence step is ADR-0013: qualify existing delegated-work
+control planes before building lifecycle machinery.
