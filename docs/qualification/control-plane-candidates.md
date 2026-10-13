@@ -44,6 +44,11 @@ Environment adapter
 
 Policy and event interface
   Evaluates authority and budgets, records approval decisions and publishes lifecycle events.
+
+Infrastructure substrate
+  Stores durable product state, events, outbox messages, artifacts and logs. PostgreSQL and object
+  storage exist now; Temporal, Hatchet or another workflow substrate is only added if a qualification
+  report proves the SQL/outbox path is insufficient.
 ```
 
 A candidate may replace or implement part of the lower layers only if it preserves that product work
@@ -51,6 +56,17 @@ contract. Passing a candidate test means "usable foundation or adapter target", 
 that platform." Candidate-native terms such as issue, task, session, workspace, run, recipe, worker pool
 or approval must map back to the product contract without making the product state dependent on that
 platform's UI or storage semantics.
+
+The distinction matters for candidate interpretation:
+
+| Layer | Product ownership | Candidate may manage |
+|-------|-------------------|----------------------|
+| Surface | Stable task intake, progress, response and result APIs | A connector or UI surface, if replaceable |
+| Product control plane | Task/attempt/attention/decision/budget/artifact/audit/result state | Only if it maps cleanly and does not become platform-locked |
+| Runtime | Runtime capability mapping and event normalization | Native agent execution, turns, tool calls and runtime-specific cancellation |
+| Environment | Environment binding and cleanup intent | Workspace/sandbox/cluster/VM provisioning, isolation and process execution |
+| Policy / secret / tool gateway | Product authority, approval records and grant semantics | Enforcement hooks, brokered credentials, native tool-call gates |
+| Infrastructure substrate | Durable product records and event publication | Queue/workflow/storage mechanics when they remain implementation details |
 
 ## Candidate order
 
