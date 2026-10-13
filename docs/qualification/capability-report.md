@@ -6,7 +6,7 @@ intent, not a pass.
 
 | # | Capability | Result | Evidence / reason |
 |---|------------|--------|-------------------|
-| 1 | Install OCC (local k3d, Kubernetes-only profile) | **FAIL (environment)** | Stops at NetworkPolicy verification; host kernel lacks `ip_set` (Q1 step 9) |
+| 1 | Install OCC (local k3d, Kubernetes-only profile) | **FAIL (environment)** | Stops at NetworkPolicy verification; host kernel lacks `ip_set` (Q1 step 9). 2026-10-13: Cilium CNI enforced NetworkPolicy on this box in a separate probe; OCC on it NOT RUN |
 | 2 | Namespace ready | NOT RUN | Blocked by 1 |
 | 3 | Agent (dedicated Codex, `api_key` Secret) deploy + runtime readiness | NOT RUN | Blocked by 1; script ready (`02-deploy-codex-agent.mjs`) |
 | 4 | Bounded real model task | NOT RUN | Blocked by 1 and **no credential** |

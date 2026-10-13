@@ -1,0 +1,46 @@
+# spike/scripts/05-cilium-networkpolicy-probe.sh on the agent box, 2026-10-13 ~08:50 Africa/Douala (info-level Cilium lines removed)
+[36mINFO[0m[0000] Prep: Network                                
+[36mINFO[0m[0000] Created network 'k3d-cprobe'                 
+[36mINFO[0m[0000] Created image volume k3d-cprobe-images       
+[36mINFO[0m[0000] Starting new tools node...                   
+[36mINFO[0m[0000] Starting node 'k3d-cprobe-tools'             
+[36mINFO[0m[0001] Creating node 'k3d-cprobe-server-0'          
+[36mINFO[0m[0001] Using the k3d-tools node to gather environment information 
+[36mINFO[0m[0001] HostIP: using network gateway 172.18.0.1 address 
+[36mINFO[0m[0001] Starting cluster 'cprobe'                    
+[36mINFO[0m[0001] Starting servers...                          
+[36mINFO[0m[0001] Starting node 'k3d-cprobe-server-0'          
+[36mINFO[0m[0005] All agents already running.                  
+[36mINFO[0m[0005] All helpers already running.                 
+[36mINFO[0m[0005] Injecting records for hostAliases (incl. host.k3d.internal) and for 1 network members into CoreDNS configmap... 
+[36mINFO[0m[0007] Cluster 'cprobe' created successfully!       
+[36mINFO[0m[0007] You can now use it like this:                
+kubectl cluster-info
+NAME: cilium
+LAST DEPLOYED: Tue Oct 13 08:39:11 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+You have successfully installed Cilium.
+Your release version is 1.16.5.
+For any further help, visit https://docs.cilium.io/en/v1.16/gettinghelp
+Waiting for daemon set spec update to be observed...
+Waiting for daemon set "cilium" rollout to finish: 0 of 1 updated pods are available...
+daemon set "cilium" successfully rolled out
+namespace/np created
+pod/target created
+service/target exposed
+pod/target condition met
+networkpolicy.networking.k8s.io/only-allowed created
+egress probe (HTTP status): 200
+allowed-label probe: REACHED
+wrong-label probe: BLOCKED
+RESULT: PASS (NetworkPolicy enforced by Cilium)
+Clean up: k3d cluster delete cprobe
+
+# Variants tried before this one (same box, same day)
+- Cilium defaults (iptables masquerade): agent fatal 'error while creating ipset cilium_node_set_v4' (needs ip_set).
+- kubeProxyReplacement=true + bpf.masquerade, k3s kube-proxy disabled: agent ran and policy was enforced by pod IP, but ClusterIP services failed (CoreDNS could not reach the API server).
+- Extra check on the passing variant: pod HTTPS to api.openai.com/v1/models returned 401 (reachable, no key sent).
