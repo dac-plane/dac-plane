@@ -10,3 +10,8 @@
   ipBlock, so the allowed peer was blocked too and `occ dev up` failed "NetworkPolicy enforcement could not be verified".
   Cilium 1.18 rejects `policyCIDRMatchMode=pods` ("unknown CIDR match mode"). Attempt 6: Cilium 1.20.2 with
   `policyCIDRMatchMode={pods,nodes}`.
+- 10:16 WAT attempt 6 (Cilium 1.20.2, policyCIDRMatchMode={pods,nodes}): **OCC network isolation check PASSED** (allowed peer
+  reached target, wrong-label/wrong-ns denied). Next failure: "wait for the k3d Pod bridge route used by the API server Pod proxy"
+  (OCC expects flannel's `dev cni0` for `ip route get <podCIDR+2>`). Attempt 7: shim adds a dummy `cni0` with a /32 route for
+  podCIDR+2 sourced from the cilium_host address (the real Pod-proxy source under Cilium). Spike-only workaround.
+- 03-slice.mjs written (native gateway session/turn/approval scenarios; mapping persisted to spike/out/slice-mapping.json).

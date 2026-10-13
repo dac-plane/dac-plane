@@ -12,6 +12,11 @@ if [ "$1 $2" = "cluster create" ]; then
    --set ipam.mode=kubernetes --set kubeProxyReplacement=false --set enableIPv4Masquerade=false --set ipv6.enabled=false --set operator.replicas=1 \
    --set bpf.autoMount.enabled=false --set cgroup.autoMount.enabled=false --set cgroup.hostRoot=/run/cilium/cgroupv2 --set hubble.enabled=false --set policyCIDRMatchMode="{pods,nodes}" >&2 || exit 1
   kubectl -n kube-system rollout status ds/cilium --timeout=600s >&2 || exit 1
+  # OCC dev up derives the API server Pod-proxy source from `ip route get <podCIDR+2>` matching `dev cni0` (flannel).
+  # With Cilium the node reaches Pods via cilium_host; expose that same source via a dummy cni0 /32 route (spike-only).
+  for n in $(docker ps --format '{{.Names}}' | grep "^k3d-$C-server-"); do
+    docker exec $n sh -c 'CH=$(ip -4 -o addr show cilium_host | awk "{print \$4}" | cut -d/ -f1); ip link add cni0 type dummy 2>/dev/null; ip link set cni0 up; ip route replace 10.42.0.2/32 dev cni0 src $CH; ip route get 10.42.0.2' >&2 || exit 1
+  done
   rm -f $KC; exit 0
 fi
 exec "$REAL" "$@"
