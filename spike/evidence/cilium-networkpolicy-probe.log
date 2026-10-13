@@ -1,4 +1,4 @@
-# spike/scripts/05-cilium-networkpolicy-probe.sh on the agent box, 2026-10-13 ~08:50 Africa/Douala (info-level Cilium lines removed)
+# spike/scripts/05-cilium-networkpolicy-probe.sh on the agent box, 2026-10-13 08:40 Africa/Douala (info-level Cilium lines removed)
 [36mINFO[0m[0000] Prep: Network                                
 [36mINFO[0m[0000] Created network 'k3d-cprobe'                 
 [36mINFO[0m[0000] Created image volume k3d-cprobe-images       
