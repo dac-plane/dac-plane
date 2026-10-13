@@ -14,9 +14,10 @@ greenfield lifecycle controller.
 The project still needs a universal delegated-agent control plane: one accountable work lifecycle across
 surfaces, runtimes and execution environments. The product-owned layer owns task outcome, attempts,
 attention, decisions, artifacts, budgets, audit, result review and portability. Runtimes and environments
-are replaceable through adapters. The open question is whether an existing delegated-work control plane
-already covers enough of the lower lifecycle layer to adopt as a foundation or adapter target without
-moving the product boundary.
+are replaceable through adapters. Policy gateways, secret brokers and workflow/queue/storage systems are
+supporting layers, not the product model. The open question is whether an existing delegated-work control
+plane already covers enough of the lower lifecycle layer to adopt as a foundation or adapter target
+without moving the product boundary.
 
 ## Decision
 
@@ -36,6 +37,8 @@ The test must use the same bounded scenario for every candidate and record PASS/
 - cancellation and cleanup;
 - mapping to the product task/attempt/attention/result schema;
 - adapter portability across surfaces, runtimes and environments;
+- preservation of the product/infrastructure split, so durable storage or workflow substrate remains an
+  implementation detail rather than the public work contract;
 - deployment fit.
 
 ## Consequences

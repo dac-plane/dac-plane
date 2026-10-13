@@ -15,6 +15,36 @@ v1.1 builds only product semantics and thin adapters. Agent deployment, IAM, aud
 lifecycle are reuse candidates (OpenClaw Enterprise/OCC first, lighter runtime + one managed sandbox as
 fallback). See [docs/adr](docs/adr/README.md).
 
+## Product layer model
+
+The product is the independent delegated-work control plane, not a replacement name for one provider or
+runtime. Candidate tools are evaluated by what layer they can own without breaking this model:
+
+```text
+User/work surface
+  chat, Slack, IDE, dashboard, ticket, schedule or API.
+
+Product control plane
+  task, owner, objective, attempts, waits, approvals, budgets, artifacts, audit,
+  result review, retry/continue/cancel semantics and portability.
+
+Runtime adapter
+  Codex, Claude Code, OpenCode, Cursor, OpenClaw or a custom agent.
+
+Environment adapter
+  local machine, container, Coder workspace, Kubernetes, E2B, OpenSandbox, Daytona or VM.
+
+Policy / secret / tool gateway
+  approval enforcement, scoped credentials, budgets and audit.
+
+Infrastructure substrate
+  PostgreSQL, transactional outbox/queue, Temporal/Hatchet if later selected, object storage.
+```
+
+The product-owned contract must stay stable when a runtime, environment or policy component changes.
+Paperclip, Kelos, AgentOven, OpenFlows, Temporal, E2B, OpenSandbox or similar tools can only be adopted
+as foundations or adapters if they preserve that boundary.
+
 ## Layout (spec §26)
 | Path | Purpose | State |
 |------|---------|-------|
