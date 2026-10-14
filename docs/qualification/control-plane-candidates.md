@@ -4,6 +4,12 @@ Status: **closed — no candidate qualifies as the primary control-plane foundat
 custom-provider routing, approval authority, restart reconciliation and cancellation, but failed the hard
 CP7 product-mapping gate because it has no authoritative task/attempt budget and enforcement contract.
 
+The post-qualification company and product landscape is recorded in
+[`control-plane-market-landscape.md`](control-plane-market-landscape.md). It distinguishes vendor-owned
+coding-agent lifecycles, horizontal governance planes, workflow/environment components and early
+open-source lifecycle attempts. The review did not identify a production-ready horizontal lifecycle
+foundation and therefore does not reopen any closed candidate.
+
 ## Why this exists
 
 Q1 disqualified stock OpenClaw Enterprise/OCC for the current runtime path. The follow-up qualification
@@ -120,6 +126,14 @@ but it did not supply the complete product work contract. The project must imple
 The project does not need to build model inference, a coding-agent runtime, a sandbox/VM platform, a
 general workflow engine or a general policy gateway. Those remain replaceable implementation components
 and are qualified only when a concrete integration requires one.
+
+The broader market review confirms that this division is normal rather than accidental. Cursor, Codex,
+Copilot, Jules, Claude Code, Devin, Factory and Replit own substantial work lifecycles, but each lifecycle
+is authoritative only for that vendor's agent. Microsoft Agent 365 and Runlayer span multiple agents,
+but own governance, identity, policy, tools and telemetry rather than the complete delegated-work
+aggregate. The closest open-source horizontal implementation found, Agent Control Center Core, is an
+early single-maintainer alpha without an authoritative budget-enforcement contract or production
+multi-tenant service. See the landscape report for sources and exact boundaries.
 
 The sequence is now:
 

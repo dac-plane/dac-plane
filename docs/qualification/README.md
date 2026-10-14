@@ -21,6 +21,10 @@ it is never counted as PASS.
 | CP6 | Final market scan and CanDoItAll runtime | **CLOSED — REJECTED AS PRIMARY FOUNDATION**; provider routing, workflow authority, restart recovery and process cancellation passed, but the hard CP7 task/attempt budget mapping failed and current deployment fit failed CP9. | [CP6](CP6-final-market-scan.md) |
 | CP7 | Prismor policy component | **NOT RUN**; proposed policy/tool-call enforcement fit has not been qualified. | [candidate plan](control-plane-candidates.md) |
 
+Market context: [delegated-agent control-plane market landscape](control-plane-market-landscape.md).
+This source/API review explains why vendor coding-agent control planes, cross-runtime governance
+products, workflow engines and environment platforms do not replace the product-owned lifecycle core.
+
 Decision: [ADR-0012](../adr/0012-adoption-decision-occ.md) rejects adopting stock OCE for this phase. See also:
 [responsibility map and gaps](responsibility-map.md). Template: `TEMPLATE.md`.
 
@@ -31,3 +35,10 @@ the required-state mapping; BoringOS and OCCP failed the final source screen. Ca
 CP4, CP6 and CP8 but failed hard gate CP7 because it has no authoritative task/attempt budget contract;
 its current release/security posture also failed CP9. Prismor remains untested only as a narrower policy
 component, not as a control-plane candidate.
+
+The wider company scan reached the same boundary from the opposite direction: mature coding-agent
+companies built task/session control planes for their own runtimes, while products that work across
+vendors primarily govern identity, tools, policy and telemetry. One early open-source project closely
+matches the horizontal architecture, but it does not pass maturity, deployment or budget ownership
+requirements. The foundation search therefore remains closed rather than merely exhausted by the
+original candidate list.

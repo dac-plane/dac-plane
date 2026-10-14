@@ -9,8 +9,11 @@
 > restart reconciliation and process cancellation. It failed the hard CP7 product mapping because it
 > has no authoritative task/attempt budget contract, and it failed current CP9 deployment fit. Current evidence lives in
 > [`docs/qualification/control-plane-candidates.md`](../qualification/control-plane-candidates.md),
-> [`CP6-final-market-scan.md`](../qualification/CP6-final-market-scan.md) and ADR-0013. No foundation is
-> adopted; the next step is the minimum product-owned lifecycle core behind replaceable adapters.
+> [`CP6-final-market-scan.md`](../qualification/CP6-final-market-scan.md), the
+> [`control-plane market landscape`](../qualification/control-plane-market-landscape.md) and ADR-0013.
+> No foundation is adopted; the next step is the minimum product-owned lifecycle core behind replaceable
+> adapters. The company scan confirms that mature coding-agent products own vertical lifecycles for
+> their own runtimes, while horizontal products concentrate on governance, identity, tools and telemetry.
 
 ## 1. Delegated Agent Control Plane
 

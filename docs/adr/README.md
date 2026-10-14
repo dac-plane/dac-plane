@@ -6,7 +6,9 @@ qualification result or an owner decision before it can be closed).
 
 Third-party claims use the evidence labels in spec §45. OCC, Paperclip and CanDoItAll have runtime
 evidence; the remaining candidates have source/API evidence at the levels recorded in
-`docs/qualification`. Source inspection is not a runtime PASS.
+`docs/qualification`. Source inspection is not a runtime PASS. The broader vendor categories and the
+resulting build boundary are recorded in
+[`control-plane-market-landscape.md`](../qualification/control-plane-market-landscape.md).
 
 | ADR | Title | Status |
 |-----|-------|--------|

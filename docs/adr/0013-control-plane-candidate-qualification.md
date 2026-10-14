@@ -3,6 +3,7 @@
 - Status: Accepted — qualification closed with no adopted primary foundation
 - Spec: §35-§43
 - Qualification: `docs/qualification/control-plane-candidates.md`
+- Market landscape: `docs/qualification/control-plane-market-landscape.md`
 
 ## Context
 
@@ -94,6 +95,14 @@ The market scan is therefore closed. Implement the minimum product-owned lifecyc
 by the contracts and schema. Existing runtimes, workflow systems and environment providers remain
 replaceable adapters or infrastructure components. PostgreSQL and an outbox remain the default substrate
 unless focused evidence proves otherwise.
+
+A post-qualification company scan confirmed the same boundary. Major coding-agent vendors expose rich
+task or session lifecycles but keep them tied to their own agents. Cross-runtime products such as
+Microsoft Agent 365 and Runlayer govern identities, access, tools, policy and telemetry rather than the
+authoritative task/attempt/result lifecycle. Agent Control Center Core is the closest open-source
+horizontal implementation found, but its alpha maturity, missing production service boundaries and lack
+of authoritative pre-execution budget enforcement fail the current foundation requirements. This is
+documented source/API evidence, not a new runtime qualification.
 
 ## Non-goals
 
