@@ -74,7 +74,7 @@ The distinction matters for candidate interpretation:
 |-------|-----------|-------------|---------------------------------------|
 | 1 | Paperclip | **FAIL / WATCH** | Closest documented match to the delegated-work layer, but the tested release did not propagate the configured custom provider into managed Codex execution. Retest only after the trigger recorded in `CP1-paperclip.md`. |
 | 2 | Kelos | **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT** | Kubernetes-native Tasks, Sessions, Workspaces and WorkerPools require Kubernetes/cert-manager. The primary product deployment must not require Kubernetes. Retain Kelos only as a possible future Kubernetes environment adapter. |
-| 3 | AgentOven | **NEXT** | Docs and source expose a control-plane server, registry, recipe engine, task router, sessions, A2A/MCP and human gates. Prove that the standalone server/container path is operable without Kubernetes and that its records map to coding-agent work, artifacts and approval authority. |
+| 3 | AgentOven | **NOT RUN — DISQUALIFIED BY SOURCE SCREEN** | The repository is active but too immature to become the foundation: effectively one maintainer, red CI, failed and mutable release handling, large low-cohesion files, and production persistence/security/deployment components in the private Pro repository. See `CP3-agentoven.md`. |
 | 4 | OpenFlows | **DEFERRED** | Useful only if Coder becomes the selected environment; it is not the universal product control plane by itself. |
 | 5 | Temporal/Hatchet/Inngest | **FALLBACK SUBSTRATE** | Durable workflow substrate if no agent-native candidate passes. These do not provide agent workspace/runtime/sandbox semantics and would support a product-owned control-plane core. |
 | 6 | Prismor | **OPTIONAL COMPONENT** | Policy, approval and audit layer for tool calls, not a lifecycle owner for delegated work. |
@@ -153,39 +153,32 @@ disqualification, not evidence that Kelos is technically defective.
 Kelos may be reconsidered later as an optional Kubernetes environment adapter. It must not own the
 portable product task, attention, result or audit contract.
 
-## Third run: AgentOven
+## Third screen: AgentOven
 
-AgentOven is the next bounded control-plane qualification. Pin the current source tag and test its
-standalone server/container path with PostgreSQL; Kubernetes is not permitted in the qualification
-deployment. Docker Compose may be used to reproduce the test, but its existence alone does not pass the
-production deployment-fit gate.
+Result: **NOT RUN — DISQUALIFIED BY SOURCE SCREEN**.
 
-The run must prove all general gates above and these candidate-specific points:
+The source audit pinned `v0.9.0` and stopped before installation or provider-key use. AgentOven is active,
+but activity is concentrated in one maintainer and unusually large commits. The pinned source has red CI,
+its release workflow failed, the same release tag was moved while release fixes were attempted, and the
+public server does not provide the PostgreSQL-backed production state implied by its local deployment
+path. The durable PostgreSQL store, stronger identity controls and production topology live in the
+separate private Pro repository; its documented production deployment is Kubernetes-based.
 
-1. configure Camer Digital through AgentOven's provider `base_url` and prove the request reaches that
-   endpoint rather than a default vendor endpoint;
-2. invoke a coding-capable external or custom runtime without making AgentOven's built-in agent loop the
-   product contract;
-3. persist the delegated task/run, session, human gate, decision, logs, artifact and final outcome through
-   a control-plane restart;
-4. bind the human gate to the exact proposed write and reject stale or mismatched approval;
-5. cancel or time out the run and prove that no delegated process or environment remains active;
-6. show a credible non-Kubernetes deployment, secret-injection and upgrade path for an ordinary VM or
-   container host.
-
-Write `docs/qualification/CP3-agentoven.md` after the run. Do not build a product integration until that
-report exists.
+This is enough to fail foundation maturity and deployment fit without spending a Camer Digital key or
+running the bounded task. The full evidence and reconsideration conditions are in
+`docs/qualification/CP3-agentoven.md`.
 
 ## Decision rule after two runs
 
-After the executed Paperclip and AgentOven runs:
+After the Paperclip runtime test and AgentOven source screen:
 
-- If one candidate passes CP1-CP8, create an ADR adopting it as the qualified foundation or adapter
-  target and reduce the product backlog to the remaining gaps.
-- If both fail only on provider routing, do not repeat the OCE mistake: reject stock adoption unless the
-  candidate exposes a supported base-url/provider configuration path.
-- If both fail on product lifecycle ownership, keep the project-owned control-plane core and choose one
-  runtime plus one managed-sandbox/environment backend.
+- No tested candidate qualifies as the primary foundation. Keep the product-owned control-plane contract
+  and define the smallest implementation for task, attempt, attention, decision, budget, artifact, audit
+  and result state.
+- Do not repeat the OCE/Paperclip mistake: any runtime adapter must prove supported custom-provider routing
+  before integration.
+- Choose one runtime and one managed-sandbox/environment backend behind replaceable adapters; do not use
+  an environment provider as a substitute for product lifecycle state.
 - If both fail only on sandbox/runtime isolation, evaluate one sandbox provider under ADR-0008. E2B or
   OpenSandbox is an environment candidate, not a replacement for the product control plane.
 - If a candidate passes execution but fails adapter portability, keep it as one backend integration only;
