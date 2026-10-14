@@ -1,99 +1,23 @@
-# Delegated Agent Control Plane
+# Architecture exploration
 
-Product task/attention/result layer that lets an individual delegate software work to coding agents,
-follow progress, answer questions, approve specific operations and review results with evidence.
+This directory contains the architecture exploration, specifications, decision records, qualification
+evidence and initial contract prototypes produced before implementation of `dac-plane` begins.
 
-Specification: [docs/spec/SPEC.md](docs/spec/SPEC.md) (v1.1, 12 Oct 2026; the
-[PDF](docs/spec/delegated-agent-control-plane-v1.1.pdf) is authoritative).
+The exploration is complete. No evaluated candidate qualified as the provider-neutral lifecycle
+foundation. The resulting direction is to build the minimum product-owned lifecycle core for tasks,
+attempts, attention, decisions, budgets, artifacts, audit and result review, while keeping agent runtimes,
+execution environments, policy systems and infrastructure replaceable.
 
-> **Status: phase 0 / milestone 1 foundations.** Contracts, domain model, state machines and the product
-> storage schema exist and are tested. No runtime, sandbox, HTTP service or UI exists yet. Most
-> candidates have failed an applicable hard gate. CanDoItAll passed provider, authority, restart and
-> cancellation tests but failed the hard product-budget mapping gate. The foundation search is closed.
+## Start here
 
-## Reuse-first
-v1.1 builds only product semantics and thin adapters. OCC was tested and rejected. Paperclip, Kelos,
-AgentOven, OpenFlows and generic workflow substrates also failed their applicable hard gates. CanDoItAll
-passed custom Camer Digital routing, workflow authority, restart reconciliation and process cancellation,
-but it lacks the authoritative task/attempt budget contract required by CP7 and fails current deployment
-fit. The product-owned lifecycle core is therefore required. See
-[docs/qualification](docs/qualification/README.md) and [docs/adr](docs/adr/README.md).
+| Document | Purpose |
+|----------|---------|
+| [Build specification](docs/spec/SPEC.md) | Product boundary, domain model, contracts, state machines, security requirements and phased build plan. |
+| [Market landscape](docs/qualification/control-plane-market-landscape.md) | What existing companies and projects control, what remains reusable, and why no horizontal lifecycle foundation was adopted. |
+| [Candidate qualification](docs/qualification/control-plane-candidates.md) | Qualification gates, candidate dispositions and the evidence required to reopen the foundation decision. |
+| [Architecture decisions](docs/adr/README.md) | Accepted, proposed, rejected and open architecture decisions. |
+| [Qualification reports](docs/qualification/README.md) | Runtime tests, source screens and capability evidence. |
+| [Implementation status](docs/implementation-status.md) | Existing prototypes, verification commands and the next implementation slice. |
 
-## Product layer model
-
-The product is the independent delegated-work control plane, not a replacement name for one provider or
-runtime. Candidate tools are evaluated by what layer they can own without breaking this model:
-
-```text
-User/work surface
-  chat, Slack, IDE, dashboard, ticket, schedule or API.
-
-Product control plane
-  task, owner, objective, attempts, waits, approvals, budgets, artifacts, audit,
-  result review, retry/continue/cancel semantics and portability.
-
-Runtime adapter
-  Codex, Claude Code, OpenCode, Cursor, OpenClaw or a custom agent.
-
-Environment adapter
-  local machine, container, Coder workspace, Kubernetes, E2B, OpenSandbox, Daytona or VM.
-
-Policy / secret / tool gateway
-  approval enforcement, scoped credentials, budgets and audit.
-
-Infrastructure substrate
-  PostgreSQL, transactional outbox/queue, Temporal/Hatchet if later selected, object storage.
-```
-
-The product-owned contract must stay stable when a runtime, environment or policy component changes.
-Paperclip, Kelos, AgentOven, OpenFlows, Temporal, E2B, OpenSandbox or similar tools can only be adopted
-as foundations or adapters if they preserve that boundary.
-
-## Layout (spec §26)
-| Path | Purpose | State |
-|------|---------|-------|
-| `packages/product-api` | Stable surface contracts: domain types, state machines, approval binding, capability tiers, JSON Schemas, OpenAPI 3.1 | Done (WP02 draft) |
-| `services/product-tasks` | Product task service; PostgreSQL schema `product` + constraint tests | Schema done; service not started |
-| `integrations/occ` | Archived OCC public API mapping proposal (WP03) | Closed after Q1/ADR-0012 |
-| `integrations/runtime` | Native session/event/approval correlation (WP04) | Not started |
-| `apps/task-workspace` | First-party web UI (WP08) | Not started |
-| `tests/integration-fit` | Reuse qualification and failure tests | Not started |
-| `docs/adr` | Decision records | |
-| `docs/qualification` | Q1-Q8 reports plus control-plane candidate qualification | Foundation scan closed; no candidate adopted |
-
-## Develop
-```sh
-npm ci
-npm run typecheck
-npm test                 # vitest: state machines, approval binding, schemas, OpenAPI
-# storage (needs PostgreSQL 16+):
-psql -v ON_ERROR_STOP=1 -d dacp -f services/product-tasks/migrations/0001_product_core.sql
-psql -v ON_ERROR_STOP=1 -d dacp -f services/product-tasks/test/sql/0001_constraints.sql
-```
-
-## What is implemented
-- State machines for task, attempt, attention request, environment and connection (spec §11, §13, §19),
-  with optimistic-version compare-and-set, terminal-state protection and explicit targets when policy
-  chooses the outcome (e.g. verification pass -> review vs auto-accept).
-- Canonical action hash and approval binding checks (tenant, responder, request version, expiry,
-  superseded attempt) plus executor-side revalidation (hash, policy version, lease epoch) (§13, §33).
-- Event envelope v1 / command envelope, event-type ingestion rule (unknown permission/state events are
-  rejected) and runtime capability tiers A/B/C (§14, §16).
-- JSON Schemas and OpenAPI for every §15 endpoint.
-- PostgreSQL schema enforcing §10: tenant-scoped composite FKs, one active attempt per task, one blocking
-  attention request per attempt, one decision per request version, idempotency keys, unique native event
-  keys, per-task event sequence, transactional outbox, append-only audit, immutable artifacts/events,
-  lease-fencing claim function.
-
-## Integration spike (ADR-0011)
-OCE + dedicated Codex: Q1 failed after the Mac/k3d+Cilium run reached real Agent deployment. Stock OCE did not propagate the
-custom OpenAI-compatible base URL into the dedicated Codex startup probe, so Codex defaulted to OpenAI and rejected the
-OpenCodex admission token. ADR-0012 rejects adopting OCE as the current runtime dependency.
-See [spike/README.md](spike/README.md), [capability report](docs/qualification/capability-report.md),
-[responsibility map](docs/qualification/responsibility-map.md), and [ADR-0012](docs/adr/0012-adoption-decision-occ.md).
-
-## Next (backlog, spec §30)
-1. Implement the minimum product-owned lifecycle core defined by the existing contracts and PostgreSQL schema.
-2. WP02 finish: tenant identity mapping to platform auth; publish contract versioning/deprecation policy.
-3. WP04 runtime simulator fixture and adapter for the first pinned runtime.
-4. WP05 attention inbox API; WP07 artifact manifest/review; WP08 task workspace UI.
+Historical OCC/OpenClaw experiments are retained under [`spike/`](spike/README.md). They are evidence
+for rejected approaches, not the active implementation path.
