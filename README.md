@@ -8,15 +8,15 @@ Specification: [docs/spec/SPEC.md](docs/spec/SPEC.md) (v1.1, 12 Oct 2026; the
 
 > **Status: phase 0 / milestone 1 foundations.** Contracts, domain model, state machines and the product
 > storage schema exist and are tested. No runtime, sandbox, HTTP service or UI exists yet. Most
-> candidates have failed an applicable hard gate. CanDoItAll remains open after the corrected custom
-> provider survived restart; its process/workflow lifecycle path is the next bounded qualification.
+> candidates have failed an applicable hard gate. CanDoItAll passed provider, authority, restart and
+> cancellation tests but failed the hard product-budget mapping gate. The foundation search is closed.
 
 ## Reuse-first
 v1.1 builds only product semantics and thin adapters. OCC was tested and rejected. Paperclip, Kelos,
 AgentOven, OpenFlows and generic workflow substrates also failed their applicable hard gates. CanDoItAll
-passes custom Camer Digital routing across application restart. Its direct agent-run API is not enough
-to decide approval authority or product mapping because the candidate exposes a richer process/workflow
-path; that path remains to be tested. See
+passed custom Camer Digital routing, workflow authority, restart reconciliation and process cancellation,
+but it lacks the authoritative task/attempt budget contract required by CP7 and fails current deployment
+fit. The product-owned lifecycle core is therefore required. See
 [docs/qualification](docs/qualification/README.md) and [docs/adr](docs/adr/README.md).
 
 ## Product layer model
@@ -59,7 +59,7 @@ as foundations or adapters if they preserve that boundary.
 | `apps/task-workspace` | First-party web UI (WP08) | Not started |
 | `tests/integration-fit` | Reuse qualification and failure tests | Not started |
 | `docs/adr` | Decision records | |
-| `docs/qualification` | Q1-Q8 reports plus control-plane candidate qualification | CanDoItAll process-path qualification open; no candidate adopted |
+| `docs/qualification` | Q1-Q8 reports plus control-plane candidate qualification | Foundation scan closed; no candidate adopted |
 
 ## Develop
 ```sh
@@ -93,9 +93,7 @@ See [spike/README.md](spike/README.md), [capability report](docs/qualification/c
 [responsibility map](docs/qualification/responsibility-map.md), and [ADR-0012](docs/adr/0012-adoption-decision-occ.md).
 
 ## Next (backlog, spec §30)
-1. Run the bounded CanDoItAll process/workflow test for authority-bound external requests, lifecycle
-   mapping, budgets, cancellation, result review and restart continuation.
-2. Decide adoption or rejection from that evidence; only then choose the minimum product-owned WP09 gap.
-3. WP02 finish: tenant identity mapping to the selected platform auth; publish contract versioning/deprecation policy.
-4. WP04 runtime simulator fixture and adapter for the pinned runtime.
-5. WP05 attention inbox API; WP07 artifact manifest/review; WP08 task workspace UI.
+1. Implement the minimum product-owned lifecycle core defined by the existing contracts and PostgreSQL schema.
+2. WP02 finish: tenant identity mapping to platform auth; publish contract versioning/deprecation policy.
+3. WP04 runtime simulator fixture and adapter for the first pinned runtime.
+4. WP05 attention inbox API; WP07 artifact manifest/review; WP08 task workspace UI.

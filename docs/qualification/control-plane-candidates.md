@@ -1,8 +1,8 @@
 # Control-plane candidate qualification
 
-Status: **open — CanDoItAll process/workflow qualification remains**. No primary control-plane
-foundation is adopted. The corrected CanDoItAll custom-provider path passes across restart; CP4 approval
-authority and CP7 lifecycle mapping still require the candidate's richer process/workflow path.
+Status: **closed — no candidate qualifies as the primary control-plane foundation**. CanDoItAll passed
+custom-provider routing, approval authority, restart reconciliation and cancellation, but failed the hard
+CP7 product-mapping gate because it has no authoritative task/attempt budget and enforcement contract.
 
 ## Why this exists
 
@@ -17,13 +17,13 @@ Can an existing control plane run delegated agent work with our provider key, ou
 our task/result record and deployable operational boundaries?
 ```
 
-The answer is not yet final. OpenFlows fails the environment-portability boundary
-because its current control and production topology require Coder. Temporal, Hatchet and Inngest provide
-durable execution primitives but not the authoritative delegated-work records the product requires.
-CanDoItAll's source contains a materially closer state model and non-Kubernetes deployment path. A
-separately created Camer Digital provider survives restart and routes DeepSeek successfully. The direct
-agent-run path does not exercise the richer process/workflow authority model, so the remaining hard gates
-must be tested there before adoption or rejection.
+The answer from the completed scan is no. OpenFlows fails the environment-portability boundary because
+its current control and production topology require Coder. Temporal, Hatchet and Inngest provide durable
+execution primitives but not the authoritative delegated-work records the product requires. CanDoItAll
+came closest: a separately created Camer Digital provider survived restart, its workflow authority model
+passed, and its process runtime reconciled an interrupted attempt safely. It still lacks the product
+task/attempt budget record and enforcement contract required by CP7, and therefore cannot be the primary
+lifecycle owner.
 
 ## Product boundary that must not move
 
@@ -82,7 +82,7 @@ The distinction matters for candidate interpretation:
 | 3 | AgentOven | **CLOSED — REJECTED** | The repository is too immature to become the foundation: effectively one maintainer, red CI, failed and mutable release handling, large low-cohesion files, and production persistence/security/deployment components in the private Pro repository. See `CP3-agentoven.md`. |
 | 4 | OpenFlows | **CLOSED — DISQUALIFIED BY CODER DEPENDENCY** | Its current controller, identity, model-routing and production workspace topology require Coder. This fails the hard CP8 portability gate. See `CP4-openflows.md`. |
 | 5 | Temporal/Hatchet/Inngest | **CLOSED — DISQUALIFIED AS PRIMARY CONTROL PLANES** | Their native models are workflow/function/task runs, attempts, waits, events, logs and outputs. They do not supply authoritative attention, decision, budget, artifact, audit and result-review records. See `CP5-workflow-substrates.md`. |
-| 6 | BoringOS / OCCP / CanDoItAll final scan | **CANDOITALL OPEN** | BoringOS and OCCP fail the hard approval/state-model mapping in source. CanDoItAll passes custom provider routing across restart; its process/workflow CP4 and CP7 tests remain. See `CP6-final-market-scan.md`. |
+| 6 | BoringOS / OCCP / CanDoItAll final scan | **CLOSED — ALL REJECTED** | BoringOS and OCCP fail approval/state mapping. CanDoItAll passes CP2, CP4, CP6 and CP8 but fails hard gate CP7 because loop budgets and observed cost do not supply an authoritative task/attempt budget. It also fails current CP9 deployment fit. See `CP6-final-market-scan.md`. |
 | 7 | Prismor | **NOT RUN — POLICY COMPONENT CANDIDATE** | It is proposed for policy/tool-call enforcement rather than lifecycle ownership. Its fit has not been tested. |
 
 Sources used for the initial screen:
@@ -105,11 +105,11 @@ Sources used for the initial screen:
 These sources supported the screens. The evidence-backed dispositions and exact pinned versions are
 recorded in the individual CP1, CP3, CP4, CP5 and CP6 reports.
 
-## What the completed qualifications prove and what remains open
+## What the completed qualifications prove
 
-The completed qualifications show what the rejected tools do not supply. CanDoItAll may supply part of
-this lifecycle, but its process/workflow path must demonstrate the mapping before the project decides
-which of these records it has to implement:
+The completed qualifications show what the rejected tools do not supply. CanDoItAll demonstrated more
+of the lifecycle than the other candidates, including scoped decisions and safe restart reconciliation,
+but it did not supply the complete product work contract. The project must implement:
 
 - authoritative task and attempt transitions, including retry, continue and cancellation intent;
 - durable attention requests and approval decisions with authority, expiry and replay-safe binding;
@@ -123,10 +123,10 @@ and are qualified only when a concrete integration requires one.
 
 The sequence is now:
 
-1. run the CanDoItAll process/workflow path for authority-bound waits and lifecycle mapping;
-2. repeat wait/decision continuation across restart and inspect cancellation, budgets and result review;
-3. decide adoption or rejection from the hard gates; and
-4. implement only the product-owned records the candidate cannot safely own behind an adapter.
+1. freeze the stable product work contract and state transitions;
+2. implement the minimum product-owned lifecycle core and outbox-backed command handling;
+3. integrate one runtime and one environment through replaceable adapters; and
+4. reuse proven candidate mechanisms only where they remain subordinate to that contract.
 
 ## Required proof for any candidate
 
@@ -211,8 +211,7 @@ After the Paperclip and CanDoItAll runtime tests, Kelos deployment screen, Agent
 OpenFlows architecture screen and workflow-substrate API/state-model screen:
 
 - No candidate is adopted as the primary foundation.
-- The broad exploratory search is closed, but the bounded CanDoItAll process/workflow qualification is
-  still open.
+- The broad exploratory search and bounded CanDoItAll qualification are closed.
 - Do not repeat the OCE/Paperclip mistake: any runtime adapter must prove supported custom-provider routing
   before integration.
 - Choose one runtime and one managed-sandbox/environment backend behind replaceable adapters; do not use
@@ -221,8 +220,10 @@ OpenFlows architecture screen and workflow-substrate API/state-model screen:
   gate. E2B or OpenSandbox would be an environment component, not a replacement for the product control
   plane.
 
-CanDoItAll passes CP8 for separately created provider profiles. CP4 and CP7 are undecided until the
-process/workflow path is exercised. Do not infer rejection from the invalid managed-seed restart run.
+CanDoItAll passes CP4, CP6 and CP8. Its rejection is not based on the invalid managed-seed restart run or
+on Camer Digital: the supported custom profile and process calls worked. It is rejected because CP7 lacks
+an authoritative task/attempt budget contract, and its current release/security/operations posture also
+fails CP9 for foundation adoption.
 
 ## Evidence standard
 

@@ -11,7 +11,7 @@ supported public APIs. Environment/runtime readiness means "execution available"
 succeeded". A deployment snapshot remains distinct from a result revision.
 
 ## Qualification outcome
-OCC mapping is closed by ADR-0012. CanDoItAll's bounded direct-run qualification found useful execution,
-approval, artifact and usage records. Its separate process/workflow model has not yet been exercised, so
-single-owner mapping remains open. The product schema stays authoritative unless that bounded mapping
-test proves an adapter can preserve it without dual ownership.
+OCC mapping is closed by ADR-0012. CanDoItAll's runtime qualification found useful execution, approval,
+artifact, usage, recovery and review records, but no authoritative task/attempt budget contract. CP7
+therefore failed. The product schema remains authoritative; candidate runtimes and workflow systems are
+subordinate adapters or infrastructure components.

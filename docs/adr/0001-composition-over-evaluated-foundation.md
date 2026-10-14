@@ -1,6 +1,6 @@
 # ADR-0001: Composition over an evaluated foundation
 
-- Status: Accepted — composition boundary retained; foundation search open
+- Status: Accepted — composition boundary retained; foundation search closed
 - Spec: §3, §8, §35, §40, §41
 
 ## Context
@@ -15,6 +15,6 @@ gap (spec §41 "Do not build yet").
 
 ## Qualification outcome
 Choice between Option A and B originally depended on qualification experiments Q1-Q5 (spec §42). Q1
-failed for stock OCE; see ADR-0012. ADR-0013 rejected the other closed candidates. CanDoItAll's corrected
-custom provider passed across restart, so its process/workflow lifecycle path remains to be qualified
-before the project chooses an existing foundation or the minimum product-specific lifecycle core.
+failed for stock OCE; see ADR-0012. ADR-0013 rejected the other candidates. CanDoItAll passed provider,
+authority, restart and cancellation tests but failed the hard task/attempt budget mapping gate. No
+existing foundation qualified, so the project proceeds with the minimum product-owned lifecycle core.

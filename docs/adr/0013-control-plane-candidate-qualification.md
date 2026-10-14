@@ -1,6 +1,6 @@
 # ADR-0013: Qualify existing delegated-work control planes before building lifecycle machinery
 
-- Status: Open — CanDoItAll process/workflow path remains to be qualified
+- Status: Accepted — qualification closed with no adopted primary foundation
 - Spec: §35-§43
 - Qualification: `docs/qualification/control-plane-candidates.md`
 
@@ -44,13 +44,14 @@ The test must use the same bounded scenario for every candidate and record PASS/
 
 ## Consequences
 
-- Do not build a custom scheduler, workflow engine, worker pool, sandbox fleet or approval platform until
-  the candidate reports identify a real gap.
+- The reports now justify the minimum product-owned lifecycle core. They do not justify building a
+  custom general workflow engine, worker pool, sandbox fleet or model runtime.
 - Do not call a candidate adopted because its docs claim matching features. Adoption requires observed
   runtime evidence in `docs/qualification`.
-- Paperclip and Kelos are closed. No primary-foundation candidate is adopted.
-- CanDoItAll passed corrected custom provider routing across restart. CP4 and CP7 remain open because
-  the direct agent-run path did not exercise the candidate's richer process/workflow authority model.
+- No primary-foundation candidate is adopted.
+- CanDoItAll passed corrected custom provider routing, workflow approval authority, restart recovery and
+  process cancellation, but failed the hard CP7 mapping gate because it lacks an authoritative
+  task/attempt budget and enforcement contract. It also failed current CP9 deployment fit.
 - If a candidate fails custom provider routing, reject it for this deployment path unless the supported
   configuration can route to OpenCodex/Camer without a fork.
 - If a candidate cannot be isolated behind explicit adapters, keep it as an optional backend integration
@@ -82,10 +83,17 @@ proved custom Camer Digital routing. The first restart result was invalid as a p
 it edited a bootstrap-managed OpenAI seed. A corrected, separately created Camer Digital profile retained
 its endpoint and model and completed DeepSeek calls before and after restart.
 
-The final qualification remains open for the process/workflow path. That run must decide whether its
-external-request authority, lifecycle records, budgets, cancellation and result review map cleanly enough
-to adopt behind the product contract. Existing runtimes and environment providers remain replaceable
-adapters. PostgreSQL and an outbox remain the default substrate unless focused evidence proves otherwise.
+The final process/workflow qualification exercised authenticated external requests, stale/conflicting
+responses, restart continuation, denial, process launch idempotency, interrupted-attempt recovery,
+operator rework and explicit cancellation. CP4 and CP6 passed. CP7 failed because CanDoItAll's native
+budget is a loop-repeat ledger and its usage/cost records are observations after execution, not an
+authoritative product task/attempt budget with pre-execution enforcement. Its current release, dependency,
+secret-protection and CI posture also failed CP9 for foundation adoption.
+
+The market scan is therefore closed. Implement the minimum product-owned lifecycle core already defined
+by the contracts and schema. Existing runtimes, workflow systems and environment providers remain
+replaceable adapters or infrastructure components. PostgreSQL and an outbox remain the default substrate
+unless focused evidence proves otherwise.
 
 ## Non-goals
 
