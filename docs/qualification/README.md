@@ -14,10 +14,12 @@ it is never counted as PASS.
 | Q7 | Upgrade / license | PARTIAL (pins recorded; no upgrade test) | [Q1](Q1-occ-deployment.md) |
 | Q8 | Product portability | NOT RUN | |
 | CP1 | Paperclip control-plane candidate | **FAIL / WATCH**; install/state worked, but both `test-drive` and normal `paperclipai run` delegated Codex calls still used OpenAI instead of the configured Camer Digital endpoint. Upstream has merged/active gateway work, so retest only after a runtime propagation fix or local patch. | [CP1](CP1-paperclip.md) |
+| CP2 | Kelos control-plane candidate | **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT**; Kelos requires Kubernetes/cert-manager, while the primary product deployment must not require Kubernetes. Kelos remains eligible only as a future optional Kubernetes environment adapter. | [candidate screen](control-plane-candidates.md#second-screen-kelos) |
+| CP3 | AgentOven control-plane candidate | **NEXT**; qualify the standalone server/container path, custom Camer Digital routing, durable lifecycle state, bound human approval, restart recovery and cancellation before considering adoption. | [candidate plan](control-plane-candidates.md#third-run-agentoven) |
 
 Decision: [ADR-0012](../adr/0012-adoption-decision-occ.md) rejects adopting stock OCE for this phase. See also:
 [responsibility map and gaps](responsibility-map.md). Template: `TEMPLATE.md`.
 
-Next qualification track: [control-plane candidates](control-plane-candidates.md). This tests whether an
-existing delegated-work control plane such as Paperclip, Kelos or AgentOven can replace the rejected OCE
-foundation before the project builds more lifecycle machinery itself.
+Next qualification: [AgentOven](control-plane-candidates.md#third-run-agentoven). This tests whether its
+non-Kubernetes server/container path can provide enough delegated-work lifecycle control before the
+project builds more lifecycle machinery itself.
