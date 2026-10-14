@@ -15,11 +15,13 @@ it is never counted as PASS.
 | Q8 | Product portability | NOT RUN | |
 | CP1 | Paperclip control-plane candidate | **FAIL / WATCH**; install/state worked, but both `test-drive` and normal `paperclipai run` delegated Codex calls still used OpenAI instead of the configured Camer Digital endpoint. Upstream has merged/active gateway work, so retest only after a runtime propagation fix or local patch. | [CP1](CP1-paperclip.md) |
 | CP2 | Kelos control-plane candidate | **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT**; Kelos requires Kubernetes/cert-manager, while the primary product deployment must not require Kubernetes. Kelos remains eligible only as a future optional Kubernetes environment adapter. | [candidate screen](control-plane-candidates.md#second-screen-kelos) |
-| CP3 | AgentOven control-plane candidate | **NEXT**; qualify the standalone server/container path, custom Camer Digital routing, durable lifecycle state, bound human approval, restart recovery and cancellation before considering adoption. | [candidate plan](control-plane-candidates.md#third-run-agentoven) |
+| CP3 | AgentOven control-plane candidate | **NOT RUN — DISQUALIFIED BY SOURCE SCREEN**; the public release is too immature to rely on as the product foundation: effectively single-maintainer ownership, red CI, failed/mutable release handling, large low-cohesion files, and production durability/security components in a private Pro repository. | [CP3 source audit](CP3-agentoven.md) |
 
 Decision: [ADR-0012](../adr/0012-adoption-decision-occ.md) rejects adopting stock OCE for this phase. See also:
 [responsibility map and gaps](responsibility-map.md). Template: `TEMPLATE.md`.
 
-Next qualification: [AgentOven](control-plane-candidates.md#third-run-agentoven). This tests whether its
-non-Kubernetes server/container path can provide enough delegated-work lifecycle control before the
-project builds more lifecycle machinery itself.
+No full third-party control-plane candidate is currently selected. Paperclip failed the provider-neutral
+runtime gate; Kelos conflicts with the non-Kubernetes deployment constraint; AgentOven failed the source,
+release and deployment-fit screen before installation. The next decision is therefore the smallest
+product-owned control-plane core plus one replaceable runtime/environment backend, not another assumed
+all-in-one foundation.

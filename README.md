@@ -89,7 +89,9 @@ See [spike/README.md](spike/README.md), [capability report](docs/qualification/c
 [responsibility map](docs/qualification/responsibility-map.md), and [ADR-0012](docs/adr/0012-adoption-decision-occ.md).
 
 ## Next (backlog, spec §30)
-1. WP01 reuse qualification: run the [control-plane candidate tests](docs/qualification/control-plane-candidates.md), starting with Paperclip, before building more lifecycle machinery.
+1. WP01 reuse qualification is closed with no adopted primary foundation: Paperclip failed provider
+   routing, Kelos conflicts with the non-Kubernetes deployment constraint, and AgentOven failed its
+   source/release/deployment-fit screen. See the [candidate decisions](docs/qualification/control-plane-candidates.md).
 2. WP02 finish: tenant identity mapping to the chosen platform auth; publish contract versioning/deprecation policy.
 3. WP09 product outbox publisher + task command handlers in `services/product-tasks` (transition + event + outbox in one transaction).
 4. WP04 runtime simulator fixture and adapter for the pinned runtime.

@@ -353,17 +353,17 @@ Paperclip remains interesting as a source of lifecycle ideas:
 But it is not adopted. A supported non-OpenAI provider path is a hard gate, and both tested paths
 failed that gate.
 
-## Smallest next test
+## Subsequent qualification outcome
 
-Do not build a Paperclip product integration on the tested release. The next useful work is one of:
-
-1. open an upstream Paperclip issue or local patch proving why `PAPERCLIP_CODEX_PROVIDERS` is not
-   reaching `prepareCodexRuntimeConfig` in this run path, despite merged PR #7919; or
-2. move to the Kelos candidate test.
-
-For this project, the practical next step is Kelos unless the work item is explicitly "patch and
-retest Paperclip." Paperclip can be revisited only if an upstream fix or local patch first produces a
-run log containing both:
+Do not build a Paperclip product integration on the tested release. Paperclip can be revisited only if
+an upstream fix or local patch first produces a run log containing both:
 
 - Paperclip's provider merge note for `camer-digital`;
 - absence of `api.openai.com` in the Codex failure/success path.
+
+The wider candidate sequence changed after this run. Kelos was not executed because Kubernetes is not
+an accepted primary deployment requirement. AgentOven was then disqualified by its source, release and
+deployment-fit screen before installation. See `control-plane-candidates.md` and `CP3-agentoven.md` for
+the current decision.
+
+No existing candidate is currently adopted as the product control-plane foundation.

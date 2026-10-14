@@ -1,6 +1,6 @@
 # ADR-0013: Qualify existing delegated-work control planes before building lifecycle machinery
 
-- Status: Proposed
+- Status: Accepted — qualification concluded 2026-10-14
 - Spec: §35-§43
 - Qualification: `docs/qualification/control-plane-candidates.md`
 
@@ -57,6 +57,25 @@ The test must use the same bounded scenario for every candidate and record PASS/
   configuration can route to OpenCodex/Camer without a fork.
 - If a candidate cannot be isolated behind explicit adapters, keep it as an optional backend integration
   only. Do not let it become the product's control-plane model.
+
+## Qualification outcome
+
+The qualification track did not produce an adoptable primary foundation:
+
+- Paperclip was installed and exercised, but managed Codex ignored the configured Camer Digital route
+  and called OpenAI. It remains `FAIL / WATCH` pending a provider-propagation fix.
+- Kelos was not installed. Requiring Kubernetes for the primary deployment conflicts with the selected
+  deployment constraint. It remains eligible only as an optional future Kubernetes environment adapter.
+- AgentOven was screened at pinned tag `v0.9.0` and was not installed. Its effectively single-maintainer
+  ownership, red CI, failed and mutable release handling, large low-cohesion changes, and dependence on a
+  private Pro repository for production persistence/security/deployment make it unsuitable as the
+  foundation at this stage.
+
+The consequence is narrower than "build everything." The product owns the minimum durable task,
+attempt, attention, decision, budget, artifact, audit and result model. Existing runtimes and environment
+providers remain replaceable adapters. PostgreSQL and an outbox are the default substrate; a workflow
+engine or sandbox provider is selected only after a focused qualification proves that component is
+needed and suitable.
 
 ## Non-goals
 
