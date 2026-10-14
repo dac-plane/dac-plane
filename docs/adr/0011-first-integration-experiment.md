@@ -1,6 +1,6 @@
 # ADR-0011: Provisional first integration experiment, and confirmed state interpretations
 
-- Status: Accepted (provisional experiment scope; Bryan's direction, 12 Oct 2026)
+- Status: Superseded experiment — completed with negative adoption result
 - Spec: §16, §29 phase 0, §31, §40 Option A, §42 Q1-Q5
 
 ## (a) First experiment (Option A, provisional)
@@ -12,6 +12,11 @@
 | Sandbox | None. No E2B / OpenShell. E2B is the fallback (Option B) if this route fails or costs too much. |
 | Auth | Supported API-key path with a securely supplied test credential (`OPENAI_API_KEY`, never committed) |
 | Surface | Minimal API/test client (`spike/`) |
+
+Outcome: Q1 reached real Agent deployment on Mac/k3d+Cilium and proved NetworkPolicy enforcement, but
+the dedicated Codex readiness probe ignored the configured custom provider base URL. ADR-0012 therefore
+rejected this foundation/runtime path. The table above records the experiment that was run; it is not
+the current implementation plan.
 
 ## (b) Confirmed interpretations (state machines updated)
 1. **Deny** closes that approval request as `denied` and blocks that action only. The task returns to

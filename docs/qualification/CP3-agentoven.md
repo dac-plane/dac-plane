@@ -5,7 +5,7 @@
 - Pinned tag: `v0.9.0`
 - Pinned commit: `ba194cc435ec0d8e431a9b603663edb145327227`
 - Public license: Apache-2.0
-- Result: **NOT RUN — DISQUALIFIED BY SOURCE SCREEN**
+- Result: **CLOSED — REJECTED BY SOURCE SCREEN**
 - Runtime/provider test: not run
 
 ## Decision
@@ -136,9 +136,10 @@ Runtimes and environments remain replaceable adapters. E2B, OpenSandbox or anoth
 may manage compute, but must not become the owner of task, attempt, attention, decision, result or audit
 state.
 
-## Reconsideration conditions
+## Archived screening criteria
 
-Re-screen AgentOven only after all of these are true:
+AgentOven is not on the active roadmap. A new architecture decision should not authorize another screen
+unless all of these are true:
 
 1. a published release has an immutable tag and a successful release workflow;
 2. default-branch CI is green, including Rust format, lint, build and tests;

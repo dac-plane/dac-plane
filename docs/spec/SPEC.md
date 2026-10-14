@@ -2,6 +2,15 @@
 
 > Markdown conversion of `delegated-agent-control-plane-v1.1.pdf` (12 October 2026). The PDF is authoritative; tables are kept as preformatted blocks.
 
+> **Post-spec qualification status, 14 October 2026.** The candidate choices below are the original
+> v1.1 hypotheses, not current adoption decisions. Q1 and ADR-0012 rejected OCC. Paperclip, Kelos,
+> AgentOven, OpenFlows, Temporal, Hatchet and Inngest also failed their applicable hard gates. The final
+> CanDoItAll runtime qualification passed custom Camer Digital routing across application restart after
+> correcting an invalid managed-seed setup. Its process/workflow authority and lifecycle mapping remain open. Current evidence lives in
+> [`docs/qualification/control-plane-candidates.md`](../qualification/control-plane-candidates.md),
+> [`CP6-final-market-scan.md`](../qualification/CP6-final-market-scan.md) and ADR-0013. No foundation is
+> adopted yet; the next step is the bounded CanDoItAll process/workflow qualification.
+
 ## 1. Delegated Agent Control Plane
 
 Project definition, architecture and reuse-first implementation blueprint

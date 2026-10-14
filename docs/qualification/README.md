@@ -13,15 +13,21 @@ it is never counted as PASS.
 | Q6 | Sandbox alternative (E2B) | NOT RUN | |
 | Q7 | Upgrade / license | PARTIAL (pins recorded; no upgrade test) | [Q1](Q1-occ-deployment.md) |
 | Q8 | Product portability | NOT RUN | |
-| CP1 | Paperclip control-plane candidate | **FAIL / WATCH**; install/state worked, but both `test-drive` and normal `paperclipai run` delegated Codex calls still used OpenAI instead of the configured Camer Digital endpoint. Upstream has merged/active gateway work, so retest only after a runtime propagation fix or local patch. | [CP1](CP1-paperclip.md) |
-| CP2 | Kelos control-plane candidate | **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT**; Kelos requires Kubernetes/cert-manager, while the primary product deployment must not require Kubernetes. Kelos remains eligible only as a future optional Kubernetes environment adapter. | [candidate screen](control-plane-candidates.md#second-screen-kelos) |
-| CP3 | AgentOven control-plane candidate | **NOT RUN — DISQUALIFIED BY SOURCE SCREEN**; the public release is too immature to rely on as the product foundation: effectively single-maintainer ownership, red CI, failed/mutable release handling, large low-cohesion files, and production durability/security components in a private Pro repository. | [CP3 source audit](CP3-agentoven.md) |
+| CP1 | Paperclip control-plane candidate | **CLOSED — REJECTED**; install/state worked, but both `test-drive` and normal `paperclipai run` delegated Codex calls still used OpenAI instead of the configured Camer Digital endpoint. This fails the hard provider-neutrality gate; no retest is scheduled. | [CP1](CP1-paperclip.md) |
+| CP2 | Kelos control-plane candidate | **CLOSED — REJECTED FOR PRIMARY DEPLOYMENT**; Kelos requires Kubernetes/cert-manager, while the primary product deployment must not require Kubernetes. It is not on the active implementation path. | [candidate screen](control-plane-candidates.md#second-screen-kelos) |
+| CP3 | AgentOven control-plane candidate | **CLOSED — REJECTED BY SOURCE SCREEN**; the public release is too immature to rely on as the product foundation: effectively single-maintainer ownership, red CI, failed/mutable release handling, large low-cohesion files, and production durability/security components in a private Pro repository. | [CP3 source audit](CP3-agentoven.md) |
+| CP4 | OpenFlows control-plane candidate | **CLOSED — DISQUALIFIED BY CODER DEPENDENCY**; its controller, identity, model-routing and production workspace topology make Coder part of the control plane, failing CP8 portability. | [CP4](CP4-openflows.md) |
+| CP5 | Temporal/Hatchet/Inngest as control planes | **CLOSED — ALL DISQUALIFIED BY SOURCE/API SCREEN**; they persist execution runs, attempts, waits, events and results but do not supply the authoritative delegated-work state required by CP7. | [CP5](CP5-workflow-substrates.md) |
+| CP6 | Final market scan and CanDoItAll runtime | **OPEN**; a separately created Camer Digital profile survived restart and DeepSeek calls passed before and after it. The process/workflow authority and lifecycle-mapping path remains to be tested. | [CP6](CP6-final-market-scan.md) |
+| CP7 | Prismor policy component | **NOT RUN**; proposed policy/tool-call enforcement fit has not been qualified. | [candidate plan](control-plane-candidates.md) |
 
 Decision: [ADR-0012](../adr/0012-adoption-decision-occ.md) rejects adopting stock OCE for this phase. See also:
 [responsibility map and gaps](responsibility-map.md). Template: `TEMPLATE.md`.
 
-No full third-party control-plane candidate is currently selected. Paperclip failed the provider-neutral
-runtime gate; Kelos conflicts with the non-Kubernetes deployment constraint; AgentOven failed the source,
-release and deployment-fit screen before installation. The next decision is therefore the smallest
-product-owned control-plane core plus one replaceable runtime/environment backend, not another assumed
-all-in-one foundation.
+No control-plane qualification produced an adopted foundation. Paperclip failed provider
+routing; Kelos failed deployment fit; AgentOven failed source/release/deployment maturity; OpenFlows
+failed portability because Coder is part of its control topology; Temporal, Hatchet and Inngest failed
+the required-state mapping; BoringOS and OCCP failed the final source screen. CanDoItAll is not adopted,
+but it is not disqualified: CP8 passes after correcting the provider setup, while CP4 and CP7 require the
+candidate's process/workflow path. Prismor remains untested only as a narrower policy component, not as
+a control-plane candidate.

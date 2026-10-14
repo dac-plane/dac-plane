@@ -1,5 +1,9 @@
 # Responsibility map: what OCC and the runtime cover vs. product gaps
 
+Status: **historical Q1 evidence, not the target architecture**. ADR-0012 rejected OCC for the current
+architecture. This table is retained to explain the tested ownership split and must not be read as an
+active implementation plan. Current candidate status is in `control-plane-candidates.md`.
+
 Basis: OCE docs at `07590c64` (harness-execution.md, gateway-routing.md, api cheat sheet, first-agent.md)
 and OpenClaw exec-approvals docs. Documented unless marked observed. Nothing below was observed end-to-end.
 

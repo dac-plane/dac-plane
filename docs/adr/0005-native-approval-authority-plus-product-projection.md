@@ -11,4 +11,7 @@ answer cannot resurrect expired/superseded native authority. Implemented in this
 machine, canonical action hash, and DB constraint "at most one accepted decision per request version".
 
 ## Open
-Whether OpenClaw exec approvals cover question-type requests and restart reconciliation (Q2, Q3).
+CanDoItAll blocked and resumed a tool call, but its direct approval API did not expose the responder
+authority, expiry or invalidation fields required here, and restart changed the provider configuration
+before continuation. The product-side projection and binding remain required. Runtime-specific native
+authority and cancellation receipts must still be qualified through the future runtime adapter.

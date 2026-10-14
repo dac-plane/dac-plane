@@ -5,7 +5,7 @@
 - Upstream component / version: `paperclipai@2026.1012.0` from npm; GitHub repository `paperclipai/paperclip`; license reported by npm metadata as MIT.
 - Host prerequisites: macOS local host, Node.js `24.21.0` via `mise`, Paperclip embedded PostgreSQL, loopback server at `127.0.0.1:3100`.
 - Configuration: isolated `PAPERCLIP_HOME` under `/tmp`, Codex local adapter, model `glm-5.3-flash`, Camer Digital base URL intended as `https://api.ai.camer.digital/v1`, credential sourced from `~/.opencodex/config.json` into a temporary shell env var only.
-- Decision consequence: do not adopt stock Paperclip as the product control-plane foundation for this phase. Paperclip documents a custom Codex provider path, and its installed adapter contains code for it, but both executed delegated runs still used OpenAI. The layer is therefore promising for lifecycle/state, but the tested release/path fails the provider-neutral gate. Keep it on watch; do not discard it permanently.
+- Decision consequence: do not adopt stock Paperclip as the product control-plane foundation. Paperclip documents a custom Codex provider path, and its installed adapter contains code for it, but both executed delegated runs still used OpenAI. The tested release/path fails the hard provider-neutral gate. The candidate is closed and no retest is scheduled.
 
 ## What was tested
 
@@ -60,10 +60,10 @@ Therefore the question is not "does Paperclip claim support for custom endpoints
 question is "does the tested Paperclip execution path actually apply that support to the delegated
 Codex run?" In this run, it did not.
 
-## Upstream status checked on 2026-10-14
+## Archived upstream status checked on 2026-10-14
 
-The upstream evidence is mixed. It supports a retest later, but it does not overturn the failed
-local qualification result.
+The upstream evidence was mixed. It did not overturn the failed local qualification result and does not
+place Paperclip on the active roadmap.
 
 | Upstream item | State checked | Meaning for this project |
 |---------------|---------------|--------------------------|
@@ -78,17 +78,18 @@ The important conclusion is narrow: Paperclip has a real upstream design for cus
 routing, and there are active adjacent fixes. The tested `paperclipai@2026.1012.0` path still failed
 to apply that design to our delegated runtime.
 
-Retest Paperclip only when at least one of these changes is true:
+Reopening Paperclip would require a new architecture decision and current evidence that at least one of
+these changes is true:
 
 1. a Paperclip release after `2026.1012.0` explicitly fixes `PAPERCLIP_CODEX_PROVIDERS` propagation
    into the managed Codex runtime; or
 2. an upstream PR merges a managed gateway/AI-connection path for `codex_local` and states that runtime
    requests go to the configured `/v1/responses` endpoint; or
-3. this repository carries a local Paperclip patch that proves the provider JSON reaches
-   `prepareCodexRuntimeConfig`.
+3. an officially supported configuration proves the provider JSON reaches
+   `prepareCodexRuntimeConfig` without a product-maintained fork.
 
-The retest must record all of this evidence before Paperclip can move from **FAIL / WATCH** to a
-candidate:
+Any newly authorized qualification would have to record all of this evidence before Paperclip could be
+considered again:
 
 - run log contains Paperclip's merge note for `camer-digital`;
 - managed `config.toml` contains `model_provider = "camer-digital"`;
@@ -355,8 +356,8 @@ failed that gate.
 
 ## Subsequent qualification outcome
 
-Do not build a Paperclip product integration on the tested release. Paperclip can be revisited only if
-an upstream fix or local patch first produces a run log containing both:
+Do not build a Paperclip product integration on the tested release. Paperclip is closed; the archived
+minimum evidence for any future decision to reopen it includes a run log containing both:
 
 - Paperclip's provider merge note for `camer-digital`;
 - absence of `api.openai.com` in the Codex failure/success path.

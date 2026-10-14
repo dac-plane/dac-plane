@@ -1,6 +1,10 @@
-# integrations/occ (WP03) — not started
+# integrations/occ (WP03) — archived after failed qualification
 
-Public-API mapping to OpenClaw Enterprise / OCC: ProductTenant -> admitted Namespace, ProductProfile ->
-admitted Configuration/Agent, Attempt -> exact AgentRevision + native session/turn (spec §36).
-Rules: no writes to OCC private tables, no new Compute controller, preserve original actor (ADR-0002, 0010).
-Blocked on Q1 (OCC real deployment) and the Option A/B choice (ADR-0001).
+This directory preserves the proposed public-API mapping to OpenClaw Enterprise/OCC as qualification
+evidence. It is not an active integration target. Q1 proved the Cilium network boundary but the dedicated
+Codex readiness path ignored the configured custom provider base URL, so ADR-0012 rejected OCC for the
+current architecture.
+
+Do not implement this mapping unless a new ADR reopens OCC with upstream evidence that the exact failed
+provider-routing path is fixed. The reusable rule remains: integrations use public APIs, never private
+candidate tables, and preserve the original actor and product-owned task state.

@@ -1,14 +1,14 @@
 # Control-plane candidate qualification
 
-Status: **planned**. No candidate below is adopted until it passes the bounded runtime test in this
-document.
+Status: **open — CanDoItAll process/workflow qualification remains**. No primary control-plane
+foundation is adopted. The corrected CanDoItAll custom-provider path passes across restart; CP4 approval
+authority and CP7 lifecycle mapping still require the candidate's richer process/workflow path.
 
 ## Why this exists
 
-Q1 disqualified stock OpenClaw Enterprise/OCC for the current runtime path. That does not mean the
-project should immediately build every control-plane function itself. It means the next qualification
-must test whether an existing delegated-work control plane can own enough of the lifecycle safely,
-while this project keeps the product-specific task, attention, result, evidence and portability model.
+Q1 disqualified stock OpenClaw Enterprise/OCC for the current runtime path. The follow-up qualification
+tested whether another existing delegated-work control plane could own enough of the lifecycle safely,
+while this project kept the product-specific task, attention, result, evidence and portability model.
 
 The question is now:
 
@@ -17,8 +17,13 @@ Can an existing control plane run delegated agent work with our provider key, ou
 our task/result record and deployable operational boundaries?
 ```
 
-If yes, integrate it as a foundation or adapter target. If no, build only the missing product-owned
-control-plane core and use existing sandbox/runtime services as backends.
+The answer is not yet final. OpenFlows fails the environment-portability boundary
+because its current control and production topology require Coder. Temporal, Hatchet and Inngest provide
+durable execution primitives but not the authoritative delegated-work records the product requires.
+CanDoItAll's source contains a materially closer state model and non-Kubernetes deployment path. A
+separately created Camer Digital provider survives restart and routes DeepSeek successfully. The direct
+agent-run path does not exercise the richer process/workflow authority model, so the remaining hard gates
+must be tested there before adoption or rejection.
 
 ## Product boundary that must not move
 
@@ -72,12 +77,13 @@ The distinction matters for candidate interpretation:
 
 | Order | Candidate | Disposition | Why test it / risk to prove or reject |
 |-------|-----------|-------------|---------------------------------------|
-| 1 | Paperclip | **FAIL / WATCH** | Closest documented match to the delegated-work layer, but the tested release did not propagate the configured custom provider into managed Codex execution. Retest only after the trigger recorded in `CP1-paperclip.md`. |
-| 2 | Kelos | **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT** | Kubernetes-native Tasks, Sessions, Workspaces and WorkerPools require Kubernetes/cert-manager. The primary product deployment must not require Kubernetes. Retain Kelos only as a possible future Kubernetes environment adapter. |
-| 3 | AgentOven | **NOT RUN — DISQUALIFIED BY SOURCE SCREEN** | The repository is active but too immature to become the foundation: effectively one maintainer, red CI, failed and mutable release handling, large low-cohesion files, and production persistence/security/deployment components in the private Pro repository. See `CP3-agentoven.md`. |
-| 4 | OpenFlows | **DEFERRED** | Useful only if Coder becomes the selected environment; it is not the universal product control plane by itself. |
-| 5 | Temporal/Hatchet/Inngest | **FALLBACK SUBSTRATE** | Durable workflow substrate if no agent-native candidate passes. These do not provide agent workspace/runtime/sandbox semantics and would support a product-owned control-plane core. |
-| 6 | Prismor | **OPTIONAL COMPONENT** | Policy, approval and audit layer for tool calls, not a lifecycle owner for delegated work. |
+| 1 | Paperclip | **CLOSED — REJECTED** | The tested release did not propagate the configured custom provider into managed Codex execution. This fails a hard provider-neutrality gate. There is no scheduled retest. |
+| 2 | Kelos | **CLOSED — REJECTED FOR PRIMARY DEPLOYMENT** | Kubernetes-native Tasks, Sessions, Workspaces and WorkerPools require Kubernetes/cert-manager. The primary product deployment must not require Kubernetes. It is not on the active implementation path. |
+| 3 | AgentOven | **CLOSED — REJECTED** | The repository is too immature to become the foundation: effectively one maintainer, red CI, failed and mutable release handling, large low-cohesion files, and production persistence/security/deployment components in the private Pro repository. See `CP3-agentoven.md`. |
+| 4 | OpenFlows | **CLOSED — DISQUALIFIED BY CODER DEPENDENCY** | Its current controller, identity, model-routing and production workspace topology require Coder. This fails the hard CP8 portability gate. See `CP4-openflows.md`. |
+| 5 | Temporal/Hatchet/Inngest | **CLOSED — DISQUALIFIED AS PRIMARY CONTROL PLANES** | Their native models are workflow/function/task runs, attempts, waits, events, logs and outputs. They do not supply authoritative attention, decision, budget, artifact, audit and result-review records. See `CP5-workflow-substrates.md`. |
+| 6 | BoringOS / OCCP / CanDoItAll final scan | **CANDOITALL OPEN** | BoringOS and OCCP fail the hard approval/state-model mapping in source. CanDoItAll passes custom provider routing across restart; its process/workflow CP4 and CP7 tests remain. See `CP6-final-market-scan.md`. |
+| 7 | Prismor | **NOT RUN — POLICY COMPONENT CANDIDATE** | It is proposed for policy/tool-call enforcement rather than lifecycle ownership. Its fit has not been tested. |
 
 Sources used for the initial screen:
 
@@ -88,9 +94,39 @@ Sources used for the initial screen:
 - AgentOven architecture: https://docs.agentoven.dev/architecture
 - AgentOven recipes: https://docs.agentoven.dev/recipes
 - OpenFlows concepts: https://openflows.dev/docs/concepts/
+- Temporal workflow execution: https://docs.temporal.io/workflow-execution
+- Hatchet concepts: https://docs.hatchet.run/v1
+- Inngest platform overview: https://www.inngest.com/docs/platform-overview
+- CanDoItAll source and API control plane: https://github.com/fyziktom/CanDoItAll
+- BoringOS source: https://github.com/hebbs-ai/boringos
+- OCCP source: https://github.com/azar-management-consulting/occp-core
 - Prismor site: https://www.prismor.dev/
 
-These sources are not adoption evidence. They only justify which candidate to test first.
+These sources supported the screens. The evidence-backed dispositions and exact pinned versions are
+recorded in the individual CP1, CP3, CP4, CP5 and CP6 reports.
+
+## What the completed qualifications prove and what remains open
+
+The completed qualifications show what the rejected tools do not supply. CanDoItAll may supply part of
+this lifecycle, but its process/workflow path must demonstrate the mapping before the project decides
+which of these records it has to implement:
+
+- authoritative task and attempt transitions, including retry, continue and cancellation intent;
+- durable attention requests and approval decisions with authority, expiry and replay-safe binding;
+- budgets, artifacts, audit events, result revisions and result review;
+- idempotent command handling, transactional event/outbox publication and restart reconciliation;
+- runtime and environment adapter contracts, normalized events and capability checks.
+
+The project does not need to build model inference, a coding-agent runtime, a sandbox/VM platform, a
+general workflow engine or a general policy gateway. Those remain replaceable implementation components
+and are qualified only when a concrete integration requires one.
+
+The sequence is now:
+
+1. run the CanDoItAll process/workflow path for authority-bound waits and lifecycle mapping;
+2. repeat wait/decision continuation across restart and inspect cancellation, budgets and result review;
+3. decide adoption or rejection from the hard gates; and
+4. implement only the product-owned records the candidate cannot safely own behind an adapter.
 
 ## Required proof for any candidate
 
@@ -144,18 +180,19 @@ Do not build a product integration until this report exists.
 
 ## Second screen: Kelos
 
-Result: **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT**.
+Result: **CLOSED — REJECTED FOR PRIMARY DEPLOYMENT**.
 
 Kelos requires Kubernetes and cert-manager. The primary product deployment must not require Kubernetes,
 so installing Kelos would test an architecture the project has not selected. This is a deployment-fit
 disqualification, not evidence that Kelos is technically defective.
 
-Kelos may be reconsidered later as an optional Kubernetes environment adapter. It must not own the
-portable product task, attention, result or audit contract.
+Kelos is not on the active implementation path. A future architecture that deliberately selects
+Kubernetes could make a new decision about using it as an environment adapter, but this qualification
+does not retain it as a current option.
 
 ## Third screen: AgentOven
 
-Result: **NOT RUN — DISQUALIFIED BY SOURCE SCREEN**.
+Result: **CLOSED — REJECTED BY SOURCE SCREEN**.
 
 The source audit pinned `v0.9.0` and stopped before installation or provider-key use. AgentOven is active,
 but activity is concentrated in one maintainer and unusually large commits. The pinned source has red CI,
@@ -165,24 +202,27 @@ path. The durable PostgreSQL store, stronger identity controls and production to
 separate private Pro repository; its documented production deployment is Kubernetes-based.
 
 This is enough to fail foundation maturity and deployment fit without spending a Camer Digital key or
-running the bounded task. The full evidence and reconsideration conditions are in
+running the bounded task. The full evidence and archived screening criteria are in
 `docs/qualification/CP3-agentoven.md`.
 
-## Decision rule after two runs
+## Current decision
 
-After the Paperclip runtime test and AgentOven source screen:
+After the Paperclip and CanDoItAll runtime tests, Kelos deployment screen, AgentOven source screen,
+OpenFlows architecture screen and workflow-substrate API/state-model screen:
 
-- No tested candidate qualifies as the primary foundation. Keep the product-owned control-plane contract
-  and define the smallest implementation for task, attempt, attention, decision, budget, artifact, audit
-  and result state.
+- No candidate is adopted as the primary foundation.
+- The broad exploratory search is closed, but the bounded CanDoItAll process/workflow qualification is
+  still open.
 - Do not repeat the OCE/Paperclip mistake: any runtime adapter must prove supported custom-provider routing
   before integration.
 - Choose one runtime and one managed-sandbox/environment backend behind replaceable adapters; do not use
   an environment provider as a substitute for product lifecycle state.
-- If both fail only on sandbox/runtime isolation, evaluate one sandbox provider under ADR-0008. E2B or
-  OpenSandbox is an environment candidate, not a replacement for the product control plane.
-- If a candidate passes execution but fails adapter portability, keep it as one backend integration only;
-  do not let it define the product control-plane state.
+- Evaluate a sandbox provider under ADR-0008 only when the environment adapter reaches that integration
+  gate. E2B or OpenSandbox would be an environment component, not a replacement for the product control
+  plane.
+
+CanDoItAll passes CP8 for separately created provider profiles. CP4 and CP7 are undecided until the
+process/workflow path is exercised. Do not infer rejection from the invalid managed-seed restart run.
 
 ## Evidence standard
 
