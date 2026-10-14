@@ -1166,7 +1166,7 @@ Resource foundation              Evaluate OpenClaw Enterprise/OCC at a pinned re
                                  PostgreSQL state, IAM, audit and supported Drivers; validate deployment and upgrade
                                  burden.
 
-Product backend                  Small TypeScript service for tasks, attempts, attention projection, budget and result
+Product backend                  Small Go service for tasks, attempts, attention projection, budget and result
                                  acceptance. Dedicated owned schema; call OCC/runtime public APIs.
 
 Runtime/session path             OpenClaw Gateway plus a supported embedded or dedicated Harness. Keep native

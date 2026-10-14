@@ -35,8 +35,8 @@ Question answered: **What independently running software and stores form the fir
 
 Audience: engineers planning the first implementation slice.
 
-The first implementation uses a small TypeScript control-plane service, a dispatcher/reconciler worker,
-an execution adapter worker, PostgreSQL and artifact storage. The web workspace is a later container and
+The first implementation uses a small control-plane service, a dispatcher/reconciler worker, an
+execution adapter worker, PostgreSQL and artifact storage. The web workspace is a later container and
 must use the same public API as other surfaces. Runtime, environment and enforcement systems stay behind
 replaceable interfaces.
 
@@ -78,7 +78,7 @@ from a production runtime.
 
 ## Source decisions
 
-- [ADR-0006: TypeScript and PostgreSQL](../../architecture-explore/docs/adr/0006-product-backend-stack.md)
+- [ADR-0001: Go for the control-plane backend](../adr/0001-control-plane-language.md)
 - [ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

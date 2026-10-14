@@ -17,7 +17,7 @@ resulting build boundary are recorded in
 | [0003](0003-explicit-trust-scope.md) | Explicit trust scope / isolation per task | Proposed |
 | [0004](0004-pinned-runtime-and-protocol.md) | Pinned runtime and protocol | Open |
 | [0005](0005-native-approval-authority-plus-product-projection.md) | Native approval authority plus product projection | Proposed |
-| [0006](0006-product-backend-stack.md) | Product backend stack: TypeScript + PostgreSQL | Accepted |
+| [0006](0006-product-backend-stack.md) | Product backend stack: TypeScript + PostgreSQL | Superseded |
 | [0007](0007-product-durability-sql-outbox.md) | Product waits via SQL/outbox; Temporal deferred | Open |
 | [0008](0008-sandbox-provider.md) | Sandbox / compute provider selection | Open |
 | [0009](0009-adoption-vs-fork.md) | Adoption vs fork | Proposed |
