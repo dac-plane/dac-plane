@@ -1,0 +1,90 @@
+<mxfile host="Electron" modified="2026-10-14T18:30:00.000Z" agent="dac-plane architecture" version="31.3.2">
+  <diagram id="container-view" name="Container view">
+    <mxGraphModel dx="1750" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1750" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="dac-plane proposed container architecture" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#111111;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="760" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Initial product shape — exact deployment and providers remain open" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="50" y="70" width="760" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="clients" value="&lt;b&gt;Work surfaces&lt;/b&gt;&lt;br&gt;API clients first&lt;br&gt;Web workspace later" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="50" y="315" width="200" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="system-boundary" value="dac-plane system boundary — proposed" style="swimlane;horizontal=1;startSize=38;rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontColor=#111111;fontSize=16;fontStyle=1;dashed=1;dashPattern=8 4;" vertex="1" parent="1">
+          <mxGeometry x="300" y="120" width="850" height="780" as="geometry"/>
+        </mxCell>
+        <mxCell id="workspace" value="&lt;b&gt;Task workspace&lt;/b&gt;&lt;br&gt;Web UI&lt;br&gt;&lt;i&gt;LATER&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#777777;dashed=1;dashPattern=6 4;fontColor=#111111;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="360" y="190" width="210" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="service" value="&lt;b&gt;Control-plane service&lt;/b&gt;&lt;br&gt;TypeScript / Node.js&lt;br&gt;&lt;br&gt;Public API and authorization&lt;br&gt;Task and attempt lifecycle&lt;br&gt;Attention and decisions&lt;br&gt;Budgets, results and review&lt;br&gt;&lt;br&gt;&lt;i&gt;BUILD FIRST&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#111111;strokeWidth=2;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="630" y="180" width="350" height="230" as="geometry"/>
+        </mxCell>
+        <mxCell id="dispatcher" value="&lt;b&gt;Dispatcher / reconciler&lt;/b&gt;&lt;br&gt;Claims outbox work&lt;br&gt;Fences leases and retries&lt;br&gt;Reconciles uncertain outcomes&lt;br&gt;&lt;br&gt;&lt;i&gt;BUILD FIRST&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="360" y="490" width="270" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="adapter-worker" value="&lt;b&gt;Execution adapter worker&lt;/b&gt;&lt;br&gt;Binds one Attempt to runtime and environment IDs&lt;br&gt;Normalizes events and cancellation acknowledgement&lt;br&gt;&lt;br&gt;&lt;i&gt;BUILD FIRST WITH SIMULATOR&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="710" y="490" width="360" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="postgres" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&lt;br&gt;Product records, audit, leases and outbox&lt;br&gt;&lt;i&gt;SCHEMA PROTOTYPE EXISTS&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="390" y="730" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-store" value="&lt;b&gt;Artifact storage&lt;/b&gt;&lt;br&gt;Immutable evidence bytes&lt;br&gt;&lt;i&gt;PROVIDER OPEN&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="790" y="730" width="240" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="runtime" value="&lt;b&gt;Agent runtime&lt;/b&gt;&lt;br&gt;Codex, Claude Code, Factory Droid or another qualified runtime" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="200" width="280" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="environment" value="&lt;b&gt;Environment provider&lt;/b&gt;&lt;br&gt;Local process first; managed sandbox or VM later" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="420" width="280" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="gateway" value="&lt;b&gt;Policy / tool / secret gateway&lt;/b&gt;&lt;br&gt;Optional enforcement component behind an interface" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#333333;fontColor=#111111;fontSize=15;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="640" width="280" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="Dashed box = proposed system ownership, not a trust or deployment boundary. Dashed container = planned, not first slice." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="50" y="940" width="1000" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-clients-service" value="Submit commands and read state" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;" edge="1" parent="1" source="clients" target="service">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-clients-workspace" value="Review work" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#777777;dashed=1;dashPattern=6 4;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;" edge="1" parent="1" source="clients" target="workspace">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-workspace-service" value="Call public API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#777777;dashed=1;dashPattern=6 4;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;" edge="1" parent="1" source="workspace" target="service">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-service-db" value="Commit state + outbox" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;exitX=0.1;exitY=1;exitDx=0;exitDy=0;entryX=0.8;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="service" target="postgres">
+          <mxGeometry x="0.35" y="-12" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="665" y="690"/>
+              <mxPoint x="598" y="690"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-dispatch-db" value="Claim and reconcile" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;startArrow=block;startFill=1;" edge="1" parent="1" source="dispatcher" target="postgres">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-dispatch-adapter" value="Dispatch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;" edge="1" parent="1" source="dispatcher" target="adapter-worker">
+          <mxGeometry y="-12" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-adapter-service" value="Report normalized events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#555555;dashed=1;dashPattern=6 4;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;" edge="1" parent="1" source="adapter-worker" target="service">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-adapter-artifacts" value="Write evidence bytes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;" edge="1" parent="1" source="adapter-worker" target="artifact-store">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-adapter-runtime" value="Start · steer · cancel native work" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.6;entryDx=0;entryDy=0;" edge="1" parent="1" source="adapter-worker" target="runtime">
+          <mxGeometry x="0.35" y="-12" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-adapter-environment" value="Launch · stop process" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="adapter-worker" target="environment">
+          <mxGeometry x="0.35" y="-12" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-adapter-gateway" value="Request governed tool action" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#333333;fontColor=#111111;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.4;entryDx=0;entryDy=0;" edge="1" parent="1" source="adapter-worker" target="gateway">
+          <mxGeometry x="0.35" y="-12" relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
