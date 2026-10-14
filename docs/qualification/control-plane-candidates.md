@@ -68,16 +68,16 @@ The distinction matters for candidate interpretation:
 | Policy / secret / tool gateway | Product authority, approval records and grant semantics | Enforcement hooks, brokered credentials, native tool-call gates |
 | Infrastructure substrate | Durable product records and event publication | Queue/workflow/storage mechanics when they remain implementation details |
 
-## Candidate order
+## Candidate disposition and order
 
-| Order | Candidate | Why test it | Initial risk to prove or reject |
-|-------|-----------|-------------|---------------------------------|
-| 1 | Paperclip | Docs describe a control plane with agents, tasks, approvals, budgets, activity logs, API, adapters and deployment. This is the closest match to the delegated-work layer. | It may be opinionated around its own company/agent model, local adapters and budget semantics rather than our task/attempt/attention/result contract. |
-| 2 | Kelos | Kubernetes-native Tasks, Sessions, Workspaces, WorkerPools, event spawners, Codex/OpenCode/Claude support and observable workload resources. | It may solve execution lifecycle more than product lifecycle, and it requires Kubernetes/cert-manager operationally. |
-| 3 | AgentOven | Docs describe a control plane with registry, recipe workflow engine, task router, auth/RBAC, A2A/MCP and human gates. | It may be a workflow/agent registry rather than a coding-agent work control plane with artifacts, repo operations and approval binding. |
-| 4 | OpenFlows | Useful if the chosen environment is Coder and the need is workflow coordination around Coder workspaces. | It is not the universal product control plane by itself; Coder still owns where work runs. |
-| 5 | Temporal/Hatchet/Inngest | Durable workflow substrate if no agent-native candidate passes. | These do not provide agent workspace/runtime/sandbox semantics; they only become implementation substrate for our own control plane. |
-| 6 | Prismor | Policy, approval and audit layer for tool calls. | It is not a lifecycle owner for delegated work; use only as a policy component if needed. |
+| Order | Candidate | Disposition | Why test it / risk to prove or reject |
+|-------|-----------|-------------|---------------------------------------|
+| 1 | Paperclip | **FAIL / WATCH** | Closest documented match to the delegated-work layer, but the tested release did not propagate the configured custom provider into managed Codex execution. Retest only after the trigger recorded in `CP1-paperclip.md`. |
+| 2 | Kelos | **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT** | Kubernetes-native Tasks, Sessions, Workspaces and WorkerPools require Kubernetes/cert-manager. The primary product deployment must not require Kubernetes. Retain Kelos only as a possible future Kubernetes environment adapter. |
+| 3 | AgentOven | **NEXT** | Docs and source expose a control-plane server, registry, recipe engine, task router, sessions, A2A/MCP and human gates. Prove that the standalone server/container path is operable without Kubernetes and that its records map to coding-agent work, artifacts and approval authority. |
+| 4 | OpenFlows | **DEFERRED** | Useful only if Coder becomes the selected environment; it is not the universal product control plane by itself. |
+| 5 | Temporal/Hatchet/Inngest | **FALLBACK SUBSTRATE** | Durable workflow substrate if no agent-native candidate passes. These do not provide agent workspace/runtime/sandbox semantics and would support a product-owned control-plane core. |
+| 6 | Prismor | **OPTIONAL COMPONENT** | Policy, approval and audit layer for tool calls, not a lifecycle owner for delegated work. |
 
 Sources used for the initial screen:
 
@@ -142,26 +142,52 @@ The first run is not a full integration. It is a fast disqualification or fit ch
 
 Do not build a product integration until this report exists.
 
-## Second run: Kelos
+## Second screen: Kelos
 
-Run Kelos only after Paperclip is rejected or found insufficient. Kelos should be tested if we are willing
-to accept Kubernetes as the execution substrate. Its proof must focus on whether Kubernetes custom
-resources can safely become the delegated-work lifecycle record or whether they only represent execution
-resources under our own task model.
+Result: **NOT RUN — DISQUALIFIED BY DEPLOYMENT CONSTRAINT**.
 
-Write `docs/qualification/CP2-kelos.md` after the run.
+Kelos requires Kubernetes and cert-manager. The primary product deployment must not require Kubernetes,
+so installing Kelos would test an architecture the project has not selected. This is a deployment-fit
+disqualification, not evidence that Kelos is technically defective.
+
+Kelos may be reconsidered later as an optional Kubernetes environment adapter. It must not own the
+portable product task, attention, result or audit contract.
+
+## Third run: AgentOven
+
+AgentOven is the next bounded control-plane qualification. Pin the current source tag and test its
+standalone server/container path with PostgreSQL; Kubernetes is not permitted in the qualification
+deployment. Docker Compose may be used to reproduce the test, but its existence alone does not pass the
+production deployment-fit gate.
+
+The run must prove all general gates above and these candidate-specific points:
+
+1. configure Camer Digital through AgentOven's provider `base_url` and prove the request reaches that
+   endpoint rather than a default vendor endpoint;
+2. invoke a coding-capable external or custom runtime without making AgentOven's built-in agent loop the
+   product contract;
+3. persist the delegated task/run, session, human gate, decision, logs, artifact and final outcome through
+   a control-plane restart;
+4. bind the human gate to the exact proposed write and reject stale or mismatched approval;
+5. cancel or time out the run and prove that no delegated process or environment remains active;
+6. show a credible non-Kubernetes deployment, secret-injection and upgrade path for an ordinary VM or
+   container host.
+
+Write `docs/qualification/CP3-agentoven.md` after the run. Do not build a product integration until that
+report exists.
 
 ## Decision rule after two runs
 
-After Paperclip and Kelos:
+After the executed Paperclip and AgentOven runs:
 
 - If one candidate passes CP1-CP8, create an ADR adopting it as the qualified foundation or adapter
   target and reduce the product backlog to the remaining gaps.
-- If both fail on product lifecycle ownership, keep the project-owned control-plane core and choose only
-  a runtime/sandbox backend.
 - If both fail only on provider routing, do not repeat the OCE mistake: reject stock adoption unless the
   candidate exposes a supported base-url/provider configuration path.
-- If both fail only on sandbox/runtime isolation, evaluate one sandbox provider under ADR-0008.
+- If both fail on product lifecycle ownership, keep the project-owned control-plane core and choose one
+  runtime plus one managed-sandbox/environment backend.
+- If both fail only on sandbox/runtime isolation, evaluate one sandbox provider under ADR-0008. E2B or
+  OpenSandbox is an environment candidate, not a replacement for the product control plane.
 - If a candidate passes execution but fails adapter portability, keep it as one backend integration only;
   do not let it define the product control-plane state.
 
