@@ -1,27 +1,31 @@
-# Implementation plan: issue #12 Go foundation
+# Implementation plan: issue #32 provider contract semantics
 
-Tracker: [GitHub issue #12](https://github.com/AssahBismarkabah/dac-plane/issues/12)
+Tracker: [GitHub issue #32](https://github.com/AssahBismarkabah/dac-plane/issues/32)
 
 ## Objective
 
-Bootstrap the smallest runnable Go modular monolith: validated configuration, a PostgreSQL connection,
-graceful process lifetime, hermetic PostgreSQL 16 integration tests, and CI. Domain records, migrations,
-HTTP, workers, and provider behavior remain out of scope.
+Promote the transferable Plane-Bot findings into active, provider-neutral architecture requirements
+without adopting its vendor topology, transports or implementations. Preserve `dac-plane` as the sole
+authoritative lifecycle owner and make the M1 contract-and-simulator target explicit.
 
 ## Ordered tasks
 
-1. Initialize the Go module and configuration contract.
-2. Add PostgreSQL and Goose provider primitives with Testcontainers verification.
-3. Add the bootstrap composition root and cancellable command process.
-4. Add CI and concise development documentation.
+1. Add ADR-0003 separating observed evidence, adopted semantics and rejected vendor choices.
+2. Update the active architecture baseline with the adopted contract families and simulator obligations.
+3. Update the pre-implementation review with the resulting invariants and M1 qualification boundary.
+4. Link ADR-0003 from the root README and verify that no implementation or diagram changed.
 
-## Checkpoints
+## Verification
 
-- After tasks 1-2: unit, vet, race, and tagged PostgreSQL integration tests pass.
-- After tasks 3-4: the complete verification command set passes locally and in CI.
+```sh
+rg -n "ControlFrame|EventCursor|AuthorityGrant|AuthorityUse|HookRequest|HookResponse|SpendChallenge|ArtifactCommitOutcome|ActionPrecondition" docs/architecture docs/adr
+rg -n "ConnectRPC|Temporal|WebAuthn|485|vendor|provider-specific" docs/adr/0003-provider-contract-semantics.md
+git diff --check
+go test ./...
+```
 
-## Decisions
+## Boundaries
 
-- Go packages remain internal; no public Go or HTTP API is introduced.
-- Integration tests use a pinned PostgreSQL 16 Testcontainers image.
-- Goose is consumed as a PostgreSQL provider library; the generic multi-database CLI is not added.
+- No Go contracts, JSON Schemas, database schema or provider implementation is added.
+- No production runtime, environment, transport, workflow engine or credential ceremony is selected.
+- The architecture diagrams and retained exploration evidence remain unchanged.

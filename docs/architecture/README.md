@@ -13,7 +13,9 @@ deployed. The findings and remaining gates are recorded in the
 This directory and accepted ADRs under [`docs/adr/`](../adr/) are the active implementation source of
 truth. `architecture-explore/` contains historical research, rejected hypotheses and prototypes. An
 exploration document is normative only where an active document explicitly adopts a decision from it.
-In particular, the historical specification's OCC/OpenClaw assumptions are not part of this baseline.
+In particular, the historical specification's OCC/OpenClaw assumptions and Plane-Bot's vendor-specific
+implementation are not part of this baseline. [ADR-0003](../adr/0003-provider-contract-semantics.md)
+adopts only the provider-neutral contract semantics supported by that evidence.
 
 ## Views
 
@@ -68,6 +70,31 @@ runtime or an environment provider.
 7. Runtime and environment events are observations until authenticated, deduplicated and accepted by the
    product lifecycle. Providers never write the product database.
 
+## Provider contract semantics
+
+[ADR-0003](../adr/0003-provider-contract-semantics.md) defines the behavior required at replaceable
+provider boundaries:
+
+- versioned `ControlFrame` lifecycle, request, cancel, reply and event frames with typed failures and
+  person/background demand hints;
+- replayable `EventCursor` streams with generations, sequences, revisions, tombstones, heartbeats,
+  cursor recovery, payload hashes and explicit unknown durability;
+- runtime-session, runtime-turn, environment-resource and provider-operation bindings to an Attempt;
+- environment observations, fenced maintenance claims and `off`/`shadow`/`live` harness qualification
+  with durable migration passes, holds and preview/execute administration;
+- scoped `AuthorityGrant` and auditable `AuthorityUse` semantics, including one-time retirement,
+  standing-grant revocation, policy generations and permission ceilings;
+- `HookRequest` and `HookResponse` interception for permission, input rewriting, messages, context,
+  usage accounting and post-action evidence;
+- provider-neutral two-phase `SpendChallenge` authorization kept separate from authoritative Budget
+  accounting;
+- fenced `ArtifactCommitOutcome` admission with committed, retry and fenced results; and
+- `ActionPrecondition` tokens plus serialized stateful actions.
+
+These contracts refine adapter behavior; they do not change ownership, deployment or container
+boundaries. A provider reports native state and effects. Only the control-plane application decides
+whether those observations change authoritative product records.
+
 ## Initial implementation boundary
 
 The first vertical slice is:
@@ -85,7 +112,10 @@ submit task
 
 Use a deterministic runtime simulator before integrating a real coding agent. The simulator must expose
 the same adapter contract, attention behavior, cancellation acknowledgement and event replay expected
-from a production runtime.
+from a production runtime. The simulator suite must also exercise protocol negotiation and failure,
+cursor replay and rehydration, authority retirement and revocation, hook rewriting and denial, spend
+challenge replay, environment and shadow behavior, artifact fencing and stale action preconditions.
+Passing that suite proves contract behavior, not production-provider qualification.
 
 The exploration schema is incomplete relative to this target: Budget, ResultRevision and ResultReview
 still need authoritative tables and active contracts. The contract-freeze gate in the
@@ -95,6 +125,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 
 - [ADR-0001: Go for the control-plane backend](../adr/0001-control-plane-language.md)
 - [ADR-0002: start with a modular-monolith control plane](../adr/0002-initial-application-boundary.md)
+- [ADR-0003: adopt provider-neutral execution contract semantics](../adr/0003-provider-contract-semantics.md)
 - [ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

@@ -21,6 +21,7 @@ Start with:
 - [Pre-implementation architecture review](docs/architecture/review-2026-10-15.md)
 - [ADR-0001: Go backend](docs/adr/0001-control-plane-language.md)
 - [ADR-0002: modular-monolith control plane](docs/adr/0002-initial-application-boundary.md)
+- [ADR-0003: provider-neutral execution contract semantics](docs/adr/0003-provider-contract-semantics.md)
 
 Contribution conventions (commits, PR titles, review rules) are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
