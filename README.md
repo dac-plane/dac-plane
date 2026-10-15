@@ -16,3 +16,6 @@ Start with:
 - [ADR-0001: Go backend](docs/adr/0001-control-plane-language.md)
 - [ADR-0002: modular-monolith control plane](docs/adr/0002-initial-application-boundary.md)
 
+Contribution conventions (commits, PR titles, review rules) are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+

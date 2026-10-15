@@ -1,0 +1,86 @@
+name: pr-title
+
+# The pull request title must be a conventional commit.
+#
+# This repository keeps a readable, releasable history: conventional-commit
+# titles are what changelogs and release tooling are built from, and a title
+# of "Fix the diagram" says nothing about whether the change is a feature, a
+# fix or a doc pass. A title of
+# "fix(architecture): keep the container view connectors readable" does.
+#
+# Copied from CRS-App's pr-title.yml, adapted for this repository: it has no
+# release-please pipeline yet and runs on standard GitHub-hosted runners.
+#
+# A separate workflow rather than a job in another CI file: a title is changed
+# by editing it, which raises `edited` and not `synchronize`, so a full CI
+# gate must not re-run the whole build every time somebody fixes a typo in a
+# title.
+#
+# Implemented as a regex rather than a marketplace action on purpose: an
+# unpinned moving dependency inside a gate is a future breakage, and the whole
+# rule is one regex.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+# A newer edit or push supersedes the check it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-title:
+    name: title is a conventional commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the title
+        env:
+          # Via the environment, never interpolated into the script body: a PR
+          # title is attacker-controlled text and `${{ }}` inside a `run:` is
+          # textual substitution, so a title containing a quote and a semicolon
+          # would execute.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          # type(optional scope)optional-!: subject
+          #
+          # `feat` and `fix` move a version once a release pipeline exists;
+          # `!` (or a `BREAKING CHANGE:` footer in the body) marks a major.
+          # Keep this list identical to CONTRIBUTING.md.
+          PATTERN='^(feat|fix|perf|deps|revert|refactor|docs|test|build|ci|chore|style)(\([a-zA-Z0-9,._/ -]+\))?!?: .+'
+
+          if printf '%s' "$TITLE" | grep -qE "$PATTERN"; then
+            echo "OK: $TITLE"
+            exit 0
+          fi
+
+          {
+            echo "### Pull request title is not a conventional commit"
+            echo
+            echo '```'
+            echo "$TITLE"
+            echo '```'
+            echo
+            echo "It must start with one of \`feat\` \`fix\` \`perf\` \`deps\` \`revert\`"
+            echo "\`refactor\` \`docs\` \`test\` \`build\` \`ci\` \`chore\` \`style\`,"
+            echo "an optional \`(scope)\`, an optional \`!\` for a breaking change,"
+            echo "then \`: \` and a subject. For example:"
+            echo
+            echo '```'
+            echo "fix(architecture): keep the container view connectors readable"
+            echo "feat(adr): record the decision on artifact storage"
+            echo "docs: clarify the responsibility map"
+            echo '```'
+            echo
+            echo "Edit the title and this check re-runs on its own. See"
+            echo "CONTRIBUTING.md for the full conventions."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error title=Non-conventional PR title::${TITLE}"
+          exit 1
