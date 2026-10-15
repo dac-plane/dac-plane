@@ -1,0 +1,13 @@
+# macOS Finder metadata
+.DS_Store
+
+# Editor files: .idea/ holds per-machine settings; module files are a subset
+.idea/
+*.iml
+
+# Local work logs, caches and scratch state (up.sh, mise, np.sh output)
+/.work/
+
+# Node: the repo has no committed package at the root; node_modules/ here is
+# local-only tooling (opencode, skills) and is never committed
+/node_modules/
