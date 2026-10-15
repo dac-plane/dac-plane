@@ -18,6 +18,11 @@ execution environments, policy systems and infrastructure replaceable.
 | [Architecture decisions](docs/adr/README.md) | Accepted, proposed, rejected and open architecture decisions. |
 | [Qualification reports](docs/qualification/README.md) | Runtime tests, source screens and capability evidence. |
 | [Implementation status](docs/implementation-status.md) | Existing prototypes, verification commands and the next implementation slice. |
+| [Plane-Bot exploration](plane-bot-explore/README.md) | Static Grok Bot architecture findings and compact derived digests used to refine provider-neutral contracts. |
 
 Historical OCC/OpenClaw experiments are retained under [`spike/`](spike/README.md). They are evidence
 for rejected approaches, not the active implementation path.
+
+The Plane-Bot exploration publishes its written findings and compact, non-executable digests. Raw REA
+output, extracted application copies, native binary slices and analysis tooling remain local and are
+intentionally excluded from version control.

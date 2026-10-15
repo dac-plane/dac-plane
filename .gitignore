@@ -11,3 +11,12 @@
 # Node: the repo has no committed package at the root; node_modules/ here is
 # local-only tooling (opencode, skills) and is never committed
 /node_modules/
+
+# Plane-Bot exploration publishes written findings and compact derived digests only.
+# Raw application extraction, analysis output, native slices and local tooling stay local.
+architecture-explore/plane-bot-explore/.tools/
+architecture-explore/plane-bot-explore/evidence/rea-js-analysis.json
+architecture-explore/plane-bot-explore/evidence/rea-js-analysis.stderr.log
+architecture-explore/plane-bot-explore/evidence/extracted/
+architecture-explore/plane-bot-explore/evidence/extracted-beautified/
+architecture-explore/plane-bot-explore/evidence/analysis/native-thin/

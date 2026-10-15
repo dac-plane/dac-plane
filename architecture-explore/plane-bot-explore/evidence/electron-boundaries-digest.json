@@ -1,0 +1,711 @@
+{
+  "browser-window": [
+    {
+      "label": "BrowserWindow@158:120727-158:120758",
+      "id": "jag_node_2a3b649621f2dcf233fc3c2c7aba8913b21721647f7649f91fce9a5474203f5e"
+    },
+    {
+      "label": "BrowserWindow@579:40446-579:40678",
+      "id": "jag_node_2e6c409688a3d9f03fab497885c4af913f22c78d782fa5705d6ea2793685e7ab"
+    },
+    {
+      "label": "BrowserWindow@557:59777-557:59800",
+      "id": "jag_node_be70bc02a5fde7a2f810c1b19dbbcc1b399d97d0d91975474d85e1b5f3cfa11b"
+    },
+    {
+      "label": "BrowserWindow@140:12105-140:12604",
+      "id": "jag_node_fbe443fddbbcf01f2528d8bddb6089b905c87034f2b4fccf84e09770d3e31d72"
+    }
+  ],
+  "electron-main": [
+    {
+      "label": "dist/deps/node-addon-api/index.js",
+      "id": "jag_node_18b3ec53b9a121222fe96bbf9cecab05d9b5ef25389b8ea286c5557abba2b99b"
+    },
+    {
+      "label": "dist/deps/node-gyp-build/index.js",
+      "id": "jag_node_1b2b771013c55f5ac27d1a97791664197cacf219675b9ce38444e1c20cec20e0"
+    },
+    {
+      "label": "dist/deps/web-tree-sitter/tree-sitter.js",
+      "id": "jag_node_1c7b6561857f7eebc9c671124efb49d098c31ede5045128acd660a807affe1ee"
+    },
+    {
+      "label": "dist/electron-main/main.cjs",
+      "id": "jag_node_881a39597f452ed4df7377503ba523b636341cd6a879b998f73eda0dcf09d915"
+    },
+    {
+      "label": "dist/deps/sand-notification-settings/index.js",
+      "id": "jag_node_98291af074d534e0bc7169fa4dfd3f351358a2f3636fbab5b10624a85190775d"
+    },
+    {
+      "label": "dist/deps/tree-sitter/index.js",
+      "id": "jag_node_cb104f2b0d9c71e4b01e7550881ab59c030d11f46d3e48736a4b9a5805e43050"
+    },
+    {
+      "label": "dist/deps/cursor-proclist/index.js",
+      "id": "jag_node_e590ebca723fe8ee3a7580b3162854c51b59fccffafe4a6261f846e36eab2338"
+    },
+    {
+      "label": "dist/deps/tree-sitter-bash/bindings/node/index.js",
+      "id": "jag_node_e82f5965a0c98c7165db6ae86afbe180c44f9f322d51a018b321560e5e575819"
+    }
+  ],
+  "electron-renderer": [
+    {
+      "label": "dist/renderer/index.html",
+      "id": "jag_node_2c46cccc3fdd279260b08f2182a30770dc14dfb2437b85e6093028fbfbde1b1a"
+    },
+    {
+      "label": "about:blank",
+      "id": "jag_node_4099e9c15f3a4ac6ce343a6fa5ddf4cd82daff46622244bbad93b020d5ee3432"
+    },
+    {
+      "label": "dist/renderer/src/electron-renderer/desktop-mount/panel/panel.html",
+      "id": "jag_node_80d0ea3d1f5f131194d92dd331c5fffc701c64e97557cf388cbdab125758241c"
+    }
+  ],
+  "electron-utility": [
+    {
+      "label": "jag_node_2f6ba26484002d86b18de580f54735a1c2a2dfe9af04ad2cd8d1f83229bb4779",
+      "id": "jag_node_2f6ba26484002d86b18de580f54735a1c2a2dfe9af04ad2cd8d1f83229bb4779"
+    },
+    {
+      "label": "jag_node_839422c1b5e3c856d1a7739022ebb4d7573541b132d18fcf5e094573aa80a9e6",
+      "id": "jag_node_839422c1b5e3c856d1a7739022ebb4d7573541b132d18fcf5e094573aa80a9e6"
+    }
+  ],
+  "ipc-channel": [
+    {
+      "label": "$t",
+      "id": "jag_node_00c68473afa4125c604e1041ace5c1a86aacd07a2408ac6a59c279cd430216cd",
+      "channel": null
+    },
+    {
+      "label": "sand:renderer-boot-gate-opened",
+      "id": "jag_node_02f3598b45a13e5578a142daa851fd02a322d3493ffbce5ff555b52e684a6c6e",
+      "channel": "sand:renderer-boot-gate-opened"
+    },
+    {
+      "label": "sand:renderer-boot-gate-landed",
+      "id": "jag_node_03c946f14fc765bc56348fecd2a12ada37132cfbb64d4b9207b7e1668ffa64db",
+      "channel": "sand:renderer-boot-gate-landed"
+    },
+    {
+      "label": "t.createKey(\"start\")",
+      "id": "jag_node_090c466e1875fc3f83569b39f942a8e9eff49a05dec4ca5bb6cdfc4ccb48e172",
+      "channel": null
+    },
+    {
+      "label": "qt",
+      "id": "jag_node_254bced277991aba0e1ff711b2f39f90e01297ea9f04121ec9fc3695deb2355c",
+      "channel": null
+    },
+    {
+      "label": "sand:coordinator-port",
+      "id": "jag_node_4266717d073648a0c043269908bdfffe15cf13ca3bd8468b9a1720b55fc7a661",
+      "channel": "sand:coordinator-port"
+    },
+    {
+      "label": "t.createKey(\"structured-log\")",
+      "id": "jag_node_4caee450bae1e1f108d9a60e9f446bba45145a1a3c22b1c78e6b4f2aeb28007f",
+      "channel": null
+    },
+    {
+      "label": "sand:renderer-alive",
+      "id": "jag_node_535eada04047ef2edea96dc4ea1395603e0d6877b36959ceb3172b3be8d8972d",
+      "channel": "sand:renderer-alive"
+    },
+    {
+      "label": "t.createKey(\"status\")",
+      "id": "jag_node_5543630477093ab2a4cac80587624b34b5a4bd7e60f7f8a2e9553db2aabb56ce",
+      "channel": null
+    },
+    {
+      "label": "t.createKey(\"scope\")",
+      "id": "jag_node_5ac45d61a5e005e7763f2a0a13d20928774f5aa4af5a2cf5ec952420abfda2d9",
+      "channel": null
+    },
+    {
+      "label": "zt",
+      "id": "jag_node_656184dce585bd014c19f5ec60d8b5cb86bd3c533872bce9796f59408264b27d",
+      "channel": null
+    },
+    {
+      "label": "Yt",
+      "id": "jag_node_8c1ad9a48f6dfa5c02e13e0ef9e3ddbe876867d2cddfc61679d798021f271152",
+      "channel": null
+    },
+    {
+      "label": "jt",
+      "id": "jag_node_a3b28e1c12a146001581626b2217df45e8cfa18f7727f042c7316185d71254b4",
+      "channel": null
+    },
+    {
+      "label": "AHe",
+      "id": "jag_node_a5871dd3bfcc3089b56fb3d3ad46060f65efa7bfc453400ecbf1235443b70449",
+      "channel": null
+    },
+    {
+      "label": "sand:boot-snapshot-sync",
+      "id": "jag_node_a9e8caa7fcfba6802a9a0b75bb8c4676875d2afb1fed8024b0568c5e8012d3d8",
+      "channel": "sand:boot-snapshot-sync"
+    },
+    {
+      "label": "w",
+      "id": "jag_node_b44c48b4354ac0ece0c9889fb1448cdc61cf5462fc01db9b5a180374f0107a24",
+      "channel": null
+    },
+    {
+      "label": "t.createKey(\"envelope\")",
+      "id": "jag_node_cba35f57e78eeebdf5a8723ca7baf35e4e3708553582f7bff7e665b2bb8e8c32",
+      "channel": null
+    },
+    {
+      "label": "Xt",
+      "id": "jag_node_f419d11831731b3c6d7c27c716934957067b48dfa4869e1786f3b4fe15d68ffc",
+      "channel": null
+    }
+  ],
+  "ipc-handler": [
+    {
+      "label": "jag_node_0647ef38a9192ed91a00f7cb0430cac100fb3a9f61c9f8e927786e9172508a7e",
+      "id": "jag_node_0647ef38a9192ed91a00f7cb0430cac100fb3a9f61c9f8e927786e9172508a7e",
+      "channel": null
+    },
+    {
+      "label": "jag_node_0af3f3a5c5e19bb69c25ff963b4b3ab5da053ec2e4256e49b787eb93d213976f",
+      "id": "jag_node_0af3f3a5c5e19bb69c25ff963b4b3ab5da053ec2e4256e49b787eb93d213976f",
+      "channel": null
+    },
+    {
+      "label": "jag_node_0f20fb3e32e33517f5bfeb90bd82d60f9198ffdfb6b2fc5e1960657a86d0f965",
+      "id": "jag_node_0f20fb3e32e33517f5bfeb90bd82d60f9198ffdfb6b2fc5e1960657a86d0f965",
+      "channel": null
+    },
+    {
+      "label": "jag_node_1a1afd9bfe47b8f53267204f8175d0fe4ce6af1d48cb459bd25bce47aa578f09",
+      "id": "jag_node_1a1afd9bfe47b8f53267204f8175d0fe4ce6af1d48cb459bd25bce47aa578f09",
+      "channel": null
+    },
+    {
+      "label": "jag_node_312c641c7f8c22609587cae302f8c85528146e335e16d38fef12c0dd8de9ebd6",
+      "id": "jag_node_312c641c7f8c22609587cae302f8c85528146e335e16d38fef12c0dd8de9ebd6",
+      "channel": null
+    },
+    {
+      "label": "jag_node_421b03f749cb52596a560ae750c6ca62fc4b7d2294d2c6b2ee036b7ca3fed7a0",
+      "id": "jag_node_421b03f749cb52596a560ae750c6ca62fc4b7d2294d2c6b2ee036b7ca3fed7a0",
+      "channel": null
+    },
+    {
+      "label": "sand:coordinator-port",
+      "id": "jag_node_6441ee9f231be539478ed2db7370b52379e93859fd0fb1289bb9739c7961fd7e",
+      "channel": "sand:coordinator-port"
+    },
+    {
+      "label": "jag_node_929f07364e83f9a2f527fc2f8cf745af327c12e25004d98e6206b8d183193729",
+      "id": "jag_node_929f07364e83f9a2f527fc2f8cf745af327c12e25004d98e6206b8d183193729",
+      "channel": null
+    },
+    {
+      "label": "jag_node_bb2b6dcfe391e87afae597782987a5494c3580f445cbe2e2470fcbc3e2c009f0",
+      "id": "jag_node_bb2b6dcfe391e87afae597782987a5494c3580f445cbe2e2470fcbc3e2c009f0",
+      "channel": null
+    },
+    {
+      "label": "jag_node_dbf6e9f3dbf470e5eda0d60a2619e6ddd399b42ac12a9cf189555f011f7866e1",
+      "id": "jag_node_dbf6e9f3dbf470e5eda0d60a2619e6ddd399b42ac12a9cf189555f011f7866e1",
+      "channel": null
+    }
+  ],
+  "context-bridge-api": [
+    {
+      "label": "desktop",
+      "id": "jag_node_390a93339ef20d3f05921ead0fdc5de3b572d75821895b4f7445267c2a94bf69"
+    },
+    {
+      "label": "desktopMount",
+      "id": "jag_node_433b1be46317cd5e4572bbfe8581ce14db043f7e207c008590e2eda7abe1f0ed"
+    },
+    {
+      "label": "desktopMount",
+      "id": "jag_node_4385be7945d98c5aa1016e3afa4847a4f71400e4cdfeb7f38d95813d9b85c8af"
+    },
+    {
+      "label": "jag_node_4e3cef80aa1640e49a15341e3652a3baed85dc4048ef981a2b4d029e52ad4b86",
+      "id": "jag_node_4e3cef80aa1640e49a15341e3652a3baed85dc4048ef981a2b4d029e52ad4b86"
+    },
+    {
+      "label": "sandRenderTrace",
+      "id": "jag_node_a4ada6f4086943d3ede3a67652d50825a2cc89fd0ed6df047eba818994d7e6f0"
+    },
+    {
+      "label": "coordinatorPort",
+      "id": "jag_node_b66f89d99824948f167d210073215ed724b971ba8b21eca1fb60943e9e07991a"
+    }
+  ],
+  "native-addon": [
+    {
+      "label": "dist/deps/cursor-proclist/build/Release/cursor_proclist.node",
+      "id": "jag_node_29d476db964e2f690ba855a2dd8ddc3e70a217f36355b1af207b78a46848c619",
+      "path": "dist/deps/cursor-proclist/build/Release/cursor_proclist.node"
+    },
+    {
+      "label": "dist/deps/sand-notification-settings/build/Release/sand_notification_settings.node",
+      "id": "jag_node_9f492b1750d4c77a044f3df00cd9a200bd42fd7ef2a1e583e6f441e4d3881337",
+      "path": "dist/deps/sand-notification-settings/build/Release/sand_notification_settings.node"
+    },
+    {
+      "label": "dist/deps/tree-sitter-bash/prebuilds/darwin-arm64/tree-sitter-bash.node",
+      "id": "jag_node_bfd5355130f2526e6ae49a3814ae4c422fde3765e1071957e627d4820550f64f",
+      "path": "dist/deps/tree-sitter-bash/prebuilds/darwin-arm64/tree-sitter-bash.node"
+    },
+    {
+      "label": "dist/deps/tree-sitter/build/Release/tree_sitter_runtime_binding.node",
+      "id": "jag_node_c4285002da54a88fb69fe6a1b25fca489fc99f54b5aa843c4f0c6d8dd3893697",
+      "path": "dist/deps/tree-sitter/build/Release/tree_sitter_runtime_binding.node"
+    }
+  ],
+  "native-export": [
+    {
+      "label": "./build/Release/sand_notification_settings.node",
+      "id": "jag_node_2917f8a0e3ddcde455db4f4068bf418b9d7e80e784cf37606b2c9c28dbc8ff8d"
+    },
+    {
+      "label": "./build/Release/cursor_proclist.node",
+      "id": "jag_node_bc5a674e8723080c64378cb0e22394f8764f04534367e3cbd902654437766921"
+    }
+  ],
+  "package": [
+    {
+      "label": "sand-notification-settings",
+      "id": "jag_node_373f69c89faafac5728c398be122f3498d9e95be5cb078096ad8f44a0ebecba8",
+      "name": "sand-notification-settings",
+      "path": "dist/deps/sand-notification-settings/package.json"
+    },
+    {
+      "label": "node-gyp-build",
+      "id": "jag_node_5a2bc03c810d96d25a14a75a739f6b48df352330eba2f08c705c66e17459836b",
+      "name": "node-gyp-build",
+      "path": "dist/deps/node-gyp-build/package.json"
+    },
+    {
+      "label": "tree-sitter-bash",
+      "id": "jag_node_6664e4c16c359839e4821cd5974155ed4ee2f04322eb28cea8889b0b6f74e35a",
+      "name": "tree-sitter-bash",
+      "path": "dist/deps/tree-sitter-bash/package.json"
+    },
+    {
+      "label": "cursor-proclist",
+      "id": "jag_node_6a41f90b6c8eb72829bfb3d285493f19b2e4040fdebd4c2c3cc220d05e575913",
+      "name": "cursor-proclist",
+      "path": "dist/deps/cursor-proclist/package.json"
+    },
+    {
+      "label": "tree-sitter",
+      "id": "jag_node_779c20fd7d91a0646351ccc90346abb2b18a5e74e5a31c572fad51ed84d70352",
+      "name": "tree-sitter",
+      "path": "dist/deps/tree-sitter/package.json"
+    },
+    {
+      "label": "node-addon-api",
+      "id": "jag_node_8a66e01ba26a2f4827c6983ebb55d254e6d55ef55d8c454aa0f722f254adf5a6",
+      "name": "node-addon-api",
+      "path": "dist/deps/node-addon-api/package.json"
+    },
+    {
+      "label": "web-tree-sitter",
+      "id": "jag_node_9f8d90031ddda5359281c092a09ebc797cb2cc5b7bbcfbf707274e5fa0eb94d9",
+      "name": "web-tree-sitter",
+      "path": "dist/deps/web-tree-sitter/package.json"
+    },
+    {
+      "label": "sand",
+      "id": "jag_node_f9824b94fbe3ad05bfec9a93de9860feb14ec4f9a1961c6e1ac212d038ad0467",
+      "name": "sand",
+      "path": "package.json"
+    }
+  ],
+  "worker": [
+    {
+      "label": "jag_node_2abb3597607c920642c8c71dd76c9762f288137667e29406938e1fc478bcfe66",
+      "id": "jag_node_2abb3597607c920642c8c71dd76c9762f288137667e29406938e1fc478bcfe66"
+    },
+    {
+      "label": "jag_node_50939b7e1ec017a21649210cb103d564ddbb41a9116542bc3dd88b804f5b8ced",
+      "id": "jag_node_50939b7e1ec017a21649210cb103d564ddbb41a9116542bc3dd88b804f5b8ced"
+    },
+    {
+      "label": "jag_node_89a530affe5ffeb6cab156b86148d8547cecdef87558fa2680edd24b4530ad35",
+      "id": "jag_node_89a530affe5ffeb6cab156b86148d8547cecdef87558fa2680edd24b4530ad35"
+    },
+    {
+      "label": "jag_node_975b92ead08cc634f4da8f18783bf935ca1053703ca6aeb80d7a9aec34f866b6",
+      "id": "jag_node_975b92ead08cc634f4da8f18783bf935ca1053703ca6aeb80d7a9aec34f866b6"
+    },
+    {
+      "label": "jag_node_df9336c3c14f7e87e831317bc9907bb16cd22d19931e209e10efd0f6a139b5ef",
+      "id": "jag_node_df9336c3c14f7e87e831317bc9907bb16cd22d19931e209e10efd0f6a139b5ef"
+    }
+  ],
+  "storage": [
+    {
+      "label": "local-storage",
+      "id": "jag_node_576d8b20cde9992a27ceffe6f79bf47536cb9501970b604d71e039a8642d4f7c",
+      "name": null
+    },
+    {
+      "label": "local-storage",
+      "id": "jag_node_6c24fac566aec07218ab91a87f3a8aee97f7da587bf3182fef61d2c32f1f9349",
+      "name": null
+    },
+    {
+      "label": "local-storage",
+      "id": "jag_node_6f08b2125cfd87080bcfcb8141598326f57cd6aaf1ff1a31aee92177d9b6bbf1",
+      "name": null
+    }
+  ],
+  "endpoint": [
+    {
+      "label": "legacy",
+      "id": "jag_node_0586c50f7e0b59a17dc33b4495d4cbf04e80b607e1ec87281717d864b7a5cd28"
+    },
+    {
+      "label": "etag",
+      "id": "jag_node_062366f83e201c91a82b35cb39ec173dc5b7f0dce02ffeb30099fa552506528d"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_06b712dacbeec289a3dbe03777705ada5d775e74b8a1b22dfd968bf0fd2cf4d4"
+    },
+    {
+      "label": "referrer-policy",
+      "id": "jag_node_1d6d359aa67c31fe4d77246573fbbf140e20b4dd2c89ff470fc54a19ec81cac1"
+    },
+    {
+      "label": "boundary",
+      "id": "jag_node_1ebd5004db80f5cdce38ce8a70311d38b1b99a3e61e60e205a3af0cb0008443d"
+    },
+    {
+      "label": "x-request-id",
+      "id": "jag_node_23b5d30ba0dac9079651fe11a992bc12d236d05824f9007640bdfc6a182d558f"
+    },
+    {
+      "label": "jag_node_24c96b3ea209567256fa8b88a0bf49c5598a72d21f76c4bcd5a19b2bfde08699",
+      "id": "jag_node_24c96b3ea209567256fa8b88a0bf49c5598a72d21f76c4bcd5a19b2bfde08699"
+    },
+    {
+      "label": "multipart",
+      "id": "jag_node_29554493bc82038cae04e5de8a84cb9a0034517524c635588f3ee0b08867af8b"
+    },
+    {
+      "label": "x-statsig-region",
+      "id": "jag_node_29d2212976ccf309417843f6fb8ec430be4fd04e1285c2d7053ae22c3dd77f69"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_33c3c32bcb8c2e73067c86ed4eef011f0cd8b4e2678ded1fb342145a0e2602e6"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_33ca4db06d75b0a011503d3f9a15ac4390778506d1830484bcf5b6a3444e45d3"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_3c62c5512f1dc83edc1ebc46dfe23af835d05f6df6cb0e8bc40f8236f1450f40"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_3fd84662593a9ee96002b538186c05f88464c73f53a01a6a60197e9e35601fee"
+    },
+    {
+      "label": "location",
+      "id": "jag_node_44e114d95923c72dfb8a161bf543ae646fc3d7c64e721a11fa7e05c138132d16"
+    },
+    {
+      "label": "sentry.dsc",
+      "id": "jag_node_498a5a226c2c773e5fd000ee650ff3002566c8ffdec2f834b99b63b94b45f887"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_4cb085b143da729e451a0d0af76dc752c2978148bb3501bb3ace3131aa8ee3a1"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_4cc8a91543710c20a94c0d9f7465ac028e13d1e1e57eb09ca85dab5243158ff5"
+    },
+    {
+      "label": "about:blank",
+      "id": "jag_node_511cde10da8c6335a7a81d46b454cdb5bd0dde020283d66fe891fee6f34ebe92"
+    },
+    {
+      "label": "createAgent",
+      "id": "jag_node_51d3be889c914b8967bbd2c7a21cef62053b80e20cdccfe63ec78bb4a41ba475"
+    },
+    {
+      "label": "unchanged",
+      "id": "jag_node_5ac27a5056dc013572973ffe0c6ddaabe1946b7961281f26cfb815bba17dc8a9"
+    },
+    {
+      "label": "gateway",
+      "id": "jag_node_5eea8d4f5f1c776619668651cdd5d684e1129330b4773de6d81de9d453c9b23a"
+    },
+    {
+      "label": "x-request-id",
+      "id": "jag_node_7d53176df4d5c2ae52ebf4df2ace31546c4d8dd58b1efd72b5f28078afe7aaf9"
+    },
+    {
+      "label": "cookie",
+      "id": "jag_node_81f3a36fa73a9a30c36df27f19cdfcf132c5d81acc30fcbd78452221b80b59ad"
+    },
+    {
+      "label": "Debugger.resume",
+      "id": "jag_node_883a7f40df15018b5f1366e7f280e87b09b940a314d638957b9442752dde0c71"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_8bcb67b2c00b33ba071b21b39dac521dfdb24b2be171343d8e9e2916fb86712c"
+    },
+    {
+      "label": "x-cursor-team-id",
+      "id": "jag_node_8bce5238d56024d090bc5ab84aa57c73f0d18250ac1bed5294f794711ec9bb0b"
+    },
+    {
+      "label": "content-encoding",
+      "id": "jag_node_8d80c91e9acddbc0489953afd774741901bf1bda7e8817c7ec2a40341ae67221"
+    },
+    {
+      "label": "server_max_window_bits",
+      "id": "jag_node_8e34a0df82a0b4e3fe938305fba573497679c689edc1f040b473e26c387167aa"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_9076616710e2704ec7c552582ac705d139e40ab4e784d6beb23b36287f8d9b17"
+    },
+    {
+      "label": "sentry.sample_rand",
+      "id": "jag_node_9f47849aaef04bf498da8b9ff9d7c074499500f07d38bca1cc5ebeec80ad72f5"
+    },
+    {
+      "label": "Debugger.enable",
+      "id": "jag_node_a25df457391a40887c1156302c2bf2eb9aa07a28a8e9d443f9759970038eb065"
+    },
+    {
+      "label": "user-agent",
+      "id": "jag_node_a39f3978a820f25ce9121aef6ede0b7048058016bc0a0f5317f778a09554e6c6"
+    },
+    {
+      "label": "single_put",
+      "id": "jag_node_aafadbc77cc5f4be8a0c70d3514724d6a0b565188c3387eef7980d4eb9644873"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_ab7f39785e9cbe6bc40e2e768ae83442d0dabddc35dd336160312b6edf4dd904"
+    },
+    {
+      "label": "canonical",
+      "id": "jag_node_adc04929c2cbed38692c6eec02714788ac8c11f8ddd52a85e4fbabb8e881d858"
+    },
+    {
+      "label": "reused",
+      "id": "jag_node_b06a89b57558cfe098a384d890d9668002c45758a34e653530a1388e810aa390"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_b38c5d790b739fb32cf12587713a6acd37c04a6599574511adf93b7b9b9f9d22"
+    },
+    {
+      "label": "recreate",
+      "id": "jag_node_b56df5d0087ab813b3989676a86bf2a03baf8daf397195b4b158e1fa8079df78"
+    },
+    {
+      "label": "lock",
+      "id": "jag_node_bc0e1b27671dbcde3b13db6e70dec2547827a7ec24939875cd01c1ef9f04229d"
+    },
+    {
+      "label": "Runtime.getProperties",
+      "id": "jag_node_be7ee67e24a5fd5d4e1d41445c66c9d7929a3b98dcb8819710b8c2416467bfc2"
+    },
+    {
+      "label": "charset",
+      "id": "jag_node_c220012add02322a719de9ff411a320ca0c0398438f1a7819ce177c92133ab36"
+    },
+    {
+      "label": "/",
+      "id": "jag_node_c5778e301a5261b387f171a575754aa6f3ad645fda3133b0f118e54f59a8fdef"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_c74f70701344859bb4a2c1feda011237cad3e40f8b49686805a621380932198f"
+    },
+    {
+      "label": "integration_key",
+      "id": "jag_node_cb286977ba07d8f7aaeff8d6d7d06906b4ba2c73954527612b91b369a0240f8f"
+    },
+    {
+      "label": "network endpoint candidate",
+      "id": "jag_node_d0f622a4552bcc70e56ccad16dca94104e5d6ba6922c6ee12f942fe039d4ea6c"
+    },
+    {
+      "label": "retry-after",
+      "id": "jag_node_d34cce58b259dd588d3142e53a67aee16cca7f6513789fe143d17549c1eb6a85"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_d918871c03177dfeca5e630e3a506a1bb3963a6fcb9f822790319de7374833bd"
+    },
+    {
+      "label": "authorization",
+      "id": "jag_node_e17c5d68b32b5b0a2fe7e8dd267c4d59dac735d5c10a78696594527f6d5ab036"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_e43f76d9282160b838c9b243e75afd01cf99331f5d89d09682083dc25d72a069"
+    },
+    {
+      "label": "last-modified",
+      "id": "jag_node_e6aee3096db47cf304d0b7ed6b18d19d3e09ce5561c01f5478d9360085a8eb7b"
+    },
+    {
+      "label": "route endpoint",
+      "id": "jag_node_f12e8ca302362c505d0a9d9a80a140362c2921bfc8ccf35107ca2f520c3ff2c5"
+    },
+    {
+      "label": "permessage-deflate",
+      "id": "jag_node_f584f764490fd46d53a94c5d58cf0688ded6768bc42f08d015cf8702dc468d6c"
+    },
+    {
+      "label": "sentry.sample_rate",
+      "id": "jag_node_f6f32a3958a28918b49345dac361642c1fa4a81373f03ec0065b4fbf3de0b1f8"
+    }
+  ],
+  "javascript-expression": [
+    {
+      "label": "closure",
+      "id": "jag_node_22ef1b518e3b1c1b4eeed7ee321b3a4a03e75810ff3c546a7e30dd6b492876d5",
+      "channel": "sand:renderer-boot-gate-opened"
+    },
+    {
+      "label": "sandRenderTrace.postMessage",
+      "id": "jag_node_23dfe789ab26c7e5b7b872e7d91bc6b568d26b3aed3e2553e3032119078649f0",
+      "channel": "sand:render-trace-port"
+    },
+    {
+      "label": "closure",
+      "id": "jag_node_2821a18c4abb54e65b59106ec4c0a91e8a1f124ec7b34587d858bc39bf20a52b",
+      "channel": "sand:renderer-alive"
+    },
+    {
+      "label": "closure",
+      "id": "jag_node_36ee18383cf5810710a9655edc49a8c45774094e4bfc09a037dfe45ebc82c471",
+      "channel": "sand:render-trace-port"
+    },
+    {
+      "label": "electron.ipcRenderer.postMessage",
+      "id": "jag_node_460e6f694ea232455fac57c2ef40fd8e2833995c543f2bbdcd0a87ad9299ca56",
+      "channel": "sand:render-trace-port"
+    },
+    {
+      "label": "desktop.local.noteRendererAlive",
+      "id": "jag_node_5b6e149de47294c473db0aa45de0ab789850679e7f0d5196c78cb80a91e37dc3",
+      "channel": "sand:renderer-alive"
+    },
+    {
+      "label": "closure",
+      "id": "jag_node_72bb73f6bc963914cc1a2041933ae2382b83ef4263a0d6dd674e23c92c8a7fb1",
+      "channel": "sand:renderer-boot-gate-landed"
+    },
+    {
+      "label": "electron.ipcRenderer.send",
+      "id": "jag_node_87f76fecf981340e6ced20d2bcd8d3e31ddc507b2822ad839a9b4fad3f94688c",
+      "channel": "sand:renderer-boot-gate-opened"
+    },
+    {
+      "label": "electron.ipcRenderer.send",
+      "id": "jag_node_d6319519357c03319ede3a3958b5ecdad1615dea1849e053a75a0f87c9450037",
+      "channel": "sand:renderer-boot-gate-landed"
+    },
+    {
+      "label": "desktop.local.noteBootGateOpened",
+      "id": "jag_node_dc8a4bbdd5857f534228c7f6ded83338d8163c04556c95b30b5daecae8fd693d",
+      "channel": "sand:renderer-boot-gate-opened"
+    },
+    {
+      "label": "desktop.local.noteBootGateLanded",
+      "id": "jag_node_f4f0accc992fa9e541e572c8390b400ed051a8cd8186dc5238b8edd804b80c3b",
+      "channel": "sand:renderer-boot-gate-landed"
+    },
+    {
+      "label": "electron.ipcRenderer.send",
+      "id": "jag_node_fef09a1c556aad4b59974fef222e1183beaa6956d467ec556c131ac33e7d3696",
+      "channel": "sand:renderer-alive"
+    }
+  ],
+  "artifact": [
+    {
+      "label": "dist/deps/web-tree-sitter/package.json",
+      "id": "jag_node_2e20df7fefa68865f27901a5f973ba9263a1239fcf87567858f7fd3935154929",
+      "path": "dist/deps/web-tree-sitter/package.json"
+    },
+    {
+      "label": "dist/renderer/src/electron-renderer/desktop-mount/panel/panel.html",
+      "id": "jag_node_3446e4159284ffb6b24be46d2d69409fd233cd485b63cd4b11aeee4df2a1453b",
+      "path": "dist/renderer/src/electron-renderer/desktop-mount/panel/panel.html"
+    },
+    {
+      "label": "dist/deps/tree-sitter/package.json",
+      "id": "jag_node_387220fbb96011b1627ec407aaf4eda86961bb14edac8c847798a879ae2e0daa",
+      "path": "dist/deps/tree-sitter/package.json"
+    },
+    {
+      "label": "dist/deps/node-gyp-build/package.json",
+      "id": "jag_node_60f7cdbf0a9ecb2cdef48a96102cecebc62d9dbff7cdaa93edbad22b64f93e89",
+      "path": "dist/deps/node-gyp-build/package.json"
+    },
+    {
+      "label": "dist/deps/node-addon-api/package.json",
+      "id": "jag_node_6ba4c34df370df795abf2a0ca6c36a04a1177397785455830b5c0f189dfc7cc1",
+      "path": "dist/deps/node-addon-api/package.json"
+    },
+    {
+      "label": "dist/deps/runtime-deps-manifest.json",
+      "id": "jag_node_6e2514d170fe7e79ba9e1780c53244ccd83eb8d109889bde7fcedc52494d4271",
+      "path": "dist/deps/runtime-deps-manifest.json"
+    },
+    {
+      "label": "artifact root",
+      "id": "jag_node_8ee6372232a73fd957ec7bfdff3cb1c553e40f6d9d35fcb2d0873383d437d079"
+    },
+    {
+      "label": "dist/deps/sand-notification-settings/package.json",
+      "id": "jag_node_90d54b15ccefc5776e76dda99acc3c02e76005b8be7ad7667919071aba72453f",
+      "path": "dist/deps/sand-notification-settings/package.json"
+    },
+    {
+      "label": "package.json",
+      "id": "jag_node_ae0fdff964e770e39152e2f4dfc43a328416507ecd683349bb5cc4030a987219",
+      "path": "package.json"
+    },
+    {
+      "label": "dist/renderer/index.html",
+      "id": "jag_node_cebe166f4b44c56bfcb148fe74441aaced98a500452535a51277079f42cab9ec",
+      "path": "dist/renderer/index.html"
+    },
+    {
+      "label": "dist/deps/node-addon-api/package-support.json",
+      "id": "jag_node_d9051d5f4a0b6be650fb588257c66ee75503393093b623e878fd40da1bbbe604",
+      "path": "dist/deps/node-addon-api/package-support.json"
+    },
+    {
+      "label": "dist/deps/cursor-proclist/package.json",
+      "id": "jag_node_ea4040b1ec0178ed6a3d8706d816393b633d0a29790b716a4ab7bb7621a36729",
+      "path": "dist/deps/cursor-proclist/package.json"
+    },
+    {
+      "label": "dist/deps/tree-sitter-bash/package.json",
+      "id": "jag_node_f65ceae89d283ea19505024f3d0014ee85c783bda93d4b7d8576cecdc216a4a7",
+      "path": "dist/deps/tree-sitter-bash/package.json"
+    }
+  ]
+}

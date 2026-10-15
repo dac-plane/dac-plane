@@ -1,0 +1,2 @@
+# Preserve generated analysis digests byte-for-byte; their formatting is evidence.
+architecture-explore/plane-bot-explore/evidence/analysis/services.txt -whitespace
