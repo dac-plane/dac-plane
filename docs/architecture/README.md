@@ -75,8 +75,8 @@ runtime or an environment provider.
 [ADR-0003](../adr/0003-provider-contract-semantics.md) defines the behavior required at replaceable
 provider boundaries:
 
-- versioned `ControlFrame` lifecycle, request, cancel, reply and event frames with typed failures and
-  person/background demand hints;
+- versioned `ControlFrame` lifecycle, request, cancel, reply and event frames with fail-fast compatible
+  version and capability selection, typed failures and person/background demand hints;
 - replayable `EventCursor` streams with generations, sequences, revisions, tombstones, heartbeats,
   cursor recovery, payload hashes and explicit unknown durability;
 - runtime-session, runtime-turn, environment-resource and provider-operation bindings to an Attempt;
@@ -85,7 +85,8 @@ provider boundaries:
 - scoped `AuthorityGrant` and auditable `AuthorityUse` semantics, including one-time retirement,
   standing-grant revocation, policy generations and permission ceilings;
 - `HookRequest` and `HookResponse` interception for permission, input rewriting, messages, context,
-  usage accounting and post-action evidence;
+  usage accounting and post-action evidence, with fail-closed pre-action enforcement and redacted or
+  digest-only audit data;
 - provider-neutral two-phase `SpendChallenge` authorization kept separate from authoritative Budget
   accounting;
 - fenced `ArtifactCommitOutcome` admission with committed, retry and fenced results; and

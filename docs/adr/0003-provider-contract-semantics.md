@@ -37,11 +37,14 @@ frame families:
 - reply frames return a typed success or failure for that request identity; and
 - event frames carry unsolicited, authenticated provider observations.
 
-A peer advertises its protocol version before accepting work. An unsupported version, malformed frame
-or invalid handshake produces a typed protocol failure and shuts down the interaction before provider
-work begins. Failure families must distinguish protocol mismatch, malformed input, unknown operation,
-invalid arguments, unauthenticated or unauthorized use, cancellation, deadline expiry, transport
-unavailability, provider failure and unknown durability.
+A peer advertises its supported protocol versions and capabilities before accepting work. The other
+peer selects one mutually supported version and capability set, and the ready frame acknowledges both;
+no request or event may be processed before that selection. No common version, any unavailable required
+capability, a malformed frame or an invalid handshake produces a typed protocol failure and shuts down
+the interaction before provider work begins. There is no implicit downgrade. Failure families must
+distinguish protocol mismatch, unsupported capability, malformed input, unknown operation, invalid
+arguments, unauthenticated or unauthorized use, cancellation, deadline expiry, transport
+unavailability and provider failure.
 
 The demand classes are `person` and `background`. They are scheduling hints: person-facing work may be
 preferred, but demand cannot change authorization, budget, permission-ceiling or lifecycle rules.
@@ -57,7 +60,8 @@ payloads.
 A cursor acknowledgement records how far authenticated observations were ingested. It is not proof
 that a provider effect occurred or that a product lifecycle transition completed. Cleared generations
 and cursor-too-old responses require explicit rehydration. Unknown send durability is a first-class
-outcome that enters reconciliation; it is never treated as proof that no effect occurred.
+indeterminate command outcome, not an ordinary failure. It enters reconciliation and is never treated
+as proof that no effect occurred or as permission to redispatch.
 
 The optional
 [CloudEvents sequence extension](https://github.com/cloudevents/spec/blob/main/cloudevents/extensions/sequence.md)
@@ -89,25 +93,43 @@ command.
 scope. Scope classes are global, setting, subject and call. The authority model distinguishes one-time
 allow, standing allow and deny/never policy:
 
-- one-time authority is consumed and retired atomically with its first authorized use;
+- after interception determines the effective action, the dispatch transaction revalidates authority
+  and atomically consumes and retires one-time authority when applicable;
 - standing authority remains valid only for its exact scope until expiry, revocation, scope change or
   policy-generation invalidation; and
 - deny/never policy blocks issuance and use of conflicting authority.
 
 A permission ceiling is authoritative: neither a local setting nor a provider may grant above it.
-Policy changes advance a generation so stale cached authority fails closed. `AuthorityUse` records the
-grant or approval source, effective scope, policy generation and resulting receipt or denial.
+Policy changes advance a generation so stale cached authority fails closed. The dispatch transaction
+revalidates the effective action's authority, scope, expiry, revocation state, policy generation and
+permission ceiling. It then atomically consumes one-time authority when applicable and persists
+`AuthorityUse`, the audit and durable event records, the stable provider operation and its outbox entry.
+A hook denial or failed authority predicate atomically persists an `AuthorityUse` denial bound to the
+stable requested-operation identity plus safe audit and durable event evidence, but creates no
+executable provider operation or dispatch outbox entry. Successful provider execution returns an
+operation-bound receipt. Provider execution uses the stable operation identity for idempotency and
+reconciliation. An indeterminate external outcome never restores consumed one-time authority.
 
 ### Action interception
 
 `HookRequest` and `HookResponse` define synchronous interception around governed actions. A pre-action
 hook may allow, deny or rewrite input and may return user messages, agent messages and additional
-context. Authorization is evaluated against the effective rewritten action, and both the original and
-effective input are auditable.
+context. The required order is: evaluate the pre-action hook without external effect; determine the
+effective action; transactionally revalidate authority and persist its use together with the provider
+operation and durable dispatch/outbox records; then dispatch provider execution.
 
-Post-action and failure hooks record the effective input, output or typed failure, duration, usage
-accounting and resulting evidence. Hooks enforce action policy and collect evidence; they never own
-product lifecycle transitions.
+A governed effect requires a valid affirmative response before the deadline. Denial, timeout, hook
+failure, malformed response or transport failure before durable dispatch produces no executable
+operation and no external effect. Loss or failure after dispatch makes the provider outcome
+indeterminate and enters reconciliation instead of restoring authority or repeating the effect.
+
+Authorization is evaluated against the effective rewritten action. Audit and evidence records use
+classified, redacted projections or cryptographic digests of original and effective inputs; provider
+credentials, secret-bearing fields and unrestricted raw payloads never enter product or audit records.
+
+Post-action and failure hooks record safe evidence references or redacted projections, typed outcome,
+duration and usage accounting. Hooks enforce action policy and collect evidence; they never own product
+lifecycle transitions.
 
 ### Spend authorization
 
