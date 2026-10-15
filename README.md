@@ -9,6 +9,11 @@ The product is not implemented yet. The reviewed implementation baseline is in
 TypeScript/PostgreSQL prototypes are retained under [`architecture-explore/`](architecture-explore/README.md)
 as evidence, not as the active product implementation.
 
+The first implementation task is the
+[contract-freeze gate](docs/architecture/review-2026-10-15.md#contract-freeze-gate): authoritative
+contracts and migrations for all nine product records, exercised by a deterministic runtime simulator
+through one end-to-end lifecycle slice.
+
 Start with:
 
 - [Architecture baseline](docs/architecture/README.md)
@@ -18,4 +23,3 @@ Start with:
 
 Contribution conventions (commits, PR titles, review rules) are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
-
