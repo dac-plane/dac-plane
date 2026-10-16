@@ -113,6 +113,9 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 		}
 		cursor = resolved
 		if outcome, ok := outcomeOf(frame); ok {
+			if err := w.persistCursor(ctx, tenant, cursor); err != nil {
+				return err
+			}
 			return w.applyOutcome(ctx, tenant, operation, outcome)
 		}
 		if err := w.persistCursor(ctx, tenant, cursor); err != nil {
