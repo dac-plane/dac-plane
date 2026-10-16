@@ -22,10 +22,12 @@ type OutboxClaim struct {
 	Owner string
 }
 
-// ClaimOutboxRow takes the oldest due, unexhausted pending row for owner.
-// The SELECT skips rows locked by a live worker; the UPDATE moves the row to
-// 'processing' only from 'pending' so a concurrent claim loses exactly once.
-// It reports claimed=false (and no error) when nothing is due.
+// ClaimOutboxRow takes the oldest due, unexhausted row for owner. The
+// SELECT skips rows locked by a live worker; the UPDATE moves the row to
+// 'processing' from 'pending' or from a lapsed 'processing' lease, so a
+// crashed holder's row is reclaimable and a concurrent claim loses exactly
+// once. Person-demand rows come first, mirroring Scheduler.Select. It
+// reports claimed=false (and no error) when nothing is due.
 func ClaimOutboxRow(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, owner string, ttl time.Duration, now time.Time) (OutboxClaim, bool, error) {
 	var claim OutboxClaim
 	var idText, recordText, recordIDText, eventText, demandText string
@@ -36,9 +38,13 @@ func ClaimOutboxRow(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, own
 			lease_epoch = lease_epoch + 1, lease_expires_at = $5, updated_at = $3
 		where (tenant_id, outbox_id) = (
 			select tenant_id, outbox_id from outbox
-			where tenant_id = $1 and status = 'pending' and exhausted_at is null and next_attempt_at <= $2
-			order by next_attempt_at limit 1 for update skip locked
-		) and status = 'pending'
+			where tenant_id = $1 and exhausted_at is null and next_attempt_at <= $2
+				and (status = 'pending'
+					or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $3))
+			order by case when demand = 'person' then 0 else 1 end, next_attempt_at
+			limit 1 for update skip locked
+		) and (status = 'pending'
+			or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $3))
 		returning outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload,
 			demand, attempts, next_attempt_at, last_error, created_at, lease_epoch, claimed_by`,
 		tenant.String(), now, now, owner, now.Add(ttl),

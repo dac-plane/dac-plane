@@ -23,9 +23,10 @@ func isStaleVersionForTest(err error) bool {
 	return errors.Is(err, store.ErrStaleVersion)
 }
 
-// enqueueTaskSubmit moves a fresh task draft -> queued with a person-demand
-// outbox payload and commits. It returns the outbox identity.
-func enqueueTaskSubmit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, f tenantFixture, at time.Time) ids.AnyID {
+// enqueueTaskSubmitWithDemand moves a fresh task draft -> queued with an
+// outbox payload of the given demand and commits. It returns the outbox
+// identity.
+func enqueueTaskSubmitWithDemand(t *testing.T, ctx context.Context, pool *pgxpool.Pool, f tenantFixture, at time.Time, demand contracts.Demand) ids.AnyID {
 	t.Helper()
 	uow, err := store.Begin(ctx, pool)
 	if err != nil {
@@ -44,7 +45,7 @@ func enqueueTaskSubmit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, f 
 	}
 	tr := store.Transition{
 		ExpectedVersion: 1, At: at, Actor: f.actor, AuditID: newAuditID(t),
-		Outbox: &store.OutboxPayload{ID: outboxID, Demand: contracts.DemandPerson, Body: []byte(`{"dispatch":"test"}`)},
+		Outbox: &store.OutboxPayload{ID: outboxID, Demand: demand, Body: []byte(`{"dispatch":"test"}`)},
 	}
 	if _, _, err := store.ApplyTask(ctx, uow, f.tenant, task.ID, lifecycle.TaskSubmit, lifecycle.TaskQueued, tr); err != nil {
 		t.Fatalf("ApplyTask() error = %v", err)
@@ -60,7 +61,7 @@ func TestDispatchOutboxClaimLifecycle(t *testing.T) {
 	ctx, pool := setupTestDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	f := seedTenant(t, ctx, pool)
-	outboxID := enqueueTaskSubmit(t, ctx, pool, f, now)
+	outboxID := enqueueTaskSubmitWithDemand(t, ctx, pool, f, now, contracts.DemandPerson)
 	pollAt := now.Add(time.Minute)
 
 	ready, err := store.OutboxReadyEntries(ctx, pool, f.tenant, pollAt, 10)
@@ -131,7 +132,7 @@ func TestDispatchOutboxRetryAndExhaust(t *testing.T) {
 	ctx, pool := setupTestDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	f := seedTenant(t, ctx, pool)
-	outboxID := enqueueTaskSubmit(t, ctx, pool, f, now)
+	outboxID := enqueueTaskSubmitWithDemand(t, ctx, pool, f, now, contracts.DemandPerson)
 
 	claimOne := func(owner string, at time.Time) (store.OutboxClaim, *store.UnitOfWork, func()) {
 		t.Helper()
@@ -328,5 +329,83 @@ func TestDispatchShadowResultAppendOnly(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].ID != shadowID {
 		t.Fatalf("ListShadowResults() = %v, want the one recorded row", listed)
+	}
+}
+
+func TestDispatchOutboxReclaimLapsedLease(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f := seedTenant(t, ctx, pool)
+	outboxID := enqueueTaskSubmitWithDemand(t, ctx, pool, f, now, contracts.DemandBackground)
+	pollAt := now.Add(time.Minute)
+
+	claimTx := func(owner string, at time.Time) (store.OutboxClaim, *store.UnitOfWork, func()) {
+		t.Helper()
+		uow, err := store.Begin(ctx, pool)
+		if err != nil {
+			t.Fatalf("Begin() error = %v", err)
+		}
+		claim, claimed, err := store.ClaimOutboxRow(ctx, uow, f.tenant, owner, time.Minute, at)
+		if err != nil || !claimed {
+			_ = uow.Rollback(ctx)
+			t.Fatalf("ClaimOutboxRow(%s) = %v, %v, %v", owner, claim, claimed, err)
+		}
+		return claim, uow, func() { _ = uow.Rollback(ctx) }
+	}
+
+	// worker-a claims, then dies without acking: the lease lapses.
+	first, uow, done := claimTx("worker-a", pollAt)
+	if err := uow.Commit(ctx); err != nil {
+		done()
+		t.Fatalf("Commit() error = %v", err)
+	}
+	done()
+
+	// worker-b reclaims the lapsed processing row at a bumped epoch.
+	second, uow, done := claimTx("worker-b", pollAt.Add(2*time.Minute))
+	if second.Row.ID != outboxID || second.Epoch != first.Epoch+1 || second.Owner != "worker-b" {
+		done()
+		t.Fatalf("reclaim = %+v, want the row at epoch %d owned by worker-b", second, first.Epoch+1)
+	}
+	// The crashed holder's ack is fenced even though the row is processing.
+	if err := store.AckOutboxRow(ctx, uow, f.tenant, outboxID, first.Epoch, pollAt.Add(2*time.Minute)); err == nil {
+		done()
+		t.Fatal("AckOutboxRow() with a reclaimed epoch succeeded")
+	} else if !isStaleVersionForTest(err) {
+		done()
+		t.Fatalf("AckOutboxRow() stale error = %v, want ErrStaleVersion", err)
+	}
+	if err := store.AckOutboxRow(ctx, uow, f.tenant, outboxID, second.Epoch, pollAt.Add(2*time.Minute)); err != nil {
+		done()
+		t.Fatalf("AckOutboxRow() error = %v", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		done()
+		t.Fatalf("Commit() error = %v", err)
+	}
+	done()
+}
+
+func TestDispatchOutboxClaimPersonFirst(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f := seedTenant(t, ctx, pool)
+	// Enqueue background first so insertion order cannot explain the result.
+	backgroundID := enqueueTaskSubmitWithDemand(t, ctx, pool, f, now, contracts.DemandBackground)
+	personID := enqueueTaskSubmitWithDemand(t, ctx, pool, f, now, contracts.DemandPerson)
+	pollAt := now.Add(time.Minute)
+
+	uow, err := store.Begin(ctx, pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	defer func() { _ = uow.Rollback(ctx) }()
+	first, claimed, err := store.ClaimOutboxRow(ctx, uow, f.tenant, "worker-a", time.Minute, pollAt)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimOutboxRow() = %v, %v, %v", first, claimed, err)
+	}
+	if first.Row.ID != personID {
+		t.Fatalf("ClaimOutboxRow() took %v, want the person-demand row %v (background was %v)",
+			first.Row.ID, personID, backgroundID)
 	}
 }
