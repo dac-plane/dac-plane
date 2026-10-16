@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HookRequest",
+  "description": "Asks the enforcement path about one governed action. A pre-action request carries the proposed input and a deadline; post-action and failure requests carry digests and a duration. The input must hash to input_digest; the Go contract enforces that.",
+  "type": "object",
+  "required": ["kind", "operation_id", "tenant_id", "attempt_id", "provider_id", "action", "scope", "input_digest"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["pre_action", "post_action", "action_failure"] },
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "action": { "$ref": "../identity/common.schema.json#/$defs/actionClass" },
+    "scope": { "$ref": "../identity/common.schema.json#/$defs/scope" },
+    "input": { "$ref": "common.schema.json#/$defs/jsonObject" },
+    "input_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "output_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "failure": { "$ref": "common.schema.json#/$defs/failure" },
+    "duration_ns": { "type": "integer", "minimum": 1 },
+    "deadline": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "pre_action" } } },
+      "then": {
+        "required": ["input", "deadline"],
+        "not": { "anyOf": [{ "required": ["duration_ns"] }, { "required": ["output_digest"] }, { "required": ["failure"] }] }
+      },
+      "else": {
+        "required": ["duration_ns"],
+        "not": { "anyOf": [{ "required": ["input"] }, { "required": ["deadline"] }] }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "post_action" } } },
+      "then": { "required": ["output_digest"], "not": { "required": ["failure"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "action_failure" } } },
+      "then": { "required": ["failure"], "not": { "required": ["output_digest"] } }
+    }
+  ]
+}

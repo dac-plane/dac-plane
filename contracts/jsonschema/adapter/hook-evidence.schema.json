@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HookEvidence",
+  "description": "The safe audit record of a pre-action decision: digests of the original and effective inputs, never the inputs. rewritten is true exactly when the digests differ; the Go contract enforces that.",
+  "type": "object",
+  "required": ["operation_id", "outcome", "original_digest"],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "outcome": { "enum": ["allowed", "denied", "missing", "timed_out", "malformed"] },
+    "original_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "effective_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "rewritten": { "const": true }
+  },
+  "if": { "properties": { "outcome": { "const": "allowed" } } },
+  "then": { "required": ["effective_digest"] },
+  "else": { "not": { "anyOf": [{ "required": ["effective_digest"] }, { "required": ["rewritten"] }] } }
+}

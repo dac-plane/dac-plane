@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shared adapter contract definitions",
+  "$defs": {
+    "name": {
+      "description": "A dotted lowercase protocol name: capabilities, streams and entry kinds.",
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "failure": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "protocol_mismatch", "unsupported_capability", "malformed_frame", "unknown_operation",
+            "invalid_arguments", "unauthenticated", "unauthorized", "cancelled", "deadline_exceeded",
+            "transport_unavailable", "provider_failed", "stale_precondition", "resource_busy"
+          ]
+        },
+        "message": { "$ref": "#/$defs/message" }
+      }
+    },
+    "jsonObject": {
+      "description": "Bounded JSON-object arguments or results; the 64 KiB bound is enforced by the Go contract.",
+      "type": "object"
+    }
+  }
+}
