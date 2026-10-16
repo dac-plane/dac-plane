@@ -14,7 +14,8 @@
     "record": {
       "enum": [
         "task", "attempt", "attention_request", "provider_operation", "harness_qualification",
-        "migration_pass", "maintenance_claim", "budget", "reservation", "spend_challenge"
+        "migration_pass", "maintenance_claim", "budget", "reservation", "spend_challenge",
+        "artifact"
       ]
     },
     "record_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
@@ -29,7 +30,8 @@
         "version_conflict", "terminal_state", "invalid_transition", "ambiguous_target",
         "invalid_target", "cross_tenant", "wrong_record", "unauthorized_actor",
         "decision_not_allowed", "request_expired", "stop_already_observed", "stale_claim",
-        "claim_held", "stale_policy", "ceiling_reached", "assertion_mismatch"
+        "claim_held", "stale_policy", "ceiling_reached", "assertion_mismatch",
+        "stale_writer", "admission_retry", "not_current_revision"
       ]
     },
     "occurred_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }

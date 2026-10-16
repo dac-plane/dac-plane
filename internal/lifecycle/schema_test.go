@@ -30,6 +30,10 @@ var (
 	reserveContract   = schematest.GoContract[Reservation](filepath.Join(schemaDir, "reservation.schema.json"))
 	spendContract     = schematest.GoContract[SpendChallenge](filepath.Join(schemaDir, "spend-challenge.schema.json"))
 	receiptContract   = schematest.GoContract[SpendReceipt](filepath.Join(schemaDir, "spend-receipt.schema.json"))
+	manifestContract  = schematest.GoContract[ArtifactManifest](filepath.Join(schemaDir, "artifact-manifest.schema.json"))
+	artifactContract  = schematest.GoContract[Artifact](filepath.Join(schemaDir, "artifact.schema.json"))
+	revisionContract  = schematest.GoContract[ResultRevision](filepath.Join(schemaDir, "result-revision.schema.json"))
+	reviewContract    = schematest.GoContract[ResultReview](filepath.Join(schemaDir, "result-review.schema.json"))
 )
 
 type record struct {
@@ -89,7 +93,21 @@ func validRecords(t *testing.T) map[string]record {
 		t.Fatalf("Assert() error = %v", err)
 	}
 
+	reviewTask, firstRevision := reviewable(t)
+	manifest := newManifest(t, reviewTask)
+	manifest.SourceRevision = "9fceb02"
+	artifact := commit(t, manifest)
+	rework, err := NewResultRevision(newID[ids.Revision](t), artifact.Attempt, []Artifact{artifact}, &firstRevision, testNow)
+	if err != nil {
+		t.Fatalf("NewResultRevision() error = %v", err)
+	}
+
 	return map[string]record{
+		"manifest":            {manifestContract, schematest.Marshal(t, manifest)},
+		"artifact":            {artifactContract, schematest.Marshal(t, artifact)},
+		"first revision":      {revisionContract, schematest.Marshal(t, firstRevision)},
+		"rework revision":     {revisionContract, schematest.Marshal(t, rework)},
+		"review":              {reviewContract, schematest.Marshal(t, newReview(t, reviewTask, firstRevision, DispositionRequestChanges))},
 		"budget":              {budgetContract, schematest.Marshal(t, budget)},
 		"overshot budget":     {budgetContract, schematest.Marshal(t, overshot)},
 		"held reservation":    {reserveContract, schematest.Marshal(t, reservation)},
@@ -220,6 +238,24 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		}},
 		{"receipt missing proof", "spend receipt", func(d map[string]any) { delete(d, "proof") }},
 		{"receipt malformed proof", "spend receipt", func(d map[string]any) { d["proof"] = "webauthn-blob" }},
+		{"manifest unknown kind", "manifest", func(d map[string]any) { d["kind"] = "log" }},
+		{"manifest bad media type", "manifest", func(d map[string]any) { d["media_type"] = "diff" }},
+		{"manifest zero epoch", "manifest", func(d map[string]any) { d["writer_epoch"] = 0 }},
+		{"manifest missing digest", "manifest", func(d map[string]any) { delete(d, "digest") }},
+		{"manifest with commit time", "manifest", func(d map[string]any) { d["committed_at"] = testNow.Format(time.RFC3339) }},
+		{"artifact without commit time", "artifact", func(d map[string]any) { delete(d, "committed_at") }},
+		{"artifact unknown field", "artifact", func(d map[string]any) { d["bytes"] = "aGVsbG8=" }},
+		{"artifact missing producer", "artifact", func(d map[string]any) { delete(d, "producer_id") }},
+		{"revision without artifacts", "first revision", func(d map[string]any) { d["artifact_ids"] = []any{} }},
+		{"revision duplicate artifacts", "rework revision", func(d map[string]any) {
+			id := d["artifact_ids"].([]any)[0]
+			d["artifact_ids"] = []any{id, id}
+		}},
+		{"first revision with predecessor", "first revision", func(d map[string]any) { d["previous_revision_id"] = otherID }},
+		{"rework without predecessor", "rework revision", func(d map[string]any) { delete(d, "previous_revision_id") }},
+		{"review unknown disposition", "review", func(d map[string]any) { d["disposition"] = "approve" }},
+		{"review zero task version", "review", func(d map[string]any) { d["task_version"] = 0 }},
+		{"review missing reviewer", "review", func(d map[string]any) { delete(d, "reviewer_id") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -271,6 +307,10 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 		{"budget.schema.json", []string{"$defs", "state", "enum"}, []string{string(BudgetOpen), string(BudgetExhausted)}},
 		{"reservation.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(ReservationStates())},
 		{"spend-challenge.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(SpendStates())},
+		{"artifact-manifest.schema.json", []string{"$defs", "manifestFields", "properties", "kind", "enum"}, schematest.Strings(ArtifactKinds())},
+		{"artifact-manifest.schema.json", []string{"$defs", "commitOutcome", "enum"}, schematest.Strings(ArtifactCommitOutcomes())},
+		{"artifact-manifest.schema.json", []string{"$defs", "retryReason", "enum"}, schematest.Strings(RetryReasons())},
+		{"result-review.schema.json", []string{"properties", "disposition", "enum"}, schematest.Strings(Dispositions())},
 	} {
 		t.Run(tc.file+"#"+strings.Join(tc.path, "/"), func(t *testing.T) {
 			got := schematest.Enum(t, filepath.Join(schemaDir, tc.file), tc.path...)

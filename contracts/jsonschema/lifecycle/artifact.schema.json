@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Artifact",
+  "description": "Registered evidence: a committed manifest whose bytes the store verified, recording exact digest, size, manifest operation, provenance and the winning writer epoch. Bytes may live outside PostgreSQL; this record does not.",
+  "$ref": "artifact-manifest.schema.json#/$defs/manifestFields",
+  "required": ["committed_at"],
+  "properties": {
+    "committed_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "unevaluatedProperties": false
+}
