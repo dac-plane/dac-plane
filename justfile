@@ -55,11 +55,12 @@ test-race:
     go test -race ./...
 
 # -count=1 bypasses the test cache, which cannot see the container and would
-# otherwise report a pass without starting PostgreSQL.
+# otherwise report a pass without starting PostgreSQL. Pass package paths to
+# run a subset, e.g. `just test-integration ./internal/platform/postgres/`.
 [doc('Run integration tests against a real PostgreSQL container (needs Docker)')]
 [group('test')]
-test-integration:
-    {{ sdkroot }}go test -count=1 -tags=integration ./...
+test-integration *pkgs="./...":
+    {{ sdkroot }}go test -count=1 -tags=integration {{ pkgs }}
 
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]
