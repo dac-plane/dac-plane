@@ -12,8 +12,11 @@ concurrency:
 permissions:
   contents: read
 
-# Tool versions are pinned here and run with `go run module@version`, so the
-# module's checksum database verifies them and they stay out of go.mod.
+# Tool versions are pinned here and installed with `go install module@version`,
+# so the checksum database verifies them and they stay out of go.mod. Each tool
+# binary is cached under its own key (tool, version, Go version), because the
+# shared setup-go cache is keyed on go.sum and never re-saved on a hit, so it
+# would never gain the tools.
 env:
   GOVULNCHECK_VERSION: v1.9.0
   ACTIONLINT_VERSION: v1.7.12
@@ -51,8 +54,11 @@ jobs:
       - name: Run race tests
         run: go test -race ./...
 
+      # -count=1 bypasses the restored test cache. Integration tests depend on
+      # a PostgreSQL container the cache cannot see, so a cached pass would
+      # report success without starting PostgreSQL at all.
       - name: Run PostgreSQL integration tests
-        run: go test -tags=integration ./...
+        run: go test -count=1 -tags=integration ./...
 
   vulnerabilities:
     name: Go vulnerabilities
@@ -62,15 +68,29 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      # The shared Go cache is left to the Go foundation job, so its contents
+      # do not depend on which job finishes first.
       - name: Set up Go
+        id: go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: 1.26.x
-          cache: true
+          cache: false
+
+      - name: Restore govulncheck
+        id: tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/govulncheck
+          key: govulncheck-${{ runner.os }}-${{ env.GOVULNCHECK_VERSION }}-go${{ steps.go.outputs.go-version }}
+
+      - name: Install govulncheck
+        if: steps.tool.outputs.cache-hit != 'true'
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
 
       # Reports only vulnerabilities in code paths the module actually calls.
       - name: Run govulncheck
-        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+        run: ~/go/bin/govulncheck ./...
 
   workflows:
     name: Workflow lint
@@ -81,10 +101,22 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: 1.26.x
-          cache: true
+          cache: false
+
+      - name: Restore actionlint
+        id: tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/actionlint
+          key: actionlint-${{ runner.os }}-${{ env.ACTIONLINT_VERSION }}-go${{ steps.go.outputs.go-version }}
+
+      - name: Install actionlint
+        if: steps.tool.outputs.cache-hit != 'true'
+        run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
 
       - name: Run actionlint
-        run: go run "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+        run: ~/go/bin/actionlint
