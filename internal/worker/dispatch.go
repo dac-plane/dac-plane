@@ -28,6 +28,7 @@ const (
 	reasonDeadlineExceeded  = "deadline_exceeded"
 	reasonTransportFailed   = "transport_unavailable"
 	reasonMalformedReply    = "malformed_reply"
+	reasonRetryBudgetSpent  = "retry_budget_exhausted"
 )
 
 func (w *Worker) transition(expectedVersion uint64, at time.Time) (store.Transition, error) {
@@ -110,6 +111,19 @@ func (w *Worker) cancelRow(ctx context.Context, tenant ids.TenantID, row store.O
 			return nil
 		}
 		return err
+	}
+	if reason, spent := w.budgetSpent(row); spent {
+		// The budget counts sends; a due row with a spent budget is
+		// exhausted without another cancel attempt.
+		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, reason, now); err != nil {
+			return err
+		}
+		if err := uow.Commit(ctx); err != nil {
+			return err
+		}
+		committed = true
+		w.stats.Exhausts.Add(1)
+		return nil
 	}
 	operation, err := store.GetOperation(ctx, uow, tenant, body.Operation)
 	if err != nil {
@@ -245,6 +259,11 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		}
 		return nil, err
 	}
+	if reason, spent := w.budgetSpent(row); spent {
+		// The budget counts sends; a due row with a spent budget is
+		// exhausted without another send.
+		return exhaust(claim, reason)
+	}
 	operation, err := store.GetOperation(ctx, uow, tenant, body.Operation)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -322,6 +341,20 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	}
 	w.stats.Claims.Add(1)
 	return &preparedDispatch{claim: claim, operation: operation, lease: lease}, nil
+}
+
+// budgetSpent reports whether the row already burned its retry budget, and
+// the reason to record if so. The budget counts sends while Classify only
+// runs after a failure, so the tick must check before sending: otherwise a
+// rescheduled row with a spent budget would send forever.
+func (w *Worker) budgetSpent(row store.OutboxRow) (string, bool) {
+	if row.Attempts < w.cfg.Policy.MaxAttempts {
+		return "", false
+	}
+	if row.LastError != "" {
+		return row.LastError, true
+	}
+	return reasonRetryBudgetSpent, true
 }
 
 // exhaustedError carries a static give-up reason through helpers that
