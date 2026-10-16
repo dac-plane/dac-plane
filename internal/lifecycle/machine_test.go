@@ -67,6 +67,9 @@ func TestMachinesAreExhaustivelyChecked(t *testing.T) {
 	t.Run("task", func(t *testing.T) { assertExhaustive(t, taskMachine) })
 	t.Run("attempt", func(t *testing.T) { assertExhaustive(t, attemptMachine) })
 	t.Run("attention", func(t *testing.T) { assertExhaustive(t, attentionMachine) })
+	t.Run("operation", func(t *testing.T) { assertExhaustive(t, operationMachine) })
+	t.Run("harness", func(t *testing.T) { assertExhaustive(t, harnessMachine) })
+	t.Run("migration", func(t *testing.T) { assertExhaustive(t, migrationMachine) })
 }
 
 func TestEveryNonTerminalStateHasAnExit(t *testing.T) {
@@ -80,6 +83,9 @@ func TestEveryNonTerminalStateHasAnExit(t *testing.T) {
 	check("task", strs(taskMachine.states), strs(taskMachine.terminal), func(s string) int { return len(taskMachine.table[TaskState(s)]) })
 	check("attempt", strs(attemptMachine.states), strs(attemptMachine.terminal), func(s string) int { return len(attemptMachine.table[AttemptState(s)]) })
 	check("attention", strs(attentionMachine.states), strs(attentionMachine.terminal), func(s string) int { return len(attentionMachine.table[AttentionState(s)]) })
+	check("operation", strs(operationMachine.states), strs(operationMachine.terminal), func(s string) int { return len(operationMachine.table[OperationState(s)]) })
+	check("harness", strs(harnessMachine.states), strs(harnessMachine.terminal), func(s string) int { return len(harnessMachine.table[HarnessMode(s)]) })
+	check("migration", strs(migrationMachine.states), strs(migrationMachine.terminal), func(s string) int { return len(migrationMachine.table[MigrationState(s)]) })
 }
 
 func TestReconciliationNeverReturnsToDispatch(t *testing.T) {

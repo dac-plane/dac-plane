@@ -80,3 +80,15 @@ func (m machine[S, E]) next(from S, version, expectedVersion uint64, event E, ta
 	}
 	return target, ""
 }
+
+// transition applies one compare-and-set step for a versioned record and
+// completes change, or returns the refusal with change as its context.
+func transition[S ~string, E ~string](m machine[S, E], change Change, state S, version, expectedVersion uint64, event E, target S) (S, Change, error) {
+	next, code := m.next(state, version, expectedVersion, event, target)
+	if code != "" {
+		return state, change, reject(change, code)
+	}
+	change.To = string(next)
+	change.Version = version + 1
+	return next, change, nil
+}

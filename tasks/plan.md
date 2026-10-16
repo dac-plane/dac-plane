@@ -60,17 +60,41 @@ The issue has two separable halves. Splitting keeps each contract reviewable.
   records (#20), which this PR does not define.
 - New `ids` kinds: Task, AttentionRequest, Decision, AuditEvent.
 
-### PR B: provider support models (`internal/lifecycle` or `internal/execution`)
+### PR B: provider support models (`internal/lifecycle`)
 
-- Execution bindings: runtime session, runtime turn, environment resource and provider
-  operation, each correlated to exactly one Attempt.
-- Typed turn failures (code, summary, safe details) and `awaiting_input` turn ends.
-- Send durability `accepted | rejected | pending | unknown`; `unknown` enters reconciliation and
-  is never redispatched.
-- Environment observation `absent | starting | running | hibernated`, recorded as observed
-  provider state.
-- Harness mode `off | shadow | live`; migration passes with holds and preview/execute.
-- Maintenance claims: expiring, fenced by claim epoch, stale claimant rejected.
+Status: part A merged in #35. These records stay in `internal/lifecycle` so they reuse the
+transition table, `Change` and `AuditEvent`.
+
+- `Binding`: correlates one provider-native resource (`runtime_session`, `runtime_turn`,
+  `environment_resource`) to exactly one Attempt and the provider operation that produced it.
+  Native references are opaque, bounded strings; a turn names its session. `CheckBinding`
+  rejects a native resource already bound to a different Attempt.
+- `ProviderOperation`: the stable operation identity, as a versioned machine. `recorded ->
+  dispatched`; the send result is `accepted`, `rejected` (definitive, no effect), still
+  `pending` (no change) or `unknown` (to `uncertain`); an accepted operation `succeeded`,
+  `failed` or becomes `uncertain`. `uncertain` resolves only by reconciliation to an observed
+  outcome and has no path back to `recorded` or `dispatched`, so it is never redispatched.
+- `TurnEnd`: a runtime turn's outcome (`completed | awaiting_input | failed | interrupted`) with
+  a typed `TurnFailure` (closed code set, bounded summary, optional details digest; no raw
+  provider payload). `awaiting_input` is the explicit waiting signal.
+- `EnvironmentObservation`: observed run state `absent | starting | running | hibernated |
+  unknown` of one bound resource with a provider sequence; a newer sequence supersedes. The
+  product records it and does not control compute.
+- `HarnessQualification`: per tenant and runtime provider, `off | shadow | live` as a machine
+  (promote, demote, disable). Only `live` is authoritative: shadow may record comparison
+  evidence but cannot mutate lifecycle state or perform governed effects.
+- `MigrationPass`: moving work between harnesses. `planned -> previewed -> executing ->
+  completed | failed`, with `held` and `cancelled`. A preview has no effect; `execute` is a
+  separate command allowed only from `previewed` and only for a principal actor. Releasing a
+  hold returns to `planned`, so execution needs a fresh preview.
+- `MaintenanceClaim`: an expiring, epoch-fenced claim on a resource. A live claim cannot be
+  taken; an expired one can, which advances the epoch. Renew, complete and release require
+  the current claimant, epoch and an unexpired claim, so a stale claimant cannot finish work
+  after takeover.
+
+Audit gains record kinds for the versioned records and rejection codes `stale_claim` and
+`claim_held`. Every record gets a JSON Schema; the contract-coverage test from #36 enforces
+that each has a Go agreement test.
 
 ## Verification
 

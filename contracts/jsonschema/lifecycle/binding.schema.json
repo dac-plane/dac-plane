@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Binding",
+  "description": "Correlates one provider-native resource to exactly one Attempt and the provider operation that produced it. A turn, and only a turn, names its session.",
+  "type": "object",
+  "required": ["tenant_id", "attempt_id", "provider_id", "operation_id", "kind", "native_ref", "bound_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "kind": { "enum": ["runtime_session", "runtime_turn", "environment_resource"] },
+    "native_ref": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "session_ref": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "bound_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "kind": { "const": "runtime_turn" } } },
+  "then": { "required": ["session_ref"] },
+  "else": { "not": { "required": ["session_ref"] } }
+}

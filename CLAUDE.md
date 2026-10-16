@@ -9,10 +9,11 @@ product lifecycle—tasks, attempts, attention, decisions, budgets, artifacts, a
 revisions and reviews—while agent runtimes and execution environments remain replaceable
 integrations.
 
-**The product lifecycle is not implemented yet.** The repository holds the reviewed architecture
-baseline, its ADRs and the Go process foundation (`cmd/`, `internal/`): configuration, PostgreSQL
-connectivity, the Goose migration provider and integration-test support, with no product records,
-schema or HTTP surface. M1 is tracked by epic #11, whose ordered issues are the implementation
+**The product lifecycle is being implemented, contracts first.** The repository holds the reviewed
+architecture baseline, its ADRs, the Go process foundation (`cmd/`, `internal/`) and the first
+pure domain contracts: identity and scoped authority, and lifecycle records with their
+transitions and audit, each mirrored by JSON Schema. There is no persistence, product database
+schema, worker or HTTP surface yet. M1 is tracked by epic #11, whose ordered issues are the implementation
 sequence. Do not start writing implementation code against a reading of the docs alone; work starts
 from one of those issues and a plan in `tasks/plan.md` against the baseline below. The earlier
 candidate research and TypeScript/PostgreSQL prototypes live under `architecture-explore/` as

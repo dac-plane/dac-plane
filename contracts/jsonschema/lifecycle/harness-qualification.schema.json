@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HarnessQualification",
+  "description": "A tenant's qualification of one runtime provider. Only live is authoritative; shadow records comparison evidence only.",
+  "type": "object",
+  "required": ["tenant_id", "provider_id", "mode", "version", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "mode": { "enum": ["off", "shadow", "live"] },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "event": { "enum": ["promote", "demote", "disable"] }
+  }
+}

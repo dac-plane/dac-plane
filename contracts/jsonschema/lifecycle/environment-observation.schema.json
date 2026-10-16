@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnvironmentObservation",
+  "description": "A provider's report of a bound environment resource, ordered by the provider's sequence. Observed state only; the product does not control compute.",
+  "type": "object",
+  "required": ["tenant_id", "attempt_id", "provider_id", "resource_ref", "state", "sequence", "observed_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "resource_ref": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "state": { "enum": ["absent", "starting", "running", "hibernated", "unknown"] },
+    "sequence": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "observed_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}

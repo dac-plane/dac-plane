@@ -11,7 +11,12 @@
   "properties": {
     "audit_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-    "record": { "enum": ["task", "attempt", "attention_request"] },
+    "record": {
+      "enum": [
+        "task", "attempt", "attention_request", "provider_operation", "harness_qualification",
+        "migration_pass", "maintenance_claim"
+      ]
+    },
     "record_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "actor": { "$ref": "#/$defs/actor" },
     "event": { "type": "string", "minLength": 1 },
@@ -23,7 +28,8 @@
       "enum": [
         "version_conflict", "terminal_state", "invalid_transition", "ambiguous_target",
         "invalid_target", "cross_tenant", "wrong_record", "unauthorized_actor",
-        "decision_not_allowed", "request_expired", "stop_already_observed"
+        "decision_not_allowed", "request_expired", "stop_already_observed", "stale_claim",
+        "claim_held"
       ]
     },
     "occurred_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }

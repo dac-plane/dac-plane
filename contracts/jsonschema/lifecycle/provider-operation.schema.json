@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProviderOperation",
+  "description": "The stable identity of one request to a provider. An uncertain operation is reconciled, never redispatched.",
+  "type": "object",
+  "required": ["operation_id", "tenant_id", "attempt_id", "provider_id", "state", "version", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "state": { "enum": ["recorded", "dispatched", "accepted", "uncertain", "succeeded", "failed", "rejected"] },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "event": {
+      "enum": [
+        "dispatch", "send_accepted", "send_rejected", "send_unknown", "succeed", "fail",
+        "outcome_unknown", "reconcile"
+      ]
+    },
+    "sendStatus": {
+      "description": "A provider's report of whether it durably received a request; unknown enters reconciliation.",
+      "enum": ["accepted", "rejected", "pending", "unknown"]
+    }
+  }
+}
