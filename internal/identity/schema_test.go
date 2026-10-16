@@ -1,7 +1,6 @@
 package identity
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,81 +9,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
 )
 
 const schemaDir = "../../contracts/jsonschema/identity"
 
-// contract pairs a JSON Schema with Go decoding and validation of the same
-// record, so both can be asked whether a document is valid.
-type contract struct {
-	schema   string
-	goAccept func(data []byte) error
-}
-
-func goContract[T interface{ Validate() error }](schema string) contract {
-	return contract{schema: schema, goAccept: func(data []byte) error {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		var value T
-		if err := decoder.Decode(&value); err != nil {
-			return err
-		}
-		return value.Validate()
-	}}
-}
-
 var (
-	principalContract = goContract[Principal]("principal.schema.json")
-	requestContract   = goContract[ActionRequest]("action-request.schema.json")
-	policyContract    = goContract[Policy]("policy.schema.json")
-	grantContract     = goContract[AuthorityGrant]("authority-grant.schema.json")
-	useContract       = goContract[AuthorityUse]("authority-use.schema.json")
+	principalContract = schematest.GoContract[Principal](filepath.Join(schemaDir, "principal.schema.json"))
+	requestContract   = schematest.GoContract[ActionRequest](filepath.Join(schemaDir, "action-request.schema.json"))
+	policyContract    = schematest.GoContract[Policy](filepath.Join(schemaDir, "policy.schema.json"))
+	grantContract     = schematest.GoContract[AuthorityGrant](filepath.Join(schemaDir, "authority-grant.schema.json"))
+	useContract       = schematest.GoContract[AuthorityUse](filepath.Join(schemaDir, "authority-use.schema.json"))
 )
 
-func compileSchema(t *testing.T, name string) *jsonschema.Schema {
-	t.Helper()
-	compiler := jsonschema.NewCompiler()
-	compiler.DefaultDraft(jsonschema.Draft2020)
-	compiler.AssertFormat()
-	schema, err := compiler.Compile(filepath.Join(schemaDir, name))
-	if err != nil {
-		t.Fatalf("compile %s: %v", name, err)
-	}
-	return schema
-}
-
-func schemaAccepts(t *testing.T, schema *jsonschema.Schema, data []byte) error {
-	t.Helper()
-	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("unmarshal instance: %v", err)
-	}
-	return schema.Validate(instance)
-}
-
-func marshal(t *testing.T, value any) []byte {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("Marshal(%T) error = %v", value, err)
-	}
-	return data
-}
-
-// mutate decodes a document, applies change and re-encodes it.
-func mutate(t *testing.T, data []byte, change func(map[string]any)) []byte {
-	t.Helper()
-	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	change(document)
-	return marshal(t, document)
-}
-
 func validRecords(t *testing.T) map[string]struct {
-	contract contract
+	contract schematest.Contract
 	data     []byte
 } {
 	f := newFixture(t)
@@ -101,20 +40,20 @@ func validRecords(t *testing.T) map[string]struct {
 	revoked.RevokedAt = testNow
 
 	return map[string]struct {
-		contract contract
+		contract schematest.Contract
 		data     []byte
 	}{
-		"principal":        {principalContract, marshal(t, testPrincipal(t))},
-		"action request":   {requestContract, marshal(t, f.request)},
-		"policy":           {policyContract, marshal(t, f.policy)},
-		"empty policy":     {policyContract, marshal(t, Policy{Tenant: f.policy.Tenant, Generation: 1})},
-		"standing grant":   {grantContract, marshal(t, f.standing)},
-		"revoked grant":    {grantContract, marshal(t, revoked)},
-		"allow-once grant": {grantContract, marshal(t, f.allowOnce)},
-		"retired grant":    {grantContract, marshal(t, *retired)},
-		"allowed use":      {useContract, marshal(t, allowed)},
-		"denied use":       {useContract, marshal(t, denied)},
-		"denied grant use": {useContract, marshal(t, deniedWithGrant(t, f))},
+		"principal":        {principalContract, schematest.Marshal(t, testPrincipal(t))},
+		"action request":   {requestContract, schematest.Marshal(t, f.request)},
+		"policy":           {policyContract, schematest.Marshal(t, f.policy)},
+		"empty policy":     {policyContract, schematest.Marshal(t, Policy{Tenant: f.policy.Tenant, Generation: 1})},
+		"standing grant":   {grantContract, schematest.Marshal(t, f.standing)},
+		"revoked grant":    {grantContract, schematest.Marshal(t, revoked)},
+		"allow-once grant": {grantContract, schematest.Marshal(t, f.allowOnce)},
+		"retired grant":    {grantContract, schematest.Marshal(t, *retired)},
+		"allowed use":      {useContract, schematest.Marshal(t, allowed)},
+		"denied use":       {useContract, schematest.Marshal(t, denied)},
+		"denied grant use": {useContract, schematest.Marshal(t, deniedWithGrant(t, f))},
 	}
 }
 
@@ -131,11 +70,11 @@ func deniedWithGrant(t *testing.T, f fixture) AuthorityUse {
 func TestSchemasAcceptValidGoRecords(t *testing.T) {
 	for name, record := range validRecords(t) {
 		t.Run(name, func(t *testing.T) {
-			if err := record.contract.goAccept(record.data); err != nil {
+			if err := record.contract.GoAccept(record.data); err != nil {
 				t.Fatalf("Go rejected its own record: %v", err)
 			}
-			schema := compileSchema(t, record.contract.schema)
-			if err := schemaAccepts(t, schema, record.data); err != nil {
+			schema := schematest.Compile(t, record.contract.Schema)
+			if err := schematest.Accepts(t, schema, record.data); err != nil {
 				t.Fatalf("schema rejected Go record %s: %v", record.data, err)
 			}
 		})
@@ -202,12 +141,12 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 			if !ok {
 				t.Fatalf("unknown base record %q", tc.base)
 			}
-			data := mutate(t, base.data, tc.change)
-			schema := compileSchema(t, base.contract.schema)
-			if err := schemaAccepts(t, schema, data); err == nil {
+			data := schematest.Mutate(t, base.data, tc.change)
+			schema := schematest.Compile(t, base.contract.Schema)
+			if err := schematest.Accepts(t, schema, data); err == nil {
 				t.Errorf("schema accepted %s", data)
 			}
-			if err := base.contract.goAccept(data); err == nil {
+			if err := base.contract.GoAccept(data); err == nil {
 				t.Errorf("Go accepted %s", data)
 			}
 		})
@@ -220,16 +159,16 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 		path []string
 		want []string
 	}{
-		{"common.schema.json", []string{"$defs", "scopeClass", "enum"}, strs(ScopeClasses())},
-		{"common.schema.json", []string{"$defs", "permission", "enum"}, strs(Permissions())},
-		{"principal.schema.json", []string{"properties", "kind", "enum"}, strs(PrincipalKinds())},
-		{"authority-grant.schema.json", []string{"properties", "mode", "enum"}, strs(GrantModes())},
-		{"authority-use.schema.json", []string{"properties", "source", "enum"}, strs(AuthoritySources())},
-		{"authority-use.schema.json", []string{"properties", "outcome", "enum"}, strs(UseOutcomes())},
-		{"authority-use.schema.json", []string{"properties", "reason", "enum"}, strs(DenialReasons())},
+		{"common.schema.json", []string{"$defs", "scopeClass", "enum"}, schematest.Strings(ScopeClasses())},
+		{"common.schema.json", []string{"$defs", "permission", "enum"}, schematest.Strings(Permissions())},
+		{"principal.schema.json", []string{"properties", "kind", "enum"}, schematest.Strings(PrincipalKinds())},
+		{"authority-grant.schema.json", []string{"properties", "mode", "enum"}, schematest.Strings(GrantModes())},
+		{"authority-use.schema.json", []string{"properties", "source", "enum"}, schematest.Strings(AuthoritySources())},
+		{"authority-use.schema.json", []string{"properties", "outcome", "enum"}, schematest.Strings(UseOutcomes())},
+		{"authority-use.schema.json", []string{"properties", "reason", "enum"}, schematest.Strings(DenialReasons())},
 	} {
 		t.Run(tc.file+"#"+strings.Join(tc.path, "/"), func(t *testing.T) {
-			got := schemaEnum(t, tc.file, tc.path)
+			got := schematest.Enum(t, filepath.Join(schemaDir, tc.file), tc.path...)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("schema enum = %v, Go constants = %v", got, tc.want)
 			}
@@ -263,40 +202,4 @@ func TestRecordsCarryNoCredentialFields(t *testing.T) {
 			}
 		}
 	}
-}
-
-func schemaEnum(t *testing.T, file string, path []string) []string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(schemaDir, file))
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	var node any
-	if err := json.Unmarshal(data, &node); err != nil {
-		t.Fatalf("Unmarshal(%s) error = %v", file, err)
-	}
-	for _, key := range path {
-		object, ok := node.(map[string]any)
-		if !ok {
-			t.Fatalf("%s: %s is not an object", file, key)
-		}
-		node = object[key]
-	}
-	values, ok := node.([]any)
-	if !ok {
-		t.Fatalf("%s: %v is not an enum array", file, path)
-	}
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i], _ = value.(string)
-	}
-	return result
-}
-
-func strs[S ~string](values []S) []string {
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i] = string(value)
-	}
-	return result
 }
