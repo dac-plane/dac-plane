@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HookResponse",
+  "description": "Answers a hook request. Only a pre-action response gives a permission, and only an allowing one may rewrite the input. Messages, context and usage evidence never change lifecycle state.",
+  "type": "object",
+  "required": ["kind"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["pre_action", "post_action", "action_failure"] },
+    "permission": { "enum": ["allow", "deny"] },
+    "updated_input": { "$ref": "common.schema.json#/$defs/jsonObject" },
+    "user_message": { "$ref": "common.schema.json#/$defs/message" },
+    "agent_message": { "$ref": "common.schema.json#/$defs/message" },
+    "additional_context": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "common.schema.json#/$defs/message" }
+    },
+    "usage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["unit", "amount"],
+        "additionalProperties": false,
+        "properties": {
+          "unit": { "$ref": "../lifecycle/common.schema.json#/$defs/unit" },
+          "amount": { "$ref": "../lifecycle/common.schema.json#/$defs/amount" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "pre_action" } } },
+      "then": { "required": ["permission"] },
+      "else": { "not": { "anyOf": [{ "required": ["permission"] }, { "required": ["updated_input"] }] } }
+    },
+    {
+      "if": { "properties": { "permission": { "const": "deny" } }, "required": ["permission"] },
+      "then": { "not": { "required": ["updated_input"] } }
+    }
+  ]
+}

@@ -34,6 +34,7 @@ type (
 	Artifact    struct{}
 	Revision    struct{}
 	Review      struct{}
+	Delivery    struct{}
 	// Any marks an identifier whose record kind is carried alongside it, such
 	// as the subject of an audit event.
 	Any struct{}
@@ -59,6 +60,7 @@ type (
 	ArtifactID    = ID[Artifact]
 	RevisionID    = ID[Revision]
 	ReviewID      = ID[Review]
+	DeliveryID    = ID[Delivery]
 	AnyID         = ID[Any]
 )
 

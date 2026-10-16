@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frame",
+  "description": "One control-protocol message carrying exactly the body its kind names. A provider's first frame is a hello; nothing but lifecycle frames are processed before ready. A hello's required capabilities must be offered; the Go contract enforces that.",
+  "type": "object",
+  "required": ["kind"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["lifecycle", "request", "cancel", "reply", "event"] },
+    "lifecycle": { "$ref": "#/$defs/lifecycle" },
+    "request": { "$ref": "#/$defs/request" },
+    "cancel": { "$ref": "#/$defs/cancel" },
+    "reply": { "$ref": "#/$defs/reply" },
+    "event": { "$ref": "event.schema.json" }
+  },
+  "oneOf": [
+    { "properties": { "kind": { "const": "lifecycle" } }, "required": ["lifecycle"], "maxProperties": 2 },
+    { "properties": { "kind": { "const": "request" } }, "required": ["request"], "maxProperties": 2 },
+    { "properties": { "kind": { "const": "cancel" } }, "required": ["cancel"], "maxProperties": 2 },
+    { "properties": { "kind": { "const": "reply" } }, "required": ["reply"], "maxProperties": 2 },
+    { "properties": { "kind": { "const": "event" } }, "required": ["event"], "maxProperties": 2 }
+  ],
+  "$defs": {
+    "version": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+    "capabilities": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/name" } },
+    "lifecycle": {
+      "type": "object",
+      "required": ["phase"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "enum": ["hello", "ready", "shutdown"] },
+        "versions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/version" } },
+        "offered": { "$ref": "#/$defs/capabilities" },
+        "required": { "$ref": "#/$defs/capabilities" },
+        "version": { "$ref": "#/$defs/version" },
+        "selected": { "$ref": "#/$defs/capabilities" },
+        "failure": { "$ref": "common.schema.json#/$defs/failure" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "phase": { "const": "hello" } } },
+          "then": { "required": ["versions"], "propertyNames": { "enum": ["phase", "versions", "offered", "required"] } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "ready" } } },
+          "then": { "required": ["version"], "propertyNames": { "enum": ["phase", "version", "selected"] } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "shutdown" } } },
+          "then": { "propertyNames": { "enum": ["phase", "failure"] } }
+        }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "required": ["operation_id", "delivery_id", "tenant_id", "attempt_id", "role", "method", "demand", "deadline"],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "delivery_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store"] },
+        "method": {
+          "enum": [
+            "start_turn", "steer_turn", "interrupt", "export_artifacts",
+            "provision", "stop", "observe",
+            "pre_action", "post_action", "action_failed",
+            "authorize_upload", "stat_object", "commit_manifest"
+          ]
+        },
+        "arguments": { "$ref": "common.schema.json#/$defs/jsonObject" },
+        "demand": { "enum": ["person", "background"] },
+        "deadline": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "role": { "const": "runtime" } } },
+          "then": { "properties": { "method": { "enum": ["start_turn", "steer_turn", "interrupt", "export_artifacts"] } } }
+        },
+        {
+          "if": { "properties": { "role": { "const": "environment" } } },
+          "then": { "properties": { "method": { "enum": ["provision", "stop", "observe"] } } }
+        },
+        {
+          "if": { "properties": { "role": { "const": "enforcement" } } },
+          "then": { "properties": { "method": { "enum": ["pre_action", "post_action", "action_failed"] } } }
+        },
+        {
+          "if": { "properties": { "role": { "const": "artifact_store" } } },
+          "then": { "properties": { "method": { "enum": ["authorize_upload", "stat_object", "commit_manifest"] } } }
+        }
+      ]
+    },
+    "cancel": {
+      "type": "object",
+      "required": ["operation_id", "delivery_id"],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "delivery_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" }
+      }
+    },
+    "reply": {
+      "type": "object",
+      "required": ["operation_id", "delivery_id", "outcome", "durability"],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "delivery_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "outcome": { "enum": ["ok", "failed"] },
+        "durability": { "enum": ["accepted", "rejected", "pending", "unknown"] },
+        "result": { "$ref": "common.schema.json#/$defs/jsonObject" },
+        "failure": { "$ref": "common.schema.json#/$defs/failure" }
+      },
+      "if": { "properties": { "outcome": { "const": "ok" } } },
+      "then": {
+        "properties": { "durability": { "enum": ["accepted", "pending"] } },
+        "not": { "required": ["failure"] }
+      },
+      "else": {
+        "required": ["failure"],
+        "properties": { "durability": { "enum": ["rejected", "unknown"] } },
+        "not": { "required": ["result"] }
+      }
+    }
+  }
+}

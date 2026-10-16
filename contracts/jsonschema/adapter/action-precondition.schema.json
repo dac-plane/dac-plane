@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActionPrecondition",
+  "description": "Binds a stateful action to the observation it was planned on. A stale token is refused, and one action at a time runs per resource.",
+  "type": "object",
+  "required": ["operation_id", "resource", "token"],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "resource": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "token": { "$ref": "../identity/common.schema.json#/$defs/digest" }
+  }
+}

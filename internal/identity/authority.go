@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"slices"
@@ -42,6 +44,13 @@ func (d Digest) Validate() error {
 		return fmt.Errorf("%w: malformed digest", ErrInvalid)
 	}
 	return nil
+}
+
+// DigestOf returns the digest of exactly these bytes. No canonicalization is
+// applied: two encodings of the same value have different digests.
+func DigestOf(data []byte) Digest {
+	sum := sha256.Sum256(data)
+	return Digest("sha256:" + hex.EncodeToString(sum[:]))
 }
 
 // ScopeClass is how an action is partitioned for authority. It is a property
