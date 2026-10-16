@@ -8,7 +8,9 @@ import (
 	"sync"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/config"
+	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,10 +18,14 @@ import (
 type Application struct {
 	logger    *slog.Logger
 	pool      *pgxpool.Pool
+	worker    *worker.Worker
 	closeOnce sync.Once
 }
 
-// New validates PostgreSQL connectivity and constructs the application.
+// New validates PostgreSQL connectivity and constructs the application. The
+// worker starts with no registered provider ports: dispatchable rows wait
+// until adapters register in later issues; the reaper and reconciler run
+// from the start.
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Application, error) {
 	if logger == nil {
 		return nil, errors.New("logger is required")
@@ -33,14 +39,40 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		return nil, err
 	}
 
-	return &Application{logger: logger, pool: pool}, nil
+	ownerID, err := ids.New[ids.Any]()
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "control-plane-"+ownerID.String())
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+
+	return &Application{logger: logger, pool: pool, worker: dispatchWorker}, nil
 }
 
-// Run keeps the application alive until cancellation. Lifecycle behavior is
-// added behind this composition root by later issues.
+// Run keeps the application alive until cancellation, driving fenced
+// dispatch, reconciliation and claim takeover behind this composition root.
+// It waits for in-flight work before returning so Close never races a query.
+// A nil worker runs nothing; tests and future surfaces use that to skip
+// dispatch without a pool.
 func (application *Application) Run(ctx context.Context) error {
 	application.logger.Info("control plane initialized")
-	<-ctx.Done()
+	if application.worker != nil {
+		workerDone := make(chan error, 1)
+		go func() {
+			workerDone <- application.worker.Run(ctx)
+		}()
+		<-ctx.Done()
+		if err := <-workerDone; err != nil {
+			application.logger.Error("worker stopped with an error", "error", err)
+			return err
+		}
+	} else {
+		<-ctx.Done()
+	}
 	application.logger.Info("control plane stopping")
 	return nil
 }
