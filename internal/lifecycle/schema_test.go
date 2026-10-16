@@ -26,6 +26,10 @@ var (
 	harnessContract   = schematest.GoContract[HarnessQualification](filepath.Join(schemaDir, "harness-qualification.schema.json"))
 	migrationContract = schematest.GoContract[MigrationPass](filepath.Join(schemaDir, "migration-pass.schema.json"))
 	claimContract     = schematest.GoContract[MaintenanceClaim](filepath.Join(schemaDir, "maintenance-claim.schema.json"))
+	budgetContract    = schematest.GoContract[Budget](filepath.Join(schemaDir, "budget.schema.json"))
+	reserveContract   = schematest.GoContract[Reservation](filepath.Join(schemaDir, "reservation.schema.json"))
+	spendContract     = schematest.GoContract[SpendChallenge](filepath.Join(schemaDir, "spend-challenge.schema.json"))
+	receiptContract   = schematest.GoContract[SpendReceipt](filepath.Join(schemaDir, "spend-receipt.schema.json"))
 )
 
 type record struct {
@@ -76,7 +80,21 @@ func validRecords(t *testing.T) map[string]record {
 		t.Fatalf("Claim() error = %v", err)
 	}
 
+	budget, reservation := reserve(t, newBudget(t, 100), 60)
+	overshot, released, _ := usage(t, budget, reservation, 150)
+	spend := newSpend(t)
+	_, receipt, _, err := spend.Assert(SpendAssertion{Challenge: spend.ID, Terms: spend.Terms, Proof: testDigest, AssertedAt: testNow}, spend.Version)
+	if err != nil {
+		t.Fatalf("Assert() error = %v", err)
+	}
+
 	return map[string]record{
+		"budget":              {budgetContract, schematest.Marshal(t, budget)},
+		"overshot budget":     {budgetContract, schematest.Marshal(t, overshot)},
+		"held reservation":    {reserveContract, schematest.Marshal(t, reservation)},
+		"overrun reservation": {reserveContract, schematest.Marshal(t, released)},
+		"spend challenge":     {spendContract, schematest.Marshal(t, spend)},
+		"spend receipt":       {receiptContract, schematest.Marshal(t, receipt)},
 		"session binding":     {bindingContract, schematest.Marshal(t, newBinding(t))},
 		"turn binding":        {bindingContract, schematest.Marshal(t, turnBinding)},
 		"uncertain operation": {operationContract, schematest.Marshal(t, uncertain)},
@@ -144,7 +162,7 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"applied audit without target", "applied audit", func(d map[string]any) { delete(d, "to_state") }},
 		{"rejected audit with target", "rejected audit", func(d map[string]any) { d["to_state"] = "succeeded" }},
 		{"rejected audit unknown reason", "rejected audit", func(d map[string]any) { d["reason"] = "nope" }},
-		{"audit unknown record", "applied audit", func(d map[string]any) { d["record"] = "budget" }},
+		{"audit unknown record", "applied audit", func(d map[string]any) { d["record"] = "invoice" }},
 		{"audit principal actor without id", "applied audit", func(d map[string]any) { d["actor"] = map[string]any{"kind": "principal"} }},
 		{"audit system actor with id", "system audit", func(d map[string]any) {
 			d["actor"] = map[string]any{"kind": "system", "provider_id": otherID}
@@ -177,6 +195,26 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"held claim without expiry", "held claim", func(d map[string]any) { delete(d, "expires_at") }},
 		{"held claim without claimant", "held claim", func(d map[string]any) { delete(d, "claimant") }},
 		{"held claim zero epoch", "held claim", func(d map[string]any) { d["epoch"] = 0 }},
+		{"budget zero ceiling", "budget", func(d map[string]any) { d["ceiling"] = 0 }},
+		{"budget negative reserved", "budget", func(d map[string]any) { d["reserved"] = -1 }},
+		{"budget amount beyond 2^53", "budget", func(d map[string]any) { d["consumed"] = 9007199254740992.0 }},
+		{"budget fractional amount", "budget", func(d map[string]any) { d["reserved"] = 1.5 }},
+		{"budget uppercase unit", "budget", func(d map[string]any) { d["unit"] = "USD" }},
+		{"budget missing ceiling", "budget", func(d map[string]any) { delete(d, "ceiling") }},
+		{"reservation zero amount", "held reservation", func(d map[string]any) { d["amount"] = 0 }},
+		{"reservation unknown state", "held reservation", func(d map[string]any) { d["state"] = "settled" }},
+		{"spend unknown state", "spend challenge", func(d map[string]any) { d["state"] = "approved" }},
+		{"spend terms zero amount", "spend challenge", func(d map[string]any) {
+			d["terms"].(map[string]any)["amount"] = 0
+		}},
+		{"spend terms missing nonce", "spend challenge", func(d map[string]any) {
+			delete(d["terms"].(map[string]any), "nonce")
+		}},
+		{"spend terms extra field", "spend challenge", func(d map[string]any) {
+			d["terms"].(map[string]any)["card_number"] = "4111"
+		}},
+		{"receipt missing proof", "spend receipt", func(d map[string]any) { delete(d, "proof") }},
+		{"receipt malformed proof", "spend receipt", func(d map[string]any) { d["proof"] = "webauthn-blob" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,6 +263,9 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 		{"migration-pass.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(MigrationStates())},
 		{"migration-pass.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(MigrationEvents())},
 		{"maintenance-claim.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(ClaimStates())},
+		{"budget.schema.json", []string{"$defs", "state", "enum"}, []string{string(BudgetOpen), string(BudgetExhausted)}},
+		{"reservation.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(ReservationStates())},
+		{"spend-challenge.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(SpendStates())},
 	} {
 		t.Run(tc.file+"#"+strings.Join(tc.path, "/"), func(t *testing.T) {
 			got := schematest.Enum(t, filepath.Join(schemaDir, tc.file), tc.path...)

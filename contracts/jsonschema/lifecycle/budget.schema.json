@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Budget",
+  "description": "The authoritative spending limit of one Task in one unit. reserved is the sum of outstanding holds, consumed the sum of recorded usage, and overshoot the largest recorded excess over the ceiling. The Go contract enforces overshoot >= reserved + consumed - ceiling, which needs arithmetic this schema cannot express. An absent count is zero.",
+  "type": "object",
+  "required": ["budget_id", "tenant_id", "task_id", "unit", "ceiling", "version", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "budget_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "unit": { "$ref": "common.schema.json#/$defs/unit" },
+    "ceiling": { "$ref": "common.schema.json#/$defs/amount", "minimum": 1 },
+    "reserved": { "$ref": "common.schema.json#/$defs/amount" },
+    "consumed": { "$ref": "common.schema.json#/$defs/amount" },
+    "overshoot": { "$ref": "common.schema.json#/$defs/amount" },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "state": {
+      "description": "Derived, not stored: exhausted once reserved + consumed reaches the ceiling.",
+      "enum": ["open", "exhausted"]
+    }
+  }
+}

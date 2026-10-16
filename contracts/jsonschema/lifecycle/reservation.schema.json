@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Reservation",
+  "description": "Budget held for one Attempt before dispatch. consumed is the cumulative usage reported against it and may exceed amount.",
+  "type": "object",
+  "required": ["reservation_id", "tenant_id", "budget_id", "attempt_id", "amount", "consumed", "state", "version", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "reservation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "budget_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "amount": { "$ref": "common.schema.json#/$defs/amount", "minimum": 1 },
+    "consumed": { "$ref": "common.schema.json#/$defs/amount" },
+    "state": { "enum": ["held", "released"] },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}

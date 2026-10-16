@@ -7,6 +7,33 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 256
+    },
+    "unit": {
+      "description": "What a budget counts; amounts are integers in this unit with no conversion.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    },
+    "amount": {
+      "description": "A non-negative budget amount, bounded to 2^53-1 so JSON consumers read it exactly.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "spendTerms": {
+      "description": "What a principal authorizes in a spend challenge; an assertion must match exactly.",
+      "type": "object",
+      "required": ["tenant_id", "principal_id", "task_id", "attempt_id", "operation_id", "amount", "unit", "nonce"],
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "principal_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "amount": { "$ref": "#/$defs/amount", "minimum": 1 },
+        "unit": { "$ref": "#/$defs/unit" },
+        "nonce": { "$ref": "../identity/common.schema.json#/$defs/digest" }
+      }
     }
   }
 }
