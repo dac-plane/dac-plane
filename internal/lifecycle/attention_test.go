@@ -1,0 +1,170 @@
+package lifecycle
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+)
+
+type attentionFixture struct {
+	request   AttentionRequest
+	responder ids.PrincipalID
+	decision  Decision
+}
+
+func newAttentionFixture(t *testing.T) attentionFixture {
+	t.Helper()
+	responder := newID[ids.Principal](t)
+	request, err := NewAttentionRequest(AttentionRequest{
+		ID:           newID[ids.Attention](t),
+		Tenant:       newID[ids.Tenant](t),
+		Task:         newID[ids.Task](t),
+		Attempt:      newID[ids.Attempt](t),
+		Kind:         AttentionActionApproval,
+		Operation:    newID[ids.Operation](t),
+		ActionDigest: testDigest,
+		Responders:   []ids.PrincipalID{responder},
+		ExpiresAt:    testNow.Add(time.Hour),
+	}, testNow)
+	if err != nil {
+		t.Fatalf("NewAttentionRequest() error = %v", err)
+	}
+	return attentionFixture{
+		request:   request,
+		responder: responder,
+		decision: Decision{
+			ID:             newID[ids.Decision](t),
+			Tenant:         request.Tenant,
+			Request:        request.ID,
+			RequestVersion: request.Version,
+			Principal:      responder,
+			Kind:           DecisionApproveOnce,
+			DecidedAt:      testNow.Add(time.Minute),
+		},
+	}
+}
+
+func TestDecideThenDeliverAndConsume(t *testing.T) {
+	f := newAttentionFixture(t)
+	decided, change, err := f.request.Decide(f.decision)
+	if err != nil {
+		t.Fatalf("Decide() error = %v", err)
+	}
+	if decided.State != AttentionDecided || decided.Decision != f.decision.ID || change.To != "decided" {
+		t.Fatalf("Decide() = %s/%s", decided.State, decided.Decision)
+	}
+	if err := decided.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	request := decided
+	for _, event := range []AttentionEvent{AttentionDispatch, AttentionRedeliver, AttentionDeliver, AttentionConsume} {
+		request, _, err = request.Apply(event, request.Version, testNow)
+		if err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+	}
+	if request.State != AttentionConsumed {
+		t.Fatalf("final state = %s, want consumed", request.State)
+	}
+}
+
+func TestDenialIsDeliveredLikeAnyDecision(t *testing.T) {
+	f := newAttentionFixture(t)
+	f.decision.Kind = DecisionDeny
+	decided, _, err := f.request.Decide(f.decision)
+	if err != nil {
+		t.Fatalf("Decide() error = %v", err)
+	}
+	if _, _, err := decided.Apply(AttentionDispatch, decided.Version, testNow); err != nil {
+		t.Fatalf("dispatching a denial: %v", err)
+	}
+}
+
+func TestFirstDecisionWins(t *testing.T) {
+	f := newAttentionFixture(t)
+	decided, _, err := f.request.Decide(f.decision)
+	if err != nil {
+		t.Fatalf("Decide() error = %v", err)
+	}
+	second := f.decision
+	second.ID = newID[ids.Decision](t)
+	second.Kind = DecisionDeny
+	_, _, err = decided.Decide(second)
+	testRejectCode(t, err, RejectVersionConflict)
+
+	second.RequestVersion = decided.Version
+	_, _, err = decided.Decide(second)
+	testRejectCode(t, err, RejectInvalidTransition)
+}
+
+func TestDecideRejections(t *testing.T) {
+	cases := map[RejectionCode]func(t *testing.T, f *attentionFixture){
+		RejectCrossTenant:       func(t *testing.T, f *attentionFixture) { f.decision.Tenant = newID[ids.Tenant](t) },
+		RejectWrongRecord:       func(t *testing.T, f *attentionFixture) { f.decision.Request = newID[ids.Attention](t) },
+		RejectUnauthorizedActor: func(t *testing.T, f *attentionFixture) { f.decision.Principal = newID[ids.Principal](t) },
+		RejectDecisionNotAllowed: func(t *testing.T, f *attentionFixture) {
+			f.decision.Kind = DecisionAnswer
+			f.decision.AnswerDigest = testDigest
+		},
+		RejectRequestExpired:  func(t *testing.T, f *attentionFixture) { f.decision.DecidedAt = f.request.ExpiresAt },
+		RejectVersionConflict: func(t *testing.T, f *attentionFixture) { f.decision.RequestVersion = 2 },
+	}
+	for code, arrange := range cases {
+		t.Run(string(code), func(t *testing.T) {
+			f := newAttentionFixture(t)
+			arrange(t, &f)
+			next, _, err := f.request.Decide(f.decision)
+			testRejectCode(t, err, code)
+			if next.State != AttentionPending {
+				t.Fatalf("rejected Decide() moved request to %s", next.State)
+			}
+		})
+	}
+}
+
+func TestApproveOnlyForActionApprovals(t *testing.T) {
+	f := newAttentionFixture(t)
+	question := f.request
+	question.Kind = AttentionQuestion
+	question.Operation = ids.OperationID{}
+	question.ActionDigest = ""
+	_, _, err := question.Decide(f.decision)
+	testRejectCode(t, err, RejectDecisionNotAllowed)
+
+	answer := f.decision
+	answer.Kind = DecisionAnswer
+	answer.AnswerDigest = testDigest
+	if _, _, err := question.Decide(answer); err != nil {
+		t.Fatalf("answering a question: %v", err)
+	}
+}
+
+func TestApplyRefusesDecideEvent(t *testing.T) {
+	f := newAttentionFixture(t)
+	_, _, err := f.request.Apply(AttentionDecide, f.request.Version, testNow)
+	testRejectCode(t, err, RejectInvalidTransition)
+}
+
+func TestAttentionAndDecisionValidation(t *testing.T) {
+	f := newAttentionFixture(t)
+	request, decision := f.request, f.decision
+	for name, err := range map[string]error{
+		"approval without operation":  func() error { x := request; x.Operation = ids.OperationID{}; return x.Validate() }(),
+		"approval without digest":     func() error { x := request; x.ActionDigest = ""; return x.Validate() }(),
+		"question with operation":     func() error { x := request; x.Kind = AttentionQuestion; x.ActionDigest = ""; return x.Validate() }(),
+		"no responders":               func() error { x := request; x.Responders = nil; return x.Validate() }(),
+		"pending with decision":       func() error { x := request; x.Decision = decision.ID; return x.Validate() }(),
+		"decided without decision":    func() error { x := request; x.State = AttentionDecided; return x.Validate() }(),
+		"expiry not after creation":   func() error { x := request; x.ExpiresAt = x.CreatedAt; return x.Validate() }(),
+		"answer without digest":       func() error { x := decision; x.Kind = DecisionAnswer; return x.Validate() }(),
+		"approval with answer digest": func() error { x := decision; x.AnswerDigest = testDigest; return x.Validate() }(),
+		"decision zero version":       func() error { x := decision; x.RequestVersion = 0; return x.Validate() }(),
+	} {
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: Validate() error = %v, want ErrInvalid", name, err)
+		}
+	}
+}
