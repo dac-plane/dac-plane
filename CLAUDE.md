@@ -91,7 +91,10 @@ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 Every schema under `contracts/jsonschema/` must compile against JSON Schema 2020-12, and every
 record schema must be referenced by a Go agreement test
-(`internal/testsupport/schematest/contracts_test.go` enforces both). When a change adds
+(`internal/testsupport/schematest/contracts_test.go` enforces both). In the other direction,
+every exported struct with `Validate()` in `internal/identity` and `internal/lifecycle` must have
+a `GoContract` agreement test or be listed as a nested record
+(`internal/testsupport/schematest/records_test.go`). When a change adds
 something CI should guard, the same PR adds the check.
 
 ## Hygiene
