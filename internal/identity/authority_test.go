@@ -500,3 +500,16 @@ func TestDenyPolicyRequiresTarget(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want ErrInvalid", err)
 	}
 }
+
+func TestDigestOfIsAValidDigestOfExactBytes(t *testing.T) {
+	digest := DigestOf([]byte("abc"))
+	if digest != "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		t.Fatalf("DigestOf(abc) = %s", digest)
+	}
+	if err := digest.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
+	}
+	if DigestOf([]byte(`{"a":1}`)) == DigestOf([]byte(`{ "a": 1 }`)) {
+		t.Fatal("DigestOf canonicalized its input")
+	}
+}
