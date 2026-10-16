@@ -1,117 +1,72 @@
-# Implementation plan: issue #14 lifecycle transitions and audit semantics
+# Implementation plan: issue #15 authoritative budget accounting
 
-Tracker: [GitHub issue #14](https://github.com/AssahBismarkabah/dac-plane/issues/14) (epic #11)
-
-## Why this issue is next
-
-#14, #15 and #16 depend only on finished work (#12, #32), but #15 and #16 build on what #14
-defines: budget reservations bind to Task and Attempt, review dispositions need expected-version
-conflicts, and "request changes" schedules a new Attempt. #17 (adapter contracts) depends on all
-three. #14 therefore sets the record, version and transition patterns the rest of M1 reuses.
+Tracker: [GitHub issue #15](https://github.com/AssahBismarkabah/dac-plane/issues/15) (epic #11)
 
 ## Objective
 
-Define the authoritative lifecycle records (Task, Attempt, AttentionRequest, Decision,
-AuditEvent), their legal transitions with expected-version checks, and the provider-correlation
-support models, as pure Go types and functions plus JSON Schema 2020-12. No persistence.
+Define the product-owned Budget contract: integer reservation before dispatch, idempotent usage
+consumption, exactly-once release, ceiling enforcement with recorded in-flight overshoot, and a
+provider-neutral two-phase `SpendChallenge` that never reserves or consumes budget. Pure Go types
+and functions plus JSON Schema 2020-12; no persistence.
 
 ## Sources
 
-- Historical spec §11 and §13 state machines, as prototyped in
-  `architecture-explore/packages/product-api/src/machines.ts` (input, not authority).
-- Review invariants: cancellation is intent until runtime and environment stop are observed;
-  unknown outcomes enter an explicit uncertain state and are never retried as no-effect.
-- ADR-0003: execution bindings, typed turn failures, unknown send durability, environment
-  observations, fenced maintenance claims, `off`/`shadow`/`live` harness modes, migration passes.
-- Plane-Bot evidence: DEEP-DIVES-04 §1 (session/box binding, `turn_failed`, `awaiting_user_response`),
-  MASTER-RECORD (send status `ACCEPTED/REJECTED/PENDING/UNKNOWN_DURABILITY`, run state
-  `ABSENT/STARTING/RUNNING/HIBERNATED`, claim semantics).
+- Baseline: Budget is one of the nine product-owned records (`docs/architecture/README.md`
+  ownership rule 1); the review's contract-freeze item 2 (reservation, consumption, release and
+  ceiling before and during execution).
+- ADR-0003 "Spend authorization": begin challenge, assert, persist receipt; bind tenant,
+  principal, Task, Attempt, provider operation, amount, unit and replay identity; expired,
+  replayed or mismatched assertions fail; authorization is separate from Budget accounting; the
+  ceremony and credential provider stay open.
+- Historical spec §25 (input, adopted only through the above): reserve estimated budget before
+  dispatch, release unused reservation, halt at the ceiling, in-flight usage can overshoot.
+- Plane-Bot DEEP-DIVES-04 §1 spend ceremony (evidence for the two-phase shape only; WebAuthn and
+  payment providers are not selected).
 
-## Delivery: two PRs against #14
+## Design (`internal/lifecycle`)
 
-The issue has two separable halves. Splitting keeps each contract reviewable.
+The issue names `internal/domain`; the records live in `internal/lifecycle` with the other
+lifecycle records, reusing `Change`, `AuditEvent` and the typed identifiers (#14 set this).
 
-### PR A: lifecycle core (`internal/lifecycle`)
+- `Unit`: a validated lowercase unit name (`usd_micros`, `tokens`, ...). Amounts are `uint64`
+  bounded to 2^53-1 so JSON consumers read them exactly; all arithmetic is overflow-checked.
+- `Budget` (one per Task and unit): `Ceiling`, aggregate `Reserved` (outstanding holds) and
+  `Consumed`, the largest `Overshoot` observed, and `Version`. Every change is a
+  compare-and-set on `Version`, so competing reservations serialize.
+- `Reservation` (one per Attempt or dispatched operation): `Amount` held, cumulative `Consumed`,
+  state `held | released`.
+- `Reserve`: allowed only while `Reserved + Consumed + amount <= Ceiling`; otherwise refused
+  with `ceiling_reached`. Reaching the ceiling therefore stops further dispatch.
+- `ReportUsage(cumulative)`: providers report a cumulative meter per reservation; the product
+  applies `max(current, reported)`. A replayed or reordered report never double-counts and never
+  loses a charge. Usage beyond the held amount (in flight) is still recorded and raises the
+  budget's recorded `Overshoot`. Usage after release (late usage) is recorded the same way.
+- `Release`: returns the unused hold to the budget exactly once; a second release is refused.
+- `SpendChallenge`: `pending -> asserted | expired`, binding tenant, principal, Task, Attempt,
+  operation, amount, unit, a replay nonce and expiry. `Assert` checks every bound field against
+  the assertion, refuses expiry and replay, and returns a `SpendReceipt`. No budget function
+  takes a challenge or receipt: authorization never substitutes for reservation.
 
-- A generic transition table `Machine[S, E]`: legal targets per state and event, terminal
-  states, and `Apply(current, event, expectedVersion, target)` that rejects version conflicts,
-  terminal states, illegal events and ambiguous targets with typed errors. The prototype's
-  `defineMachine` shape, in Go.
-- Task states (spec §11 plus review-driven changes): `draft, queued, running, waiting_input,
-  verifying, ready_for_review, cancelling` and terminals `succeeded, failed, rejected,
-  cancelled`. `rejected` (terminal review reject, #16) is distinct from `failed` (execution).
-  `waiting_input` makes attention an explicit waiting condition, never a failure.
-- Attempt states: `allocated, provisioning, starting, executing, waiting_input, finalizing,
-  cancellation_requested, reconciling` and terminals `completed, failed, terminated`. A lost
-  lease and an unknown provider outcome both enter `reconciling` (the event records which), so
-  there is one recovery state rather than the prototype's separate `lost`.
-  Cancellation stays `cancellation_requested` until both runtime-stop and environment-stop are
-  observed (each recorded as an optional flag, absent until observed); one observation is not
-  enough. An unknown provider outcome moves to `reconciling`,
-  which has no path back to dispatch.
-- AttentionRequest and Decision: spec §13 machine (`pending, decided, dispatching, delivered,
-  consumed` and terminals). Every decision, including a denial, is delivered and its
-  consumption observed. A Decision is bound to the exact request version it answered and the
-  first valid decision wins.
-- Illegal or late events are refused with a typed `TransitionError` that can itself be audited,
-  so a late provider observation is recorded and never applied.
-- `AuditEvent`: append-only, actor-attributed record of a command or accepted observation, with
-  the record, from/to state and version. Distinct types from domain events and outbox delivery
-  records (#20), which this PR does not define.
-- New `ids` kinds: Task, AttentionRequest, Decision, AuditEvent.
+## Ordered tasks
 
-### PR B: provider support models (`internal/lifecycle`)
-
-Status: part A merged in #35. These records stay in `internal/lifecycle` so they reuse the
-transition table, `Change` and `AuditEvent`.
-
-- `Binding`: correlates one provider-native resource (`runtime_session`, `runtime_turn`,
-  `environment_resource`) to exactly one Attempt and the provider operation that produced it.
-  Native references are opaque, bounded strings; a turn names its session. `CheckBinding`
-  rejects a native resource already bound to a different Attempt.
-- `ProviderOperation`: the stable operation identity, as a versioned machine. `recorded ->
-  dispatched`; the send result is `accepted`, `rejected` (definitive, no effect), still
-  `pending` (no change) or `unknown` (to `uncertain`); an accepted operation `succeeded`,
-  `failed` or becomes `uncertain`. `uncertain` resolves only by reconciliation to an observed
-  outcome and has no path back to `recorded` or `dispatched`, so it is never redispatched.
-- `TurnEnd`: a runtime turn's outcome (`completed | awaiting_input | failed | interrupted`) with
-  a typed `TurnFailure` (closed code set, bounded summary, optional details digest; no raw
-  provider payload). `awaiting_input` is the explicit waiting signal.
-- `EnvironmentObservation`: observed run state `absent | starting | running | hibernated |
-  unknown` of one bound resource with a provider sequence; a newer sequence supersedes. The
-  product records it and does not control compute.
-- `HarnessQualification`: per tenant and runtime provider, `off | shadow | live` as a machine
-  (promote, demote, disable). Only `live` is authoritative: shadow may record comparison
-  evidence but cannot mutate lifecycle state or perform governed effects.
-- `MigrationPass`: moving work between harnesses. `planned -> previewed -> executing ->
-  completed | failed`, with `held` and `cancelled`. A preview has no effect; `execute` is a
-  separate command allowed only from `previewed` and only for a principal actor. Releasing a
-  hold returns to `planned`, so execution needs a fresh preview.
-- `MaintenanceClaim`: an expiring, epoch-fenced claim on a resource. A live claim cannot be
-  taken; an expired one can, which advances the epoch. Renew, complete and release require
-  the current claimant, epoch and an unexpired claim, so a stale claimant cannot finish work
-  after takeover.
-
-Audit gains record kinds for the versioned records and rejection codes `stale_claim` and
-`claim_held`. Every record gets a JSON Schema; the contract-coverage test from #36 enforces
-that each has a Go agreement test.
+1. Identifiers (Budget, Reservation, SpendChallenge), audit record kinds and rejection codes.
+2. Budget and Reservation with Reserve, ReportUsage and Release; table tests for non-negativity,
+   overflow, competing reservations, replayed and reordered usage, release-once and overshoot.
+3. SpendChallenge, assertion and receipt with expiry, replay and mismatch tests.
+4. JSON Schemas and agreement tests (the contract-coverage test requires them).
+5. Mutation checks and the full CI set, including uncached integration tests.
 
 ## Verification
 
 ```sh
-go test ./internal/lifecycle/...
+go test ./internal/lifecycle/... -run 'Budget|Reservation|Spend'
 go test -race ./internal/lifecycle/...
-go vet ./...
-test -z "$(gofmt -l cmd internal)"
+go test -count=1 -tags=integration ./...
 ```
-
-Each machine gets an exhaustive table test: every (state, event) pair not in the table must be
-rejected, so illegal transitions are proven rather than sampled. Schema agreement tests follow
-the #13 pattern, and mutation checks are recorded in the PR.
 
 ## Boundaries
 
-- No persistence, outbox, workers or HTTP.
-- No provider-specific state names; Plane-Bot names appear only as evidence.
-- Budget (#15) and artifact/result/review records (#16) are out of scope; Task states reserve
-  the transitions those issues drive.
+- No currency conversion, provider billing APIs, predictive pricing or payment provider.
+- No cryptographic ceremony: the assertion carries a proof digest only.
+- Persistence, unique constraints and the dispatch transaction that couples reservation with
+  provider operation are #19 to #21.
