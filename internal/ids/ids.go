@@ -31,6 +31,9 @@ type (
 	Budget      struct{}
 	Reservation struct{}
 	Spend       struct{}
+	Artifact    struct{}
+	Revision    struct{}
+	Review      struct{}
 	// Any marks an identifier whose record kind is carried alongside it, such
 	// as the subject of an audit event.
 	Any struct{}
@@ -53,6 +56,9 @@ type (
 	BudgetID      = ID[Budget]
 	ReservationID = ID[Reservation]
 	SpendID       = ID[Spend]
+	ArtifactID    = ID[Artifact]
+	RevisionID    = ID[Revision]
+	ReviewID      = ID[Review]
 	AnyID         = ID[Any]
 )
 

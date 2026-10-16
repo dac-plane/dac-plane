@@ -26,13 +26,14 @@ const (
 	RecordBudget      RecordKind = "budget"
 	RecordReservation RecordKind = "reservation"
 	RecordSpend       RecordKind = "spend_challenge"
+	RecordArtifact    RecordKind = "artifact"
 )
 
 // RecordKinds lists every valid RecordKind.
 func RecordKinds() []RecordKind {
 	return []RecordKind{
 		RecordTask, RecordAttempt, RecordAttention, RecordOperation, RecordHarness, RecordMigration, RecordClaim,
-		RecordBudget, RecordReservation, RecordSpend,
+		RecordBudget, RecordReservation, RecordSpend, RecordArtifact,
 	}
 }
 
@@ -56,6 +57,9 @@ const (
 	RejectStalePolicy         RejectionCode = "stale_policy"
 	RejectCeilingReached      RejectionCode = "ceiling_reached"
 	RejectAssertionMismatch   RejectionCode = "assertion_mismatch"
+	RejectStaleWriter         RejectionCode = "stale_writer"
+	RejectAdmissionRetry      RejectionCode = "admission_retry"
+	RejectNotCurrentRevision  RejectionCode = "not_current_revision"
 )
 
 // RejectionCodes lists every valid RejectionCode.
@@ -65,6 +69,7 @@ func RejectionCodes() []RejectionCode {
 		RejectInvalidTarget, RejectCrossTenant, RejectWrongRecord, RejectUnauthorizedActor,
 		RejectDecisionNotAllowed, RejectRequestExpired, RejectStopAlreadyObserved, RejectStaleClaim,
 		RejectClaimHeld, RejectStalePolicy, RejectCeilingReached, RejectAssertionMismatch,
+		RejectStaleWriter, RejectAdmissionRetry, RejectNotCurrentRevision,
 	}
 }
 
