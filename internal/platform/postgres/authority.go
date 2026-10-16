@@ -194,16 +194,12 @@ func UpdatePolicyGeneration(ctx context.Context, u *UnitOfWork, update PolicyUpd
 	if err != nil {
 		return identity.Policy{}, err
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update policy set generation = $2, settings = $3::jsonb, ceiling = $4::jsonb, denies = $5::jsonb, updated_at = $6
 		where tenant_id = $1 and generation = $7`,
 		update.Tenant.String(), int64(update.NextGeneration), settingsJSON, ceilingJSON, deniesJSON, update.At, int64(update.ExpectedGeneration),
-	)
-	if err != nil {
+	); err != nil {
 		return identity.Policy{}, err
-	}
-	if res.RowsAffected() == 0 {
-		return identity.Policy{}, ErrStaleVersion
 	}
 	return GetPolicy(ctx, u, update.Tenant)
 }
@@ -363,13 +359,7 @@ func setGrantTime(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id id
 
 // GetGrantForUpdate locks a grant row for the caller's read-modify-write.
 func GetGrantForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.GrantID) (identity.AuthorityGrant, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from authority_grant where tenant_id = $1 and grant_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return identity.AuthorityGrant{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "authority_grant", "grant_id", tenant.String(), id.String()); err != nil {
 		return identity.AuthorityGrant{}, err
 	}
 	return GetGrant(ctx, u, tenant, id)

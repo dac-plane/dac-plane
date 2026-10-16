@@ -95,13 +95,7 @@ func GetClaim(ctx context.Context, q Querier, tenant ids.TenantID, id ids.ClaimI
 
 // GetClaimForUpdate locks a claim row for holder operations.
 func GetClaimForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.ClaimID) (lifecycle.MaintenanceClaim, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from maintenance_claim where tenant_id = $1 and claim_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.MaintenanceClaim{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "maintenance_claim", "claim_id", tenant.String(), id.String()); err != nil {
 		return lifecycle.MaintenanceClaim{}, err
 	}
 	return GetClaim(ctx, u, tenant, id)
@@ -110,18 +104,14 @@ func GetClaimForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, 
 // updateClaimRow writes a claim after a holder operation. The version and
 // epoch predicates fence stale holders: zero rows mean someone else moved it.
 func updateClaimRow(ctx context.Context, u *UnitOfWork, claim lifecycle.MaintenanceClaim, expectedVersion, expectedEpoch uint64) error {
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update maintenance_claim set state = $3, claimant = $4, epoch = $5, expires_at = $6, version = $7, updated_at = $8
 		where tenant_id = $1 and claim_id = $2 and version = $9 and epoch = $10`,
 		claim.Tenant.String(), claim.ID.String(), string(claim.State), textOrNil(claim.Claimant),
 		int64(claim.Epoch), timeOrNil(claim.ExpiresAt), int64(claim.Version), claim.UpdatedAt,
 		int64(expectedVersion), int64(expectedEpoch),
-	)
-	if err != nil {
+	); err != nil {
 		return err
-	}
-	if res.RowsAffected() == 0 {
-		return ErrStaleVersion
 	}
 	return nil
 }
@@ -244,16 +234,12 @@ func ApplyHarness(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, provi
 		}
 		return lifecycle.HarnessQualification{}, applyErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update harness_qualification set mode = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and provider_id = $2 and version = $6`,
 		tenant.String(), provider.String(), string(next.Mode), int64(next.Version), next.UpdatedAt, int64(tr.ExpectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.HarnessQualification{}, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.HarnessQualification{}, ErrStaleVersion
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, tr.At)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
@@ -264,13 +250,7 @@ func ApplyHarness(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, provi
 
 // GetHarnessForUpdate locks a harness row for read-modify-write.
 func GetHarnessForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, provider ids.ProviderID) (lifecycle.HarnessQualification, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from harness_qualification where tenant_id = $1 and provider_id = $2 for update`,
-		tenant.String(), provider.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.HarnessQualification{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "harness_qualification", "provider_id", tenant.String(), provider.String()); err != nil {
 		return lifecycle.HarnessQualification{}, err
 	}
 	return GetHarness(ctx, u, tenant, provider)
@@ -367,16 +347,12 @@ func ApplyMigrationPass(ctx context.Context, u *UnitOfWork, tenant ids.TenantID,
 		}
 		return lifecycle.MigrationPass{}, applyErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update migration_pass set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and migration_id = $2 and version = $6`,
 		tenant.String(), id.String(), string(next.State), int64(next.Version), next.UpdatedAt, int64(tr.ExpectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.MigrationPass{}, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.MigrationPass{}, ErrStaleVersion
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, tr.At)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {

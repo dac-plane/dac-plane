@@ -136,16 +136,12 @@ func ApplyOperation(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id 
 		}
 		return operation, false, applyErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update provider_operation set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and operation_id = $2 and version = $6`,
 		tenant.String(), id.String(), string(next.State), int64(next.Version), next.UpdatedAt, int64(tr.ExpectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.ProviderOperation{}, false, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.ProviderOperation{}, false, ErrStaleVersion
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, tr.At)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {

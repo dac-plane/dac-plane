@@ -291,8 +291,15 @@ func revisionsEqual(a, b lifecycle.ResultRevision) bool {
 		len(a.Artifacts) != len(b.Artifacts) {
 		return false
 	}
-	for i := range a.Artifacts {
-		if a.Artifacts[i] != b.Artifacts[i] {
+	// Artifact order is not significant: storage returns links ordered by id
+	// while callers preserve insertion order, so compare as a set.
+	seen := make(map[ids.ArtifactID]int, len(a.Artifacts))
+	for _, id := range a.Artifacts {
+		seen[id]++
+	}
+	for _, id := range b.Artifacts {
+		seen[id]--
+		if seen[id] < 0 {
 			return false
 		}
 	}
@@ -367,17 +374,13 @@ func RecordReview(ctx context.Context, u *UnitOfWork, current lifecycle.ResultRe
 // updateTaskForReview moves the reviewed task with a version predicate so a
 // concurrent review loses exactly once.
 func updateTaskForReview(ctx context.Context, u *UnitOfWork, review lifecycle.ResultReview, next lifecycle.Task) error {
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update task set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and task_id = $2 and version = $6`,
 		review.Tenant.String(), review.Task.String(), string(next.State),
 		int64(next.Version), next.UpdatedAt, int64(review.TaskVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return err
-	}
-	if res.RowsAffected() == 0 {
-		return ErrStaleVersion
 	}
 	return nil
 }

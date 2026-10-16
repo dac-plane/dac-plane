@@ -179,16 +179,12 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 		}
 		return task, false, applyErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update task set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and task_id = $2 and version = $6`,
 		tenant.String(), id.String(), string(next.State), int64(next.Version), next.UpdatedAt, int64(tr.ExpectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.Task{}, false, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.Task{}, false, ErrStaleVersion
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, tr.At)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
@@ -199,13 +195,7 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 
 // GetTaskForUpdate locks a task row for the caller's read-modify-write.
 func GetTaskForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.TaskID) (lifecycle.Task, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from task where tenant_id = $1 and task_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.Task{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "task", "task_id", tenant.String(), id.String()); err != nil {
 		return lifecycle.Task{}, err
 	}
 	return GetTask(ctx, u, tenant, id)
@@ -334,17 +324,13 @@ func ApplyAttempt(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id id
 		}
 		return attempt, false, applyErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update attempt set state = $3, version = $4, runtime_stopped = $5, environment_stopped = $6, updated_at = $7
 		where tenant_id = $1 and attempt_id = $2 and version = $8`,
 		tenant.String(), id.String(), string(next.State), int64(next.Version),
 		next.RuntimeStopped, next.EnvironmentStopped, next.UpdatedAt, int64(tr.ExpectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.Attempt{}, false, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.Attempt{}, false, ErrStaleVersion
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, tr.At)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
@@ -469,20 +455,13 @@ func respondersEqual(a, b []ids.PrincipalID) bool {
 
 // updateAttentionRow writes a decided or transitioned request with a version
 // predicate. Zero rows mean a concurrent writer moved first.
-func updateAttentionRow(ctx context.Context, q Querier, request lifecycle.AttentionRequest, expectedVersion uint64) error {
-	res, err := q.Exec(ctx, `
+func updateAttentionRow(ctx context.Context, u *UnitOfWork, request lifecycle.AttentionRequest, expectedVersion uint64) error {
+	return execVersionedUpdate(ctx, u, `
 		update attention_request set state = $3, version = $4, decision_id = $5, updated_at = $6
 		where tenant_id = $1 and attention_id = $2 and version = $7`,
 		request.Tenant.String(), request.ID.String(), string(request.State),
 		int64(request.Version), uuidOrNil(request.Decision), request.UpdatedAt, int64(expectedVersion),
 	)
-	if err != nil {
-		return err
-	}
-	if res.RowsAffected() == 0 {
-		return ErrStaleVersion
-	}
-	return nil
 }
 
 // ApplyAttention performs a non-decision attention event with atomic history.
@@ -528,19 +507,11 @@ func ApplyAttention(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id 
 }
 
 // GetAttentionForUpdate loads an attention request locked for writing.
-func GetAttentionForUpdate(ctx context.Context, q Querier, tenant ids.TenantID, id ids.AttentionID) (lifecycle.AttentionRequest, error) {
-	// Lock first so the caller's read-modify-write serializes; the row is
-	// then read through the tenant-scoped getter.
-	var locked bool
-	err := q.QueryRow(ctx, `select true from attention_request where tenant_id = $1 and attention_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.AttentionRequest{}, ErrNotFound
-		}
+func GetAttentionForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AttentionID) (lifecycle.AttentionRequest, error) {
+	if err := lockRow(ctx, u, "attention_request", "attention_id", tenant.String(), id.String()); err != nil {
 		return lifecycle.AttentionRequest{}, err
 	}
-	return GetAttention(ctx, q, tenant, id)
+	return GetAttention(ctx, u, tenant, id)
 }
 
 // DecideAttention records a decision and moves its request atomically: the

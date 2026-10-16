@@ -87,38 +87,24 @@ func budgetsEqual(a, b lifecycle.Budget) bool {
 
 // updateBudgetRow writes a budget with a version predicate.
 func updateBudgetRow(ctx context.Context, u *UnitOfWork, budget lifecycle.Budget, expectedVersion uint64) error {
-	res, err := u.Exec(ctx, `
+	return execVersionedUpdate(ctx, u, `
 		update budget set reserved = $3, consumed = $4, overshoot = $5, version = $6, updated_at = $7
 		where tenant_id = $1 and budget_id = $2 and version = $8`,
 		budget.Tenant.String(), budget.ID.String(),
 		int64(budget.Reserved), int64(budget.Consumed), int64(budget.Overshoot),
 		int64(budget.Version), budget.UpdatedAt, int64(expectedVersion),
 	)
-	if err != nil {
-		return err
-	}
-	if res.RowsAffected() == 0 {
-		return ErrStaleVersion
-	}
-	return nil
 }
 
 // updateReservationRow writes a reservation with a version predicate.
 func updateReservationRow(ctx context.Context, u *UnitOfWork, reservation lifecycle.Reservation, expectedVersion uint64) error {
-	res, err := u.Exec(ctx, `
+	return execVersionedUpdate(ctx, u, `
 		update reservation set consumed = $3, state = $4, version = $5, updated_at = $6
 		where tenant_id = $1 and reservation_id = $2 and version = $7`,
 		reservation.Tenant.String(), reservation.ID.String(),
 		int64(reservation.Consumed), string(reservation.State),
 		int64(reservation.Version), reservation.UpdatedAt, int64(expectedVersion),
 	)
-	if err != nil {
-		return err
-	}
-	if res.RowsAffected() == 0 {
-		return ErrStaleVersion
-	}
-	return nil
 }
 
 // secondAuditID mints the audit identity for a second change in one unit of
@@ -169,13 +155,7 @@ func ReserveBudget(ctx context.Context, u *UnitOfWork, req ReservationRequest, t
 
 // GetBudgetForUpdate locks a budget row for the caller's read-modify-write.
 func GetBudgetForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.BudgetID) (lifecycle.Budget, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from budget where tenant_id = $1 and budget_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.Budget{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "budget", "budget_id", tenant.String(), id.String()); err != nil {
 		return lifecycle.Budget{}, err
 	}
 	return GetBudget(ctx, u, tenant, id)
@@ -315,13 +295,7 @@ func GetReservation(ctx context.Context, q Querier, tenant ids.TenantID, id ids.
 
 // GetReservationForUpdate locks a reservation row for read-modify-write.
 func GetReservationForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.ReservationID) (lifecycle.Reservation, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from reservation where tenant_id = $1 and reservation_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.Reservation{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "reservation", "reservation_id", tenant.String(), id.String()); err != nil {
 		return lifecycle.Reservation{}, err
 	}
 	return GetReservation(ctx, u, tenant, id)
@@ -478,17 +452,13 @@ func AssertSpendChallenge(ctx context.Context, u *UnitOfWork, tenant ids.TenantI
 		}
 		return lifecycle.SpendChallenge{}, lifecycle.SpendReceipt{}, false, assertErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update spend_challenge set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and spend_id = $2 and version = $6`,
 		tenant.String(), id.String(), string(next.State), int64(next.Version),
 		next.UpdatedAt, int64(expectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.SpendChallenge{}, lifecycle.SpendReceipt{}, false, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.SpendChallenge{}, lifecycle.SpendReceipt{}, false, ErrStaleVersion
 	}
 	if _, _, err := InsertSpendReceipt(ctx, u, receipt); err != nil {
 		return lifecycle.SpendChallenge{}, lifecycle.SpendReceipt{}, false, err
@@ -502,13 +472,7 @@ func AssertSpendChallenge(ctx context.Context, u *UnitOfWork, tenant ids.TenantI
 
 // GetSpendChallengeForUpdate locks a challenge row for read-modify-write.
 func GetSpendChallengeForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.SpendID) (lifecycle.SpendChallenge, error) {
-	var locked bool
-	err := u.QueryRow(ctx, `select true from spend_challenge where tenant_id = $1 and spend_id = $2 for update`,
-		tenant.String(), id.String()).Scan(&locked)
-	if err != nil {
-		if isNoRows(err) {
-			return lifecycle.SpendChallenge{}, ErrNotFound
-		}
+	if err := lockRow(ctx, u, "spend_challenge", "spend_id", tenant.String(), id.String()); err != nil {
 		return lifecycle.SpendChallenge{}, err
 	}
 	return GetSpendChallenge(ctx, u, tenant, id)
@@ -530,16 +494,12 @@ func ExpireSpendChallenge(ctx context.Context, u *UnitOfWork, tenant ids.TenantI
 		}
 		return lifecycle.SpendChallenge{}, expireErr
 	}
-	res, err := u.Exec(ctx, `
+	if err := execVersionedUpdate(ctx, u, `
 		update spend_challenge set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and spend_id = $2 and version = $6`,
 		tenant.String(), id.String(), string(next.State), int64(next.Version), next.UpdatedAt, int64(expectedVersion),
-	)
-	if err != nil {
+	); err != nil {
 		return lifecycle.SpendChallenge{}, err
-	}
-	if res.RowsAffected() == 0 {
-		return lifecycle.SpendChallenge{}, ErrStaleVersion
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, at)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
