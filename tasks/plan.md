@@ -96,6 +96,18 @@ Audit gains record kinds for the versioned records and rejection codes `stale_cl
 `claim_held`. Every record gets a JSON Schema; the contract-coverage test from #36 enforces
 that each has a Go agreement test.
 
+### Alignment fixes after part B
+
+An audit against `docs/architecture/` and the exploration ADRs found two gaps:
+
+- Approvals were not bound to the policy they were made under (ADR-0003 policy generations;
+  exploration ADR-0005 approval binding). AttentionRequest now records `PolicyGeneration` and the
+  audience `Provider`; `Decide` rejects a stale policy; `AllowOnceGrant` derives the one-time
+  grant from the recorded approval so `identity.IssueGrant` refuses it after a policy change.
+- Part A copied the prototype's `verifying -> succeeded` auto-accept path, which no active
+  document adopts: the baseline slice ends in accept, reject or request rework. Success is now
+  reachable only through review acceptance; automatic acceptance would need its own ADR.
+
 ## Verification
 
 ```sh

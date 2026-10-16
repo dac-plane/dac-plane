@@ -38,7 +38,7 @@ func validRecords(t *testing.T) map[string]record {
 	task := newTask(t)
 	attempt := driveAttempt(t, newAttempt(t), AttemptProvision, AttemptRequestCancel, AttemptRuntimeStopped)
 	f := newAttentionFixture(t)
-	decided, change, err := f.request.Decide(f.decision)
+	decided, change, err := f.request.Decide(f.decision, testGeneration)
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -47,6 +47,7 @@ func validRecords(t *testing.T) map[string]record {
 	answer.AnswerDigest = testDigest
 	question := f.request
 	question.Kind = AttentionQuestion
+	question.Provider = ids.ProviderID{}
 	question.Operation = ids.OperationID{}
 	question.ActionDigest = ""
 
@@ -125,12 +126,16 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"task zero version", "task", func(d map[string]any) { d["version"] = 0 }},
 		{"task missing owner", "task", func(d map[string]any) { delete(d, "owner_id") }},
 		{"task unknown field", "task", func(d map[string]any) { d["objective"] = "x" }},
+		{"task auto accept field", "task", func(d map[string]any) { d["auto_accept"] = true }},
 		{"attempt zero number", "cancelling attempt", func(d map[string]any) { d["number"] = 0 }},
 		{"attempt removed lost state", "cancelling attempt", func(d map[string]any) { d["state"] = "lost" }},
 		{"attempt stop outside cancellation", "cancelling attempt", func(d map[string]any) { d["state"] = "executing" }},
 		{"attempt stop flag not boolean", "cancelling attempt", func(d map[string]any) { d["runtime_stopped"] = "yes" }},
 		{"approval without operation", "pending approval", func(d map[string]any) { delete(d, "operation_id") }},
 		{"approval without digest", "pending approval", func(d map[string]any) { delete(d, "action_digest") }},
+		{"approval without provider", "pending approval", func(d map[string]any) { delete(d, "provider_id") }},
+		{"question with provider", "pending question", func(d map[string]any) { d["provider_id"] = otherID }},
+		{"attention without policy generation", "pending approval", func(d map[string]any) { delete(d, "policy_generation") }},
 		{"question with operation", "pending question", func(d map[string]any) { d["operation_id"] = otherID }},
 		{"no responders", "pending approval", func(d map[string]any) { d["responders"] = []any{} }},
 		{"pending with decision", "pending approval", func(d map[string]any) { d["decision_id"] = otherID }},

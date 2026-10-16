@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ var (
 	testNow        = time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	testDigest     = identity.Digest("sha256:" + strings.Repeat("a", 64))
 	testSystem     = Actor{Kind: ActorSystem}
+	testGeneration = uint64(3)
 	testRejectCode = func(t *testing.T, err error, want RejectionCode) {
 		t.Helper()
 		if got := RejectionOf(err); got != want {
@@ -85,7 +87,7 @@ func TestTaskHappyPathAndReviewOutcomes(t *testing.T) {
 		TaskAwaitInput, TaskState(""),
 		TaskInputResolved, TaskState(""),
 		TaskProposeResult, TaskState(""),
-		TaskVerificationPassed, TaskReadyForReview,
+		TaskVerificationPassed, TaskState(""),
 	)
 	if ready.State != TaskReadyForReview || ready.Version != 7 {
 		t.Fatalf("task = %s v%d, want ready_for_review v7", ready.State, ready.Version)
@@ -98,6 +100,16 @@ func TestTaskHappyPathAndReviewOutcomes(t *testing.T) {
 	}
 	if got := driveTask(t, ready, TaskRequestChanges, TaskState("")); got.State != TaskQueued {
 		t.Fatalf("request_changes = %s", got.State)
+	}
+}
+
+func TestTaskSucceedsOnlyThroughReviewAcceptance(t *testing.T) {
+	for from, transitions := range taskMachine.table {
+		for event, targets := range transitions {
+			if slices.Contains(targets, TaskSucceeded) && (from != TaskReadyForReview || event != TaskAccept) {
+				t.Errorf("%s --%s--> succeeded: only review acceptance may succeed", from, event)
+			}
+		}
 	}
 }
 
