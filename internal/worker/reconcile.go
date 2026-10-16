@@ -113,10 +113,10 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 		}
 		cursor = resolved
 		if outcome, ok := outcomeOf(frame); ok {
-			if err := w.persistCursor(ctx, tenant, cursor); err != nil {
-				return err
-			}
-			return w.applyOutcome(ctx, tenant, operation, outcome)
+			// The cursor advance commits atomically with the outcome:
+			// persisting it first would mark the entry consumed while
+			// the operation stays uncertain if the apply then fails.
+			return w.applyOutcome(ctx, tenant, operation, outcome, cursor)
 		}
 		if err := w.persistCursor(ctx, tenant, cursor); err != nil {
 			return err
@@ -170,7 +170,7 @@ func outcomeOf(frame contracts.StreamFrame) (lifecycle.OperationState, bool) {
 
 // applyOutcome reconciles an uncertain operation to its observed terminal
 // state and records shadow evidence when the harness runs in shadow.
-func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, outcome lifecycle.OperationState) error {
+func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, outcome lifecycle.OperationState, cursor contracts.Cursor) error {
 	uow, err := store.Begin(ctx, w.pool)
 	if err != nil {
 		return err
@@ -185,44 +185,47 @@ func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operatio
 	if err != nil {
 		return err
 	}
-	if current.State != lifecycle.OperationUncertain {
-		// Someone resolved it first; nothing left to do.
-		if err := uow.Commit(ctx); err != nil {
-			return err
-		}
-		committed = true
-		return nil
-	}
-	tr, err := w.transition(current.Version, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if _, _, err := store.ApplyOperation(ctx, uow, tenant, current.ID, lifecycle.OperationReconcile, outcome, tr); err != nil {
-		if errors.Is(err, store.ErrStaleVersion) {
-			return nil
-		}
-		return err
-	}
-	if harness, err := store.GetHarness(ctx, uow, tenant, current.Provider); err == nil && harness.Mode == lifecycle.HarnessShadow {
-		shadowID, err := ids.New[ids.Any]()
+	resolved := false
+	if current.State == lifecycle.OperationUncertain {
+		tr, err := w.transition(current.Version, time.Now().UTC())
 		if err != nil {
 			return err
 		}
-		if _, _, err := store.RecordShadowResult(ctx, uow, store.ShadowResult{
-			ID: shadowID, Tenant: tenant, Attempt: current.Attempt, CapturedAt: tr.At,
-			Summary: "reconciled " + string(outcome), Comparison: "observed",
-			Digest: identity.DigestOf([]byte(current.ID.String() + ":" + string(outcome))),
-		}); err != nil {
+		if _, _, err := store.ApplyOperation(ctx, uow, tenant, current.ID, lifecycle.OperationReconcile, outcome, tr); err != nil {
+			if errors.Is(err, store.ErrStaleVersion) {
+				return nil
+			}
 			return err
 		}
-	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		if harness, err := store.GetHarness(ctx, uow, tenant, current.Provider); err == nil && harness.Mode == lifecycle.HarnessShadow {
+			shadowID, err := ids.New[ids.Any]()
+			if err != nil {
+				return err
+			}
+			if _, _, err := store.RecordShadowResult(ctx, uow, store.ShadowResult{
+				ID: shadowID, Tenant: tenant, Attempt: current.Attempt, CapturedAt: tr.At,
+				Summary: "reconciled " + string(outcome), Comparison: "observed",
+				Digest: identity.DigestOf([]byte(current.ID.String() + ":" + string(outcome))),
+			}); err != nil {
+				return err
+			}
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		resolved = true
+	}
+	// Someone else may have resolved the operation first; either way the
+	// entry is consumed, so the cursor advances in the same commit.
+	if _, err := store.UpsertCursor(ctx, uow, cursor); err != nil {
 		return err
 	}
 	if err := uow.Commit(ctx); err != nil {
 		return err
 	}
 	committed = true
-	w.stats.Reconciled.Add(1)
+	if resolved {
+		w.stats.Reconciled.Add(1)
+	}
 	return nil
 }
 
