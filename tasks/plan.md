@@ -15,7 +15,7 @@ semantics come from the "Scoped action authority" and "Action interception" sect
 
 Opaque, typed identifiers shared by identity (#13) and domain (#14) so neither package imports the
 other. One generic `ID[K]` with a phantom kind gives distinct types (`TenantID`, `PrincipalID`,
-`AttemptID`, `ProviderID`, `OperationID`, `GrantID`, `PolicyID`) without duplicated code; later
+`AttemptID`, `ProviderID`, `OperationID`, `GrantID`) without duplicated code; later
 issues add kinds as records need them. Each wraps a UUIDv7 (time-ordered, maps to a PostgreSQL
 `uuid` column in #19). The zero value is invalid and does not marshal; parsing accepts only the
 canonical lowercase UUIDv7 form so Go and JSON Schema agree on one pattern.
