@@ -49,6 +49,7 @@ const (
 	RejectStopAlreadyObserved RejectionCode = "stop_already_observed"
 	RejectStaleClaim          RejectionCode = "stale_claim"
 	RejectClaimHeld           RejectionCode = "claim_held"
+	RejectStalePolicy         RejectionCode = "stale_policy"
 )
 
 // RejectionCodes lists every valid RejectionCode.
@@ -57,7 +58,7 @@ func RejectionCodes() []RejectionCode {
 		RejectVersionConflict, RejectTerminalState, RejectInvalidTransition, RejectAmbiguousTarget,
 		RejectInvalidTarget, RejectCrossTenant, RejectWrongRecord, RejectUnauthorizedActor,
 		RejectDecisionNotAllowed, RejectRequestExpired, RejectStopAlreadyObserved, RejectStaleClaim,
-		RejectClaimHeld,
+		RejectClaimHeld, RejectStalePolicy,
 	}
 }
 

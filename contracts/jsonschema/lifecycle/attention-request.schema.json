@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AttentionRequest",
-  "description": "A request for authorized responders to unblock an Attempt. An action approval names the operation and digest of the exact action. expires_at must be after created_at; that comparison is enforced by the Go contract, not expressible here.",
+  "description": "A request for authorized responders to unblock an Attempt. An action approval names the provider, operation and digest of the exact action. policy_generation is the tenant policy the request was raised under; a policy change invalidates decisions on it. expires_at must be after created_at; that comparison is enforced by the Go contract, not expressible here.",
   "type": "object",
   "required": [
-    "attention_id", "tenant_id", "task_id", "attempt_id", "kind", "responders", "state",
-    "version", "expires_at", "created_at", "updated_at"
+    "attention_id", "tenant_id", "task_id", "attempt_id", "kind", "policy_generation",
+    "responders", "state", "version", "expires_at", "created_at", "updated_at"
   ],
   "additionalProperties": false,
   "properties": {
@@ -14,8 +14,10 @@
     "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "kind": { "enum": ["question", "action_approval", "authentication_handoff", "blocked_work"] },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "action_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "policy_generation": { "$ref": "../identity/common.schema.json#/$defs/generation" },
     "responders": { "type": "array", "minItems": 1, "items": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" } },
     "state": {
       "enum": [
@@ -31,9 +33,10 @@
   "allOf": [
     {
       "if": { "properties": { "kind": { "const": "action_approval" } } },
-      "then": { "required": ["operation_id", "action_digest"] },
+      "then": { "required": ["provider_id", "operation_id", "action_digest"] },
       "else": {
         "allOf": [
+          { "not": { "required": ["provider_id"] } },
           { "not": { "required": ["operation_id"] } },
           { "not": { "required": ["action_digest"] } }
         ]

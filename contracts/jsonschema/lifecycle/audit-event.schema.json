@@ -29,7 +29,7 @@
         "version_conflict", "terminal_state", "invalid_transition", "ambiguous_target",
         "invalid_target", "cross_tenant", "wrong_record", "unauthorized_actor",
         "decision_not_allowed", "request_expired", "stop_already_observed", "stale_claim",
-        "claim_held"
+        "claim_held", "stale_policy"
       ]
     },
     "occurred_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
