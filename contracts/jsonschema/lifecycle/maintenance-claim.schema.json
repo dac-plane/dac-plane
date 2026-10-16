@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MaintenanceClaim",
+  "description": "An expiring, epoch-fenced claim to perform maintenance on one resource. A claimant and expiry exist exactly while claimed.",
+  "type": "object",
+  "required": ["claim_id", "tenant_id", "provider_id", "resource_ref", "state", "epoch", "version", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "resource_ref": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "state": { "enum": ["scheduled", "claimed", "completed"] },
+    "claimant": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "epoch": { "type": "integer", "minimum": 0 },
+    "expires_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "state": { "const": "claimed" } } },
+  "then": { "required": ["claimant", "expires_at"], "properties": { "epoch": { "minimum": 1 } } },
+  "else": {
+    "allOf": [
+      { "not": { "required": ["claimant"] } },
+      { "not": { "required": ["expires_at"] } }
+    ]
+  }
+}

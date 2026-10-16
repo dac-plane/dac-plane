@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TurnEnd",
+  "description": "The observed end of one runtime turn. A failure is reported exactly when the turn failed; provider error details are referenced by digest only.",
+  "type": "object",
+  "required": ["tenant_id", "attempt_id", "provider_id", "session_ref", "turn_ref", "outcome", "ended_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "session_ref": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "turn_ref": { "$ref": "common.schema.json#/$defs/nativeRef" },
+    "outcome": { "enum": ["completed", "awaiting_input", "failed", "interrupted"] },
+    "failure": {
+      "type": "object",
+      "required": ["code", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "rate_limited", "timeout", "context_exhausted", "tool_failed", "provider_error",
+            "protocol_violation", "unknown"
+          ]
+        },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "details_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" }
+      }
+    },
+    "ended_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "outcome": { "const": "failed" } } },
+  "then": { "required": ["failure"] },
+  "else": { "not": { "required": ["failure"] } }
+}

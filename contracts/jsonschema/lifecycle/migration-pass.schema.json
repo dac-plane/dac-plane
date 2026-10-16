@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MigrationPass",
+  "description": "Moves a tenant's work between runtime harnesses. Execution follows a fresh preview and is a separate principal command. from_provider_id and to_provider_id must differ; the Go contract enforces that.",
+  "type": "object",
+  "required": ["migration_id", "tenant_id", "from_provider_id", "to_provider_id", "state", "version", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "migration_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "from_provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "to_provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "state": { "enum": ["planned", "previewed", "held", "executing", "completed", "failed", "cancelled"] },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "event": { "enum": ["preview", "hold", "release", "execute", "complete", "fail", "cancel"] }
+  }
+}

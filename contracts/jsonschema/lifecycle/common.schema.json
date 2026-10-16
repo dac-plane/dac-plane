@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shared lifecycle contract definitions",
+  "$defs": {
+    "nativeRef": {
+      "description": "A provider's opaque identifier for a native resource.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  }
+}

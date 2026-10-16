@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,13 @@ var (
 	attentionContract = schematest.GoContract[AttentionRequest](filepath.Join(schemaDir, "attention-request.schema.json"))
 	decisionContract  = schematest.GoContract[Decision](filepath.Join(schemaDir, "decision.schema.json"))
 	auditContract     = schematest.GoContract[AuditEvent](filepath.Join(schemaDir, "audit-event.schema.json"))
+	bindingContract   = schematest.GoContract[Binding](filepath.Join(schemaDir, "binding.schema.json"))
+	operationContract = schematest.GoContract[ProviderOperation](filepath.Join(schemaDir, "provider-operation.schema.json"))
+	turnEndContract   = schematest.GoContract[TurnEnd](filepath.Join(schemaDir, "turn-end.schema.json"))
+	observeContract   = schematest.GoContract[EnvironmentObservation](filepath.Join(schemaDir, "environment-observation.schema.json"))
+	harnessContract   = schematest.GoContract[HarnessQualification](filepath.Join(schemaDir, "harness-qualification.schema.json"))
+	migrationContract = schematest.GoContract[MigrationPass](filepath.Join(schemaDir, "migration-pass.schema.json"))
+	claimContract     = schematest.GoContract[MaintenanceClaim](filepath.Join(schemaDir, "maintenance-claim.schema.json"))
 )
 
 type record struct {
@@ -46,17 +54,49 @@ func validRecords(t *testing.T) map[string]record {
 	_, _, rejection := task.Apply(TaskAccept, task.Version, "", testNow)
 	rejected := rejection.(*TransitionError).Audit(newID[ids.Audit](t), Actor{Kind: ActorProvider, Provider: newID[ids.Provider](t)}, testNow)
 
+	turnBinding := newBinding(t)
+	turnBinding.Kind, turnBinding.NativeRef, turnBinding.SessionRef = ResourceRuntimeTurn, "turn-1", "session-1"
+	uncertain := newOperation(t)
+	uncertain, _, _ = uncertain.Apply(OperationDispatch, uncertain.Version, "", testNow)
+	uncertain, _, _ = uncertain.Apply(OperationSendUnknown, uncertain.Version, "", testNow)
+	awaiting := TurnEnd{
+		Tenant: task.Tenant, Attempt: attempt.ID, Provider: newID[ids.Provider](t),
+		SessionRef: "session-1", TurnRef: "turn-1", Outcome: TurnAwaitingInput, EndedAt: testNow,
+	}
+	failedTurn := awaiting
+	failedTurn.Outcome = TurnFailed
+	failedTurn.Failure = &TurnFailure{Code: TurnFailureTimeout, Summary: "turn timed out", DetailsDigest: testDigest}
+	observation := EnvironmentObservation{
+		Tenant: task.Tenant, Attempt: attempt.ID, Provider: awaiting.Provider,
+		ResourceRef: "box-1", State: RunHibernated, Sequence: 3, ObservedAt: testNow,
+	}
+	harness := HarnessQualification{Tenant: task.Tenant, Provider: awaiting.Provider, Mode: HarnessShadow, Version: 2, UpdatedAt: testNow}
+	claimed, _, err := newClaim(t).Claim("worker-a", time.Minute, testNow)
+	if err != nil {
+		t.Fatalf("Claim() error = %v", err)
+	}
+
 	return map[string]record{
-		"task":               {taskContract, schematest.Marshal(t, task)},
-		"cancelling attempt": {attemptContract, schematest.Marshal(t, attempt)},
-		"pending approval":   {attentionContract, schematest.Marshal(t, f.request)},
-		"decided approval":   {attentionContract, schematest.Marshal(t, decided)},
-		"pending question":   {attentionContract, schematest.Marshal(t, question)},
-		"approval decision":  {decisionContract, schematest.Marshal(t, f.decision)},
-		"answer decision":    {decisionContract, schematest.Marshal(t, answer)},
-		"applied audit":      {auditContract, schematest.Marshal(t, applied)},
-		"rejected audit":     {auditContract, schematest.Marshal(t, rejected)},
-		"system audit":       {auditContract, schematest.Marshal(t, change.Audit(newID[ids.Audit](t), testSystem, testNow))},
+		"session binding":     {bindingContract, schematest.Marshal(t, newBinding(t))},
+		"turn binding":        {bindingContract, schematest.Marshal(t, turnBinding)},
+		"uncertain operation": {operationContract, schematest.Marshal(t, uncertain)},
+		"awaiting turn":       {turnEndContract, schematest.Marshal(t, awaiting)},
+		"failed turn":         {turnEndContract, schematest.Marshal(t, failedTurn)},
+		"observation":         {observeContract, schematest.Marshal(t, observation)},
+		"harness":             {harnessContract, schematest.Marshal(t, harness)},
+		"migration":           {migrationContract, schematest.Marshal(t, newMigration(t))},
+		"scheduled claim":     {claimContract, schematest.Marshal(t, newClaim(t))},
+		"held claim":          {claimContract, schematest.Marshal(t, claimed)},
+		"task":                {taskContract, schematest.Marshal(t, task)},
+		"cancelling attempt":  {attemptContract, schematest.Marshal(t, attempt)},
+		"pending approval":    {attentionContract, schematest.Marshal(t, f.request)},
+		"decided approval":    {attentionContract, schematest.Marshal(t, decided)},
+		"pending question":    {attentionContract, schematest.Marshal(t, question)},
+		"approval decision":   {decisionContract, schematest.Marshal(t, f.decision)},
+		"answer decision":     {decisionContract, schematest.Marshal(t, answer)},
+		"applied audit":       {auditContract, schematest.Marshal(t, applied)},
+		"rejected audit":      {auditContract, schematest.Marshal(t, rejected)},
+		"system audit":        {auditContract, schematest.Marshal(t, change.Audit(newID[ids.Audit](t), testSystem, testNow))},
 	}
 }
 
@@ -110,6 +150,33 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 			d["actor"] = map[string]any{"kind": "system", "provider_id": otherID}
 		}},
 		{"audit malformed time", "applied audit", func(d map[string]any) { d["occurred_at"] = time.Kitchen }},
+		{"binding unknown kind", "session binding", func(d map[string]any) { d["kind"] = "task" }},
+		{"binding missing operation", "session binding", func(d map[string]any) { delete(d, "operation_id") }},
+		{"session binding with session ref", "session binding", func(d map[string]any) { d["session_ref"] = "s" }},
+		{"turn binding without session ref", "turn binding", func(d map[string]any) { delete(d, "session_ref") }},
+		{"binding empty native ref", "session binding", func(d map[string]any) { d["native_ref"] = "" }},
+		{"operation unknown state", "uncertain operation", func(d map[string]any) { d["state"] = "lost" }},
+		{"operation zero version", "uncertain operation", func(d map[string]any) { d["version"] = 0 }},
+		{"failed turn without failure", "failed turn", func(d map[string]any) { delete(d, "failure") }},
+		{"awaiting turn with failure", "failed turn", func(d map[string]any) { d["outcome"] = "awaiting_input" }},
+		{"turn failure unknown code", "failed turn", func(d map[string]any) {
+			d["failure"] = map[string]any{"code": "oom", "summary": "x"}
+		}},
+		{"turn failure raw details", "failed turn", func(d map[string]any) {
+			d["failure"] = map[string]any{"code": "timeout", "summary": "x", "details": "stack trace"}
+		}},
+		{"turn failure empty summary", "failed turn", func(d map[string]any) {
+			d["failure"] = map[string]any{"code": "timeout", "summary": ""}
+		}},
+		{"observation unknown state", "observation", func(d map[string]any) { d["state"] = "paused" }},
+		{"observation zero sequence", "observation", func(d map[string]any) { d["sequence"] = 0 }},
+		{"harness unknown mode", "harness", func(d map[string]any) { d["mode"] = "canary" }},
+		{"migration unknown state", "migration", func(d map[string]any) { d["state"] = "paused" }},
+		{"migration missing target", "migration", func(d map[string]any) { delete(d, "to_provider_id") }},
+		{"scheduled claim with claimant", "scheduled claim", func(d map[string]any) { d["claimant"] = "worker-a" }},
+		{"held claim without expiry", "held claim", func(d map[string]any) { delete(d, "expires_at") }},
+		{"held claim without claimant", "held claim", func(d map[string]any) { delete(d, "claimant") }},
+		{"held claim zero epoch", "held claim", func(d map[string]any) { d["epoch"] = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,8 +213,20 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 		{"audit-event.schema.json", []string{"properties", "outcome", "enum"}, schematest.Strings(AuditOutcomes())},
 		{"audit-event.schema.json", []string{"properties", "reason", "enum"}, schematest.Strings(RejectionCodes())},
 		{"audit-event.schema.json", []string{"$defs", "actor", "properties", "kind", "enum"}, schematest.Strings(ActorKinds())},
+		{"binding.schema.json", []string{"properties", "kind", "enum"}, schematest.Strings(ResourceKinds())},
+		{"provider-operation.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(OperationStates())},
+		{"provider-operation.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(OperationEvents())},
+		{"provider-operation.schema.json", []string{"$defs", "sendStatus", "enum"}, schematest.Strings(SendStatuses())},
+		{"turn-end.schema.json", []string{"properties", "outcome", "enum"}, schematest.Strings(TurnOutcomes())},
+		{"turn-end.schema.json", []string{"properties", "failure", "properties", "code", "enum"}, schematest.Strings(TurnFailureCodes())},
+		{"environment-observation.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(RunStates())},
+		{"harness-qualification.schema.json", []string{"properties", "mode", "enum"}, schematest.Strings(HarnessModes())},
+		{"harness-qualification.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(HarnessEvents())},
+		{"migration-pass.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(MigrationStates())},
+		{"migration-pass.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(MigrationEvents())},
+		{"maintenance-claim.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(ClaimStates())},
 	} {
-		t.Run(tc.file+"#"+tc.path[len(tc.path)-2], func(t *testing.T) {
+		t.Run(tc.file+"#"+strings.Join(tc.path, "/"), func(t *testing.T) {
 			got := schematest.Enum(t, filepath.Join(schemaDir, tc.file), tc.path...)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("schema enum = %v, Go constants = %v", got, tc.want)
