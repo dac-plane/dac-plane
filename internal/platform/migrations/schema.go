@@ -23,4 +23,4 @@ func mustSub() fs.FS {
 
 // CurrentVersion is the latest migration version. Fresh databases migrate to
 // exactly this version; the integration suite asserts it.
-const CurrentVersion int64 = 1
+const CurrentVersion int64 = 2

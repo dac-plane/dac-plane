@@ -8,6 +8,7 @@ package postgres
 import (
 	"context"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
@@ -19,6 +20,10 @@ type OutboxPayload struct {
 	ID ids.AnyID
 	// Attempt scopes attempt-bound dispatches; zero when not applicable.
 	Attempt ids.AttemptID
+	// Demand orders the dispatch poll: person-facing work ahead of
+	// background work. Zero defaults to background; never skips budget,
+	// authority or lifecycle checks.
+	Demand contracts.Demand
 	// Body is the JSON dispatch body.
 	Body []byte
 }
@@ -53,11 +58,18 @@ func appendHistory(ctx context.Context, q Querier, change lifecycle.Change, audi
 	if outbox.ID.IsZero() || len(outbox.Body) == 0 {
 		return lifecycle.ErrInvalid
 	}
+	demand := outbox.Demand
+	if demand == "" {
+		demand = contracts.DemandBackground
+	}
+	if demand != contracts.DemandPerson && demand != contracts.DemandBackground {
+		return lifecycle.ErrInvalid
+	}
 	_, err = q.Exec(ctx, `
-		insert into outbox (tenant_id, outbox_id, attempt_id, record_kind, record_id, event, payload)
-		values ($1, $2, $3, $4, $5, $6, $7)`,
+		insert into outbox (tenant_id, outbox_id, attempt_id, record_kind, record_id, event, payload, demand)
+		values ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		change.Tenant.String(), outbox.ID.String(), attempt,
-		string(change.Record), change.RecordID.String(), change.Event, string(outbox.Body),
+		string(change.Record), change.RecordID.String(), change.Event, string(outbox.Body), string(demand),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {

@@ -8,6 +8,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
@@ -20,15 +23,49 @@ type OutboxRow struct {
 	RecordID  ids.AnyID
 	Event     string
 	Payload   []byte
+	Demand    contracts.Demand
+	Attempts  int
+	NextTryAt time.Time
+	LastError string
 	CreatedAt time.Time
 }
+
+// scanOutboxRow reads one outbox row in the column order of selectOutboxRow.
+func scanOutboxRow(rows pgx.Rows, row *OutboxRow) error {
+	var idText, recordText, recordIDText, eventText, demandText string
+	var attemptText, lastErrText *string
+	var payload []byte
+	if err := rows.Scan(&idText, &attemptText, &recordText, &recordIDText,
+		&eventText, &payload, &demandText, &row.Attempts, &row.NextTryAt,
+		&lastErrText, &row.CreatedAt); err != nil {
+		return err
+	}
+	var parseErr error
+	if row.ID, parseErr = parseID[ids.Any](`outbox.outbox_id`, idText); parseErr != nil {
+		return parseErr
+	}
+	if row.Attempt, parseErr = parseOptionalID[ids.Attempt](`outbox.attempt_id`, attemptText); parseErr != nil {
+		return parseErr
+	}
+	row.Record = lifecycle.RecordKind(recordText)
+	if row.RecordID, parseErr = parseID[ids.Any](`outbox.record_id`, recordIDText); parseErr != nil {
+		return parseErr
+	}
+	row.Event, row.Payload, row.Demand = eventText, payload, contracts.Demand(demandText)
+	if lastErrText != nil {
+		row.LastError = *lastErrText
+	}
+	return nil
+}
+
+// selectOutboxRow is the column list every outbox reader scans with
+// scanOutboxRow.
+const selectOutboxRow = `select outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload, demand, attempts, next_attempt_at, last_error, created_at from outbox`
 
 // OpenOutboxEntries returns pending outbox rows oldest first, bounded by
 // limit. Non-positive limits read everything pending.
 func OpenOutboxEntries(ctx context.Context, q Querier, tenant ids.TenantID, limit int) ([]OutboxRow, error) {
-	query := `
-		select outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload, created_at
-		from outbox where tenant_id = $1 and status = 'pending' order by created_at`
+	query := selectOutboxRow + ` where tenant_id = $1 and status = 'pending' order by created_at`
 	var args []any
 	args = append(args, tenant.String())
 	if limit > 0 {
@@ -43,24 +80,36 @@ func OpenOutboxEntries(ctx context.Context, q Querier, tenant ids.TenantID, limi
 	var out []OutboxRow
 	for rows.Next() {
 		var row OutboxRow
-		var idText, recordText, recordIDText, eventText string
-		var attemptText *string
-		var payload []byte
-		if err := rows.Scan(&idText, &attemptText, &recordText, &recordIDText, &eventText, &payload, &row.CreatedAt); err != nil {
+		if err := scanOutboxRow(rows, &row); err != nil {
 			return nil, err
 		}
-		var parseErr error
-		if row.ID, parseErr = parseID[ids.Any](`outbox.outbox_id`, idText); parseErr != nil {
-			return nil, parseErr
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// OutboxReadyEntries returns pending, unexhausted outbox rows whose
+// not-before time has passed, oldest due first. The dispatch loop polls
+// through here; the scheduler orders the returned set.
+func OutboxReadyEntries(ctx context.Context, q Querier, tenant ids.TenantID, now time.Time, limit int) ([]OutboxRow, error) {
+	query := selectOutboxRow + ` where tenant_id = $1 and status = 'pending' and exhausted_at is null and next_attempt_at <= $2 order by next_attempt_at`
+	var args []any
+	args = append(args, tenant.String(), now)
+	if limit > 0 {
+		query += ` limit $3`
+		args = append(args, limit)
+	}
+	rows, err := q.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboxRow
+	for rows.Next() {
+		var row OutboxRow
+		if err := scanOutboxRow(rows, &row); err != nil {
+			return nil, err
 		}
-		if row.Attempt, parseErr = parseOptionalID[ids.Attempt](`outbox.attempt_id`, attemptText); parseErr != nil {
-			return nil, parseErr
-		}
-		row.Record = lifecycle.RecordKind(recordText)
-		if row.RecordID, parseErr = parseID[ids.Any](`outbox.record_id`, recordIDText); parseErr != nil {
-			return nil, parseErr
-		}
-		row.Event, row.Payload = eventText, payload
 		out = append(out, row)
 	}
 	return out, rows.Err()

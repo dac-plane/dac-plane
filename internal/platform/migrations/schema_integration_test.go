@@ -98,8 +98,10 @@ func TestMigrationDownThenUpRestoresSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProvider() error = %v", err)
 	}
-	if _, err := provider.ApplyVersion(ctx, migrations.CurrentVersion, false); err != nil {
-		t.Fatalf("ApplyVersion(down) error = %v", err)
+	for v := migrations.CurrentVersion; v >= 1; v-- {
+		if _, err := provider.ApplyVersion(ctx, v, false); err != nil {
+			t.Fatalf("ApplyVersion(%d, down) error = %v", v, err)
+		}
 	}
 	version, err := provider.GetDBVersion(ctx)
 	if err != nil {
@@ -294,5 +296,55 @@ func TestMigrationEnforcesExpiryAndFences(t *testing.T) {
 		t.Fatal("audit event mutation succeeded")
 	} else if !strings.Contains(err.Error(), "immutable") {
 		t.Fatalf("audit mutation error = %v, want the immutability refusal", err)
+	}
+}
+
+func TestMigrationDispatchColumnsAndShadowTable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	now := time.Now().UTC()
+	outbox := mustID[ids.Any](t)
+	if _, err := db.ExecContext(ctx, `
+		insert into outbox (tenant_id, outbox_id, attempt_id, record_kind, record_id, event, payload, demand)
+		values ($1, $2, $3, 'attempt', $4, 'dispatch', '{}', 'person')`,
+		f.tenant, outbox, f.attempt, f.attempt); err != nil {
+		t.Fatalf("insert person-demand outbox row: %v", err)
+	}
+	var attempts int
+	var demand string
+	var lastErr *string
+	var exhaustedAt *time.Time
+	if err := db.QueryRowContext(ctx, `
+		select attempts, demand, last_error, exhausted_at from outbox where tenant_id = $1 and outbox_id = $2`,
+		f.tenant, outbox).Scan(&attempts, &demand, &lastErr, &exhaustedAt); err != nil {
+		t.Fatalf("read dispatch defaults: %v", err)
+	}
+	if attempts != 0 || demand != "person" || lastErr != nil || exhaustedAt != nil {
+		t.Fatalf("dispatch defaults = (%d, %q, %v, %v), want (0, person, nil, nil)", attempts, demand, lastErr, exhaustedAt)
+	}
+	if _, err := db.ExecContext(ctx, `update outbox set demand = 'bulk' where tenant_id = $1 and outbox_id = $2`,
+		f.tenant, outbox); err == nil {
+		t.Fatal("outbox row with unknown demand succeeded")
+	}
+	var readyIndex string
+	if err := db.QueryRowContext(ctx, `
+		select indexname from pg_indexes where schemaname = 'public' and indexname = 'outbox_ready'
+	`).Scan(&readyIndex); err != nil {
+		t.Fatalf("outbox_ready index is not observable: %v", err)
+	}
+	shadow := mustID[ids.Any](t)
+	if _, err := db.ExecContext(ctx, `
+		insert into shadow_result (tenant_id, shadow_id, attempt_id, captured_at, summary, comparison_summary, evidence_digest)
+		values ($1, $2, $3, $4, 'shadow ran', 'matches live', $5)`,
+		f.tenant, shadow, f.attempt, now, digest()); err != nil {
+		t.Fatalf("insert shadow result: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `update shadow_result set summary = 'edited' where tenant_id = $1 and shadow_id = $2`,
+		f.tenant, shadow); err == nil {
+		t.Fatal("shadow result mutation succeeded")
+	} else if !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("shadow mutation error = %v, want the immutability refusal", err)
 	}
 }
