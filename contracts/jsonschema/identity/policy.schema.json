@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Policy",
+  "description": "A tenant's authority policy at one generation. An absent ceiling permits nothing; an action class missing from the ceiling is not permitted.",
+  "type": "object",
+  "required": ["tenant_id", "generation"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "generation": { "$ref": "common.schema.json#/$defs/generation" },
+    "ceiling": {
+      "type": "object",
+      "propertyNames": { "$ref": "common.schema.json#/$defs/actionClass" },
+      "additionalProperties": { "$ref": "common.schema.json#/$defs/scopeClass" }
+    },
+    "denies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "scope"],
+        "additionalProperties": false,
+        "properties": {
+          "action": { "$ref": "common.schema.json#/$defs/actionClass" },
+          "scope": {
+            "$ref": "common.schema.json#/$defs/scope",
+            "not": { "properties": { "class": { "const": "call" } } }
+          }
+        }
+      }
+    }
+  }
+}

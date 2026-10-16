@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shared identity contract definitions",
+  "$defs": {
+    "uuidv7": {
+      "description": "Opaque record identifier: a canonical lowercase UUIDv7.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "actionClass": {
+      "description": "Dotted lowercase governed-action name, for example fs.write.",
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "scopeValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "scopeClass": {
+      "description": "Ordered from narrowest to broadest.",
+      "enum": ["call", "subject", "setting", "global"]
+    },
+    "scope": {
+      "type": "object",
+      "required": ["class"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "$ref": "#/$defs/scopeClass" },
+        "value": { "$ref": "#/$defs/scopeValue" }
+      },
+      "if": { "properties": { "class": { "enum": ["setting", "subject"] } } },
+      "then": { "required": ["value"] },
+      "else": { "not": { "required": ["value"] } }
+    }
+  }
+}

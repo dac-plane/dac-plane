@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorityUse",
+  "description": "One authorization decision, identified by the requested operation. Grant, source and granting principal are present together.",
+  "type": "object",
+  "required": [
+    "tenant_id", "attempt_id", "provider_id", "operation_id", "action", "outcome",
+    "policy_generation", "decided_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "operation_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "action": { "$ref": "common.schema.json#/$defs/actionClass" },
+    "grant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "source": { "enum": ["one_time_approval", "standing_grant"] },
+    "granted_by": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "outcome": { "enum": ["allowed", "denied"] },
+    "reason": {
+      "enum": [
+        "no_grant", "cross_tenant", "wrong_attempt", "wrong_audience", "wrong_operation",
+        "wrong_action", "scope_mismatch", "expired", "revoked", "retired",
+        "stale_generation", "above_ceiling", "denied_by_policy"
+      ]
+    },
+    "policy_generation": { "$ref": "common.schema.json#/$defs/generation" },
+    "decided_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+  },
+  "dependentRequired": {
+    "grant_id": ["source", "granted_by"],
+    "source": ["grant_id", "granted_by"],
+    "granted_by": ["grant_id", "source"]
+  },
+  "if": { "properties": { "outcome": { "const": "allowed" } } },
+  "then": { "required": ["grant_id"], "not": { "required": ["reason"] } },
+  "else": { "required": ["reason"] }
+}

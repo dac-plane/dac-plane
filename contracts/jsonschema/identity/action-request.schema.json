@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActionRequest",
+  "description": "The effective action to authorize, after any hook rewrite.",
+  "type": "object",
+  "required": ["tenant_id", "attempt_id", "provider_id", "operation_id", "action"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "operation_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "action": { "$ref": "common.schema.json#/$defs/actionClass" },
+    "setting": { "$ref": "common.schema.json#/$defs/scopeValue" },
+    "subject": { "$ref": "common.schema.json#/$defs/scopeValue" }
+  }
+}
