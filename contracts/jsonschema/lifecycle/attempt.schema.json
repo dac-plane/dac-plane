@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Attempt",
+  "description": "One execution of a Task. Stop observations are absent until observed and exist only once cancellation is requested; the attempt terminates only after both are observed or reconciled.",
+  "type": "object",
+  "required": [
+    "attempt_id", "tenant_id", "task_id", "number", "state", "version", "created_at", "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "number": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+    "state": {
+      "enum": [
+        "allocated", "provisioning", "starting", "executing", "waiting_input", "finalizing",
+        "cancellation_requested", "reconciling", "completed", "failed", "terminated"
+      ]
+    },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "runtime_stopped": { "type": "boolean" },
+    "environment_stopped": { "type": "boolean" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": {
+    "anyOf": [
+      { "properties": { "runtime_stopped": { "const": true } } },
+      { "properties": { "environment_stopped": { "const": true } } }
+    ]
+  },
+  "then": { "properties": { "state": { "enum": ["cancellation_requested", "terminated"] } } },
+  "$defs": {
+    "event": {
+      "enum": [
+        "provision", "start", "runtime_started", "await_input", "resume", "finalize", "complete",
+        "fail", "request_cancel", "runtime_stopped", "environment_stopped", "outcome_unknown",
+        "lease_expired", "reconciled"
+      ]
+    }
+  }
+}

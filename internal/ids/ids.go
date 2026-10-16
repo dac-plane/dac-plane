@@ -22,6 +22,13 @@ type (
 	Provider  struct{}
 	Operation struct{}
 	Grant     struct{}
+	Task      struct{}
+	Attention struct{}
+	Decision  struct{}
+	Audit     struct{}
+	// Any marks an identifier whose record kind is carried alongside it, such
+	// as the subject of an audit event.
+	Any struct{}
 )
 
 // Typed identifiers for product records.
@@ -32,6 +39,11 @@ type (
 	ProviderID  = ID[Provider]
 	OperationID = ID[Operation]
 	GrantID     = ID[Grant]
+	TaskID      = ID[Task]
+	AttentionID = ID[Attention]
+	DecisionID  = ID[Decision]
+	AuditID     = ID[Audit]
+	AnyID       = ID[Any]
 )
 
 // ID is an opaque UUIDv7 identifier of kind K. The zero value is invalid.
@@ -76,6 +88,11 @@ func (id ID[K]) MarshalText() ([]byte, error) {
 		return nil, ErrInvalid
 	}
 	return []byte(id.value.String()), nil
+}
+
+// Untyped erases the kind for contexts that record it separately.
+func (id ID[K]) Untyped() AnyID {
+	return AnyID{value: id.value}
 }
 
 // UnmarshalText applies the same rules as Parse.

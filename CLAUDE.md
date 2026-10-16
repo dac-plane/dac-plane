@@ -36,7 +36,7 @@ Read, in this order:
 docs/architecture/    the baseline: README, views (.drawio/.svg/.png), responsibility map
 docs/adr/             accepted architecture decisions, numbered sequentially
 cmd/dac-plane/        the control-plane process entry point
-internal/             application modules: bootstrap, config, ids, identity, platform
+internal/             application modules: bootstrap, config, ids, identity, lifecycle, platform
 contracts/jsonschema/ language-neutral JSON Schema 2020-12 contracts, tested against the Go types
 tasks/plan.md         the plan for the issue currently in progress, rewritten per issue
 architecture-explore/ retained research, experiments and prototypes (read-only by default)

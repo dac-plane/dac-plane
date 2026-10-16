@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Task",
+  "description": "The delegated unit of work a principal owns. rejected (review rejection) is distinct from failed (execution).",
+  "type": "object",
+  "required": ["task_id", "tenant_id", "owner_id", "state", "version", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "owner_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "state": {
+      "enum": [
+        "draft", "queued", "running", "waiting_input", "verifying", "ready_for_review",
+        "cancelling", "succeeded", "failed", "rejected", "cancelled"
+      ]
+    },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "event": {
+      "enum": [
+        "submit", "dispatch", "await_input", "input_resolved", "input_unresolved",
+        "propose_result", "execution_failed", "retry", "verification_passed",
+        "verification_failed", "accept", "request_changes", "reject", "cancel", "stop_confirmed"
+      ]
+    }
+  }
+}

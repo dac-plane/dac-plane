@@ -1,108 +1,93 @@
-# Implementation plan: issue #13 identity and scoped authority contracts
+# Implementation plan: issue #14 lifecycle transitions and audit semantics
 
-Tracker: [GitHub issue #13](https://github.com/AssahBismarkabah/dac-plane/issues/13) (epic #11)
+Tracker: [GitHub issue #14](https://github.com/AssahBismarkabah/dac-plane/issues/14) (epic #11)
+
+## Why this issue is next
+
+#14, #15 and #16 depend only on finished work (#12, #32), but #15 and #16 build on what #14
+defines: budget reservations bind to Task and Attempt, review dispositions need expected-version
+conflicts, and "request changes" schedules a new Attempt. #17 (adapter contracts) depends on all
+three. #14 therefore sets the record, version and transition patterns the rest of M1 reuses.
 
 ## Objective
 
-Define the transport-neutral identity and delegated-authority contracts that every command and
-provider interaction carries, as pure Go types and decision functions with no persistence. The
-semantics come from the "Scoped action authority" and "Action interception" sections of
-[ADR-0003](../docs/adr/0003-provider-contract-semantics.md) and the review invariants.
+Define the authoritative lifecycle records (Task, Attempt, AttentionRequest, Decision,
+AuditEvent), their legal transitions with expected-version checks, and the provider-correlation
+support models, as pure Go types and functions plus JSON Schema 2020-12. No persistence.
 
-## Design
+## Sources
 
-### Identifiers (`internal/ids`)
+- Historical spec §11 and §13 state machines, as prototyped in
+  `architecture-explore/packages/product-api/src/machines.ts` (input, not authority).
+- Review invariants: cancellation is intent until runtime and environment stop are observed;
+  unknown outcomes enter an explicit uncertain state and are never retried as no-effect.
+- ADR-0003: execution bindings, typed turn failures, unknown send durability, environment
+  observations, fenced maintenance claims, `off`/`shadow`/`live` harness modes, migration passes.
+- Plane-Bot evidence: DEEP-DIVES-04 §1 (session/box binding, `turn_failed`, `awaiting_user_response`),
+  MASTER-RECORD (send status `ACCEPTED/REJECTED/PENDING/UNKNOWN_DURABILITY`, run state
+  `ABSENT/STARTING/RUNNING/HIBERNATED`, claim semantics).
 
-Opaque, typed identifiers shared by identity (#13) and domain (#14) so neither package imports the
-other. One generic `ID[K]` with a phantom kind gives distinct types (`TenantID`, `PrincipalID`,
-`AttemptID`, `ProviderID`, `OperationID`, `GrantID`) without duplicated code; later
-issues add kinds as records need them. Each wraps a UUIDv7 (time-ordered, maps to a PostgreSQL
-`uuid` column in #19). The zero value is invalid and does not marshal; parsing accepts only the
-canonical lowercase UUIDv7 form so Go and JSON Schema agree on one pattern.
+## Delivery: two PRs against #14
 
-### Identity (`internal/identity`)
+The issue has two separable halves. Splitting keeps each contract reviewable.
 
-- `Principal`: tenant, principal ID and kind (`human`, `service`). A principal belongs to exactly
-  one tenant; a person in two tenants has two principals. Providers are not principals; they are
-  audiences of authority.
-- `AuthorizationContext`: the authenticated tenant and principal for one command, independent of
-  transport. `RequireTenant(owner TenantID)` rejects cross-tenant use with a typed error.
-- No credential material in any type. Credential references are left to the issue that
-  introduces a credential broker; this issue only guarantees no record can carry a secret.
+### PR A: lifecycle core (`internal/lifecycle`)
 
-### Authority (`internal/identity`)
+- A generic transition table `Machine[S, E]`: legal targets per state and event, terminal
+  states, and `Apply(current, event, expectedVersion, target)` that rejects version conflicts,
+  terminal states, illegal events and ambiguous targets with typed errors. The prototype's
+  `defineMachine` shape, in Go.
+- Task states (spec §11 plus review-driven changes): `draft, queued, running, waiting_input,
+  verifying, ready_for_review, cancelling` and terminals `succeeded, failed, rejected,
+  cancelled`. `rejected` (terminal review reject, #16) is distinct from `failed` (execution).
+  `waiting_input` makes attention an explicit waiting condition, never a failure.
+- Attempt states: `allocated, provisioning, starting, executing, waiting_input, finalizing,
+  cancellation_requested, reconciling` and terminals `completed, failed, terminated`. A lost
+  lease and an unknown provider outcome both enter `reconciling` (the event records which), so
+  there is one recovery state rather than the prototype's separate `lost`.
+  Cancellation stays `cancellation_requested` until both runtime-stop and environment-stop are
+  observed (each recorded as an optional flag, absent until observed); one observation is not
+  enough. An unknown provider outcome moves to `reconciling`,
+  which has no path back to dispatch.
+- AttentionRequest and Decision: spec §13 machine (`pending, decided, dispatching, delivered,
+  consumed` and terminals). Every decision, including a denial, is delivered and its
+  consumption observed. A Decision is bound to the exact request version it answered and the
+  first valid decision wins.
+- Illegal or late events are refused with a typed `TransitionError` that can itself be audited,
+  so a late provider observation is recorded and never applied.
+- `AuditEvent`: append-only, actor-attributed record of a command or accepted observation, with
+  the record, from/to state and version. Distinct types from domain events and outbox delivery
+  records (#20), which this PR does not define.
+- New `ids` kinds: Task, AttentionRequest, Decision, AuditEvent.
 
-The model follows the Plane-Bot local authorization evaluator
-([DEEP-DIVES-03 §3](../architecture-explore/plane-bot-explore/notes/DEEP-DIVES-03.md)) and the
-historical specification's approval binding (SPEC §13, §18), adopted through ADR-0003.
+### PR B: provider support models (`internal/lifecycle` or `internal/execution`)
 
-- `ActionClass`: an opaque, validated action name (for example `message.send`). The catalogue of
-  classes is provider-specific and not frozen here.
-- `ScopeClass` (`global | setting | subject | call`) is a property of the action, fixed by the
-  action catalogue, not a breadth a grant chooses. `Scope` pairs the class with a target that
-  setting and subject classes require and the others forbid.
-- `Permission` lattice `never < ask < always`. `Policy` holds the tenant's `Settings` and the
-  administrative `Ceiling` per action class; the effective permission is the lower of the two,
-  and a class missing from either is `never`. Policy changes advance `Generation`.
-- `DenyPolicy`: a never rule for one named setting or subject of an action. A never rule for a
-  whole action class is `PermissionNever`, so there is one way to express each.
-- `ActionRequest`: the effective (post-hook) action: tenant, attempt, provider, operation, action
-  class, the action's catalogue scope, and a SHA-256 digest of the effective input.
-- `AuthorityGrant`, always bound to one Attempt (fail closed; tenant-wide standing authority is
-  policy, not a grant):
-  - `allow_once`: a one-time approval of one operation and one exact input digest, for an action
-    of any scope class, retired by its first use. A changed input needs a new approval.
-  - `standing`: covers the action within a scope equal to the action's catalogue scope and
-    target. Call-scoped actions cannot have standing grants. Requires effective `always`.
-  - The source attribution (`one_time_approval | standing_grant`) is derived from the mode
-    rather than stored twice; `granted_by` records the approving principal.
-- `Authorize(req, grant, policy, now)`: a pure function. Never rules are checked before the grant
-  and win over any grant, matching deny-first evaluation in comparable agent permission systems.
-  It returns an `AuthorityUse` identified by the requested operation (ADR-0003). For an allowed
-  `allow_once` it also returns the retired grant; the caller persists both atomically in #20.
-  Errors are reserved for malformed inputs; a denial is an outcome, not an error.
-- `IssueGrant(...)`: validates a new grant against generation, permissions and never rules.
-
-Denial reasons are a closed enum (no grant, cross-tenant, wrong attempt, wrong audience, wrong
-action, wrong operation, input mismatch, scope mismatch, revoked, retired, not yet valid,
-expired, stale generation, above ceiling, denied by policy) so audit and simulators can assert
-exact outcomes.
-
-### JSON Schema (`contracts/jsonschema/`)
-
-JSON Schema 2020-12 documents for the identifier pattern, principal, action request, policy,
-authority grant and authority use. Tests compile them with `santhosh-tekuri/jsonschema/v6`
-(format assertions on) and prove agreement: Go-marshalled valid records validate, a shared set of
-invalid documents is rejected by both the schema and Go validation, and every schema enum equals
-the Go constant set.
-
-## Ordered tasks
-
-1. `internal/ids`: typed UUIDv7 identifiers with parse/validate and tests.
-   Verify: `go test ./internal/ids/...`
-2. `internal/identity`: principal, authorization context and cross-tenant rejection with tests.
-   Verify: `go test ./internal/identity/...`
-3. Scope, permission lattice, never rules and grant issuance with table tests.
-4. `Authorize` and `AuthorityUse`, with one table test per denial reason and per acceptance
-   criterion in #13 (allow-once reuse, standing exact-scope, permission clamping, source
-   attribution).
-5. JSON Schemas and the agreement tests above.
-6. A test that marshals every identity and authority record and asserts that it has no
-   credential-bearing fields.
-7. Full CI verification.
+- Execution bindings: runtime session, runtime turn, environment resource and provider
+  operation, each correlated to exactly one Attempt.
+- Typed turn failures (code, summary, safe details) and `awaiting_input` turn ends.
+- Send durability `accepted | rejected | pending | unknown`; `unknown` enters reconciliation and
+  is never redispatched.
+- Environment observation `absent | starting | running | hibernated`, recorded as observed
+  provider state.
+- Harness mode `off | shadow | live`; migration passes with holds and preview/execute.
+- Maintenance claims: expiring, fenced by claim epoch, stale claimant rejected.
 
 ## Verification
 
 ```sh
-go test ./internal/ids/... ./internal/identity/...
-go test -race ./internal/identity/...
+go test ./internal/lifecycle/...
+go test -race ./internal/lifecycle/...
 go vet ./...
 test -z "$(gofmt -l cmd internal)"
 ```
 
+Each machine gets an exhaustive table test: every (state, event) pair not in the table must be
+rejected, so illegal transitions are proven rather than sampled. Schema agreement tests follow
+the #13 pattern, and mutation checks are recorded in the PR.
+
 ## Boundaries
 
-- No persistence, migrations, HTTP, login or external identity provider.
-- No action-class catalogue and no production credential broker.
-- Hook interception and the dispatch transaction are #17 and #20; this issue supplies the pure
-  authorization decision they call.
+- No persistence, outbox, workers or HTTP.
+- No provider-specific state names; Plane-Bot names appear only as evidence.
+- Budget (#15) and artifact/result/review records (#16) are out of scope; Task states reserve
+  the transitions those issues drive.
