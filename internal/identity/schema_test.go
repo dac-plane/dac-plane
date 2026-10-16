@@ -88,7 +88,7 @@ func validRecords(t *testing.T) map[string]struct {
 	data     []byte
 } {
 	f := newFixture(t)
-	f.policy.Denies = []DenyPolicy{{Action: "fs.delete", Scope: Scope{Class: ScopeGlobal}}}
+	f.policy.Denies = []DenyPolicy{{Action: "message.send", Target: "bob@example.com"}}
 	allowed, retired, err := Authorize(f.request, &f.allowOnce, f.policy, testNow)
 	if err != nil || retired == nil {
 		t.Fatalf("Authorize() = %v, %v", retired, err)
@@ -120,7 +120,7 @@ func validRecords(t *testing.T) map[string]struct {
 
 func deniedWithGrant(t *testing.T, f fixture) AuthorityUse {
 	t.Helper()
-	f.request.Subject = "repo/other.go"
+	f.request.Scope.Target = "carol@example.com"
 	use, _, err := Authorize(f.request, &f.standing, f.policy, testNow)
 	if err != nil {
 		t.Fatalf("Authorize() error = %v", err)
@@ -159,32 +159,37 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"principal uppercase id", "principal", func(d map[string]any) { d["principal_id"] = strings.ToUpper(d["principal_id"].(string)) }},
 		{"principal unknown field", "principal", func(d map[string]any) { d["password"] = "x" }},
 		{"request missing operation", "action request", func(d map[string]any) { delete(d, "operation_id") }},
-		{"request malformed action", "action request", func(d map[string]any) { d["action"] = "FS.Write" }},
+		{"request missing digest", "action request", func(d map[string]any) { delete(d, "input_digest") }},
+		{"request malformed digest", "action request", func(d map[string]any) { d["input_digest"] = "md5:abc" }},
+		{"request malformed action", "action request", func(d map[string]any) { d["action"] = "Message.Send" }},
+		{"request subject scope without target", "action request", func(d map[string]any) { d["scope"] = map[string]any{"class": "subject"} }},
 		{"policy zero generation", "policy", func(d map[string]any) { d["generation"] = 0 }},
-		{"policy unknown ceiling class", "policy", func(d map[string]any) { d["ceiling"] = map[string]any{"fs.write": "tenant"} }},
-		{"policy malformed ceiling action", "policy", func(d map[string]any) { d["ceiling"] = map[string]any{"Fs": "global"} }},
-		{"policy call-scoped deny", "policy", func(d map[string]any) {
-			d["denies"] = []any{map[string]any{"action": "fs.write", "scope": map[string]any{"class": "call"}}}
+		{"policy unknown permission", "policy", func(d map[string]any) { d["ceiling"] = map[string]any{"message.send": "sometimes"} }},
+		{"policy malformed settings action", "policy", func(d map[string]any) { d["settings"] = map[string]any{"Msg": "ask"} }},
+		{"policy deny without target", "policy", func(d map[string]any) {
+			d["denies"] = []any{map[string]any{"action": "message.send"}}
 		}},
 		{"grant unknown mode", "standing grant", func(d map[string]any) { d["mode"] = "always" }},
 		{"grant missing granting principal", "standing grant", func(d map[string]any) { delete(d, "granted_by") }},
-		{"grant subject scope without value", "standing grant", func(d map[string]any) { d["scope"] = map[string]any{"class": "subject"} }},
-		{"grant global scope with value", "standing grant", func(d map[string]any) { d["scope"] = map[string]any{"class": "global", "value": "x"} }},
-		{"standing grant with operation", "standing grant", func(d map[string]any) { d["operation_id"] = allowOnce["operation_id"] }},
-		{"standing grant retired", "standing grant", func(d map[string]any) { d["retired_at"] = testNow.Format(time.RFC3339) }},
-		{"standing grant call scoped", "allow-once grant", func(d map[string]any) { d["mode"] = "standing" }},
-		{"allow-once grant global scoped", "allow-once grant", func(d map[string]any) {
-			d["scope"] = map[string]any{"class": "global"}
-			delete(d, "operation_id")
-		}},
-		{"call grant without operation", "allow-once grant", func(d map[string]any) { delete(d, "operation_id") }},
 		{"grant malformed timestamp", "standing grant", func(d map[string]any) { d["issued_at"] = "yesterday" }},
+		{"standing grant without scope", "standing grant", func(d map[string]any) { delete(d, "scope") }},
+		{"standing grant call scoped", "standing grant", func(d map[string]any) { d["scope"] = map[string]any{"class": "call"} }},
+		{"standing grant global scope with target", "standing grant", func(d map[string]any) {
+			d["scope"] = map[string]any{"class": "global", "target": "x"}
+		}},
+		{"standing grant with operation", "standing grant", func(d map[string]any) { d["operation_id"] = allowOnce["operation_id"] }},
+		{"standing grant with digest", "standing grant", func(d map[string]any) { d["input_digest"] = allowOnce["input_digest"] }},
+		{"standing grant retired", "standing grant", func(d map[string]any) { d["retired_at"] = testNow.Format(time.RFC3339) }},
+		{"allow-once grant without operation", "allow-once grant", func(d map[string]any) { delete(d, "operation_id") }},
+		{"allow-once grant without digest", "allow-once grant", func(d map[string]any) { delete(d, "input_digest") }},
+		{"allow-once grant with scope", "allow-once grant", func(d map[string]any) { d["scope"] = map[string]any{"class": "global"} }},
 		{"allowed use with reason", "allowed use", func(d map[string]any) { d["reason"] = "expired" }},
 		{"allowed use without grant", "allowed use", func(d map[string]any) {
 			delete(d, "grant_id")
 			delete(d, "source")
 			delete(d, "granted_by")
 		}},
+		{"use missing digest", "allowed use", func(d map[string]any) { delete(d, "input_digest") }},
 		{"denied use without reason", "denied use", func(d map[string]any) { delete(d, "reason") }},
 		{"denied use unknown reason", "denied use", func(d map[string]any) { d["reason"] = "nope" }},
 		{"use grant without source", "denied grant use", func(d map[string]any) { delete(d, "source") }},
@@ -216,6 +221,7 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 		want []string
 	}{
 		{"common.schema.json", []string{"$defs", "scopeClass", "enum"}, strs(ScopeClasses())},
+		{"common.schema.json", []string{"$defs", "permission", "enum"}, strs(Permissions())},
 		{"principal.schema.json", []string{"properties", "kind", "enum"}, strs(PrincipalKinds())},
 		{"authority-grant.schema.json", []string{"properties", "mode", "enum"}, strs(GrantModes())},
 		{"authority-use.schema.json", []string{"properties", "source", "enum"}, strs(AuthoritySources())},

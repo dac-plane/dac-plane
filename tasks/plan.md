@@ -32,37 +32,41 @@ canonical lowercase UUIDv7 form so Go and JSON Schema agree on one pattern.
 
 ### Authority (`internal/identity`)
 
-- `ActionClass`: an opaque, validated action name (for example `fs.write`). The catalogue of classes
-  is provider-specific and not frozen here.
-- `Scope`: class `global | setting | subject | call` with an optional value. Breadth is ordered
-  `call < subject < setting < global`.
-- `Scope` values: `global` has none; `setting` and `subject` name the setting or subject; `call`
-  has none and binds through the grant's operation.
-- `AuthorityGrant`: tenant, attempt, audience provider, action class, scope, mode
-  (`allow_once | standing`), granting principal, policy generation, issued/expires, revoked and
-  retired times. Every grant is bound to one Attempt (fail closed; tenant-wide standing grants are
-  not modelled). `allow_once` requires `call` scope and an operation; `standing` may not use
-  `call` scope. The source attribution (`one_time_approval | standing_grant`) is derived from the
-  mode rather than stored twice.
-- `DenyPolicy` (`never`): tenant, action class and scope. It blocks both issuance and use of any
-  overlapping grant.
-- `PermissionCeiling`: per tenant, the broadest scope class allowed per action class. Neither
-  issuance nor use may exceed it.
+The model follows the Plane-Bot local authorization evaluator
+([DEEP-DIVES-03 §3](../architecture-explore/plane-bot-explore/notes/DEEP-DIVES-03.md)) and the
+historical specification's approval binding (SPEC §13, §18), adopted through ADR-0003.
+
+- `ActionClass`: an opaque, validated action name (for example `message.send`). The catalogue of
+  classes is provider-specific and not frozen here.
+- `ScopeClass` (`global | setting | subject | call`) is a property of the action, fixed by the
+  action catalogue, not a breadth a grant chooses. `Scope` pairs the class with a target that
+  setting and subject classes require and the others forbid.
+- `Permission` lattice `never < ask < always`. `Policy` holds the tenant's `Settings` and the
+  administrative `Ceiling` per action class; the effective permission is the lower of the two,
+  and a class missing from either is `never`. Policy changes advance `Generation`.
+- `DenyPolicy`: a never rule for one named setting or subject of an action. A never rule for a
+  whole action class is `PermissionNever`, so there is one way to express each.
 - `ActionRequest`: the effective (post-hook) action: tenant, attempt, provider, operation, action
-  class, subject.
-- `Authorize(req, grant, policy, now)`: a pure function that checks tenant, deny policies,
-  attempt, audience, action class, scope and operation, revocation, retirement, expiry, policy
-  generation and ceiling, then returns an `AuthorityUse` (allowed or denied with a typed reason,
-  the grant source and the granting principal). An `AuthorityUse` is identified by the requested
-  operation, per ADR-0003. For an allowed `allow_once` it also returns the retired grant; the
-  caller persists both atomically in #20. Errors are reserved for malformed inputs; a denial is
-  an outcome, not an error.
-- `IssueGrant(...)`: validates a new grant against ceiling and deny policies.
+  class, the action's catalogue scope, and a SHA-256 digest of the effective input.
+- `AuthorityGrant`, always bound to one Attempt (fail closed; tenant-wide standing authority is
+  policy, not a grant):
+  - `allow_once`: a one-time approval of one operation and one exact input digest, for an action
+    of any scope class, retired by its first use. A changed input needs a new approval.
+  - `standing`: covers the action within a scope equal to the action's catalogue scope and
+    target. Call-scoped actions cannot have standing grants. Requires effective `always`.
+  - The source attribution (`one_time_approval | standing_grant`) is derived from the mode
+    rather than stored twice; `granted_by` records the approving principal.
+- `Authorize(req, grant, policy, now)`: a pure function. Never rules are checked before the grant
+  and win over any grant, matching deny-first evaluation in comparable agent permission systems.
+  It returns an `AuthorityUse` identified by the requested operation (ADR-0003). For an allowed
+  `allow_once` it also returns the retired grant; the caller persists both atomically in #20.
+  Errors are reserved for malformed inputs; a denial is an outcome, not an error.
+- `IssueGrant(...)`: validates a new grant against generation, permissions and never rules.
 
 Denial reasons are a closed enum (no grant, cross-tenant, wrong attempt, wrong audience, wrong
-operation, wrong action, scope mismatch, expired, revoked, retired, stale generation, above
-ceiling, denied by policy) so audit and simulators can assert exact outcomes. An action class
-missing from the ceiling is above ceiling (fail closed).
+action, wrong operation, input mismatch, scope mismatch, revoked, retired, not yet valid,
+expired, stale generation, above ceiling, denied by policy) so audit and simulators can assert
+exact outcomes.
 
 ### JSON Schema (`contracts/jsonschema/`)
 
@@ -78,10 +82,10 @@ the Go constant set.
    Verify: `go test ./internal/ids/...`
 2. `internal/identity`: principal, authorization context and cross-tenant rejection with tests.
    Verify: `go test ./internal/identity/...`
-3. Scope, ceiling, deny policy and grant issuance with table tests.
-4. `Authorize` and `AuthorityUse`, with one table test per acceptance criterion in #13 (allow-once
-   reuse, standing exact-scope, expired, revoked, wrong audience/operation, stale generation,
-   above ceiling, source attribution).
+3. Scope, permission lattice, never rules and grant issuance with table tests.
+4. `Authorize` and `AuthorityUse`, with one table test per denial reason and per acceptance
+   criterion in #13 (allow-once reuse, standing exact-scope, permission clamping, source
+   attribution).
 5. JSON Schemas and the agreement tests above.
 6. A test that marshals every identity and authority record and asserts that it has no
    credential-bearing fields.

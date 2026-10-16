@@ -2,13 +2,18 @@ package identity
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 )
 
-var testNow = time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+var (
+	testNow    = time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	testDigest = Digest("sha256:" + strings.Repeat("a", 64))
+	otherInput = Digest("sha256:" + strings.Repeat("b", 64))
+)
 
 // fixture is one tenant's valid request, grants and policy. Tests mutate
 // copies to violate exactly one predicate at a time.
@@ -26,12 +31,13 @@ func newFixture(t *testing.T) fixture {
 	provider := newID[ids.Provider](t)
 	operation := newID[ids.Operation](t)
 	approver := newID[ids.Principal](t)
+	scope := Scope{Class: ScopeSubject, Target: "alice@example.com"}
 
 	grant := AuthorityGrant{
 		Tenant:           tenant,
 		Attempt:          attempt,
 		Provider:         provider,
-		Action:           "fs.write",
+		Action:           "message.send",
 		GrantedBy:        approver,
 		PolicyGeneration: 3,
 		IssuedAt:         testNow.Add(-time.Minute),
@@ -40,30 +46,31 @@ func newFixture(t *testing.T) fixture {
 	standing := grant
 	standing.ID = newID[ids.Grant](t)
 	standing.Mode = GrantStanding
-	standing.Scope = Scope{Class: ScopeSubject, Value: "repo/main.go"}
+	standing.Scope = scope
 
 	allowOnce := grant
 	allowOnce.ID = newID[ids.Grant](t)
 	allowOnce.Mode = GrantAllowOnce
-	allowOnce.Scope = Scope{Class: ScopeCall}
 	allowOnce.Operation = operation
+	allowOnce.InputDigest = testDigest
 
 	return fixture{
 		request: ActionRequest{
-			Tenant:    tenant,
-			Attempt:   attempt,
-			Provider:  provider,
-			Operation: operation,
-			Action:    "fs.write",
-			Setting:   "workspace",
-			Subject:   "repo/main.go",
+			Tenant:      tenant,
+			Attempt:     attempt,
+			Provider:    provider,
+			Operation:   operation,
+			Action:      "message.send",
+			Scope:       scope,
+			InputDigest: testDigest,
 		},
 		standing:  standing,
 		allowOnce: allowOnce,
 		policy: Policy{
 			Tenant:     tenant,
 			Generation: 3,
-			Ceiling:    map[ActionClass]ScopeClass{"fs.write": ScopeSetting},
+			Settings:   map[ActionClass]Permission{"message.send": PermissionAlways},
+			Ceiling:    map[ActionClass]Permission{"message.send": PermissionAlways},
 		},
 	}
 }
@@ -87,9 +94,11 @@ func TestAuthorizeAllowsStandingGrantWithinExactScope(t *testing.T) {
 		t.Fatalf("AuthorityUse.Validate() error = %v", err)
 	}
 
-	// The standing grant keeps authorizing further calls in the same scope.
+	// The standing grant keeps authorizing further calls, with any input, in
+	// the same scope.
 	next := f.request
 	next.Operation = newID[ids.Operation](t)
+	next.InputDigest = otherInput
 	if use, _, _ := Authorize(next, &f.standing, f.policy, testNow); use.Outcome != UseAllowed {
 		t.Fatalf("second standing use = %s/%s, want allowed", use.Outcome, use.Reason)
 	}
@@ -97,6 +106,7 @@ func TestAuthorizeAllowsStandingGrantWithinExactScope(t *testing.T) {
 
 func TestAuthorizeRetiresAllowOnceGrant(t *testing.T) {
 	f := newFixture(t)
+	f.policy.Settings["message.send"] = PermissionAsk
 	use, retired, err := Authorize(f.request, &f.allowOnce, f.policy, testNow)
 	if err != nil {
 		t.Fatalf("Authorize() error = %v", err)
@@ -121,6 +131,18 @@ func TestAuthorizeRetiresAllowOnceGrant(t *testing.T) {
 	}
 }
 
+func TestAuthorizeAllowsOnceForCallScopedAction(t *testing.T) {
+	f := newFixture(t)
+	f.request.Scope = Scope{Class: ScopeCall}
+	use, retired, err := Authorize(f.request, &f.allowOnce, f.policy, testNow)
+	if err != nil {
+		t.Fatalf("Authorize() error = %v", err)
+	}
+	if use.Outcome != UseAllowed || retired == nil {
+		t.Fatalf("Authorize() = %s/%s, want allowed and retired", use.Outcome, use.Reason)
+	}
+}
+
 func TestAuthorizeDenials(t *testing.T) {
 	cases := map[DenialReason]func(t *testing.T, f *fixture) *AuthorityGrant{
 		DenialNoGrant: func(t *testing.T, f *fixture) *AuthorityGrant { return nil },
@@ -137,20 +159,33 @@ func TestAuthorizeDenials(t *testing.T) {
 			return &f.standing
 		},
 		DenialWrongAction: func(t *testing.T, f *fixture) *AuthorityGrant {
-			f.request.Action = "fs.delete"
-			f.policy.Ceiling["fs.delete"] = ScopeGlobal
+			f.request.Action = "message.delete"
+			f.policy.Settings["message.delete"] = PermissionAlways
+			f.policy.Ceiling["message.delete"] = PermissionAlways
 			return &f.standing
 		},
 		DenialWrongOperation: func(t *testing.T, f *fixture) *AuthorityGrant {
 			f.request.Operation = newID[ids.Operation](t)
 			return &f.allowOnce
 		},
+		DenialInputMismatch: func(t *testing.T, f *fixture) *AuthorityGrant {
+			f.request.InputDigest = otherInput
+			return &f.allowOnce
+		},
 		DenialScopeMismatch: func(t *testing.T, f *fixture) *AuthorityGrant {
-			f.request.Subject = "repo/other.go"
+			f.request.Scope.Target = "bob@example.com"
 			return &f.standing
 		},
 		DenialRevoked: func(t *testing.T, f *fixture) *AuthorityGrant {
 			f.standing.RevokedAt = testNow.Add(-time.Second)
+			return &f.standing
+		},
+		DenialRetired: func(t *testing.T, f *fixture) *AuthorityGrant {
+			f.allowOnce.RetiredAt = testNow.Add(-time.Second)
+			return &f.allowOnce
+		},
+		DenialNotYetValid: func(t *testing.T, f *fixture) *AuthorityGrant {
+			f.standing.IssuedAt = testNow.Add(time.Second)
 			return &f.standing
 		},
 		DenialExpired: func(t *testing.T, f *fixture) *AuthorityGrant {
@@ -162,16 +197,21 @@ func TestAuthorizeDenials(t *testing.T) {
 			return &f.standing
 		},
 		DenialAboveCeiling: func(t *testing.T, f *fixture) *AuthorityGrant {
-			f.policy.Ceiling["fs.write"] = ScopeCall
+			f.policy.Ceiling["message.send"] = PermissionAsk
 			return &f.standing
 		},
 		DenialByPolicy: func(t *testing.T, f *fixture) *AuthorityGrant {
-			f.policy.Denies = []DenyPolicy{{Action: "fs.write", Scope: Scope{Class: ScopeSetting, Value: "workspace"}}}
+			f.policy.Denies = []DenyPolicy{{Action: "message.send", Target: "alice@example.com"}}
 			return &f.standing
 		},
 	}
 
-	for reason, arrange := range cases {
+	for _, reason := range DenialReasons() {
+		arrange, ok := cases[reason]
+		if !ok {
+			t.Errorf("no Authorize case for denial reason %s", reason)
+			continue
+		}
 		t.Run(string(reason), func(t *testing.T) {
 			f := newFixture(t)
 			grant := arrange(t, &f)
@@ -192,6 +232,74 @@ func TestAuthorizeDenials(t *testing.T) {
 	}
 }
 
+func TestNeverPermissionOverridesAnyGrant(t *testing.T) {
+	for name, adjust := range map[string]func(p *Policy){
+		"setting never":         func(p *Policy) { p.Settings["message.send"] = PermissionNever },
+		"ceiling never":         func(p *Policy) { p.Ceiling["message.send"] = PermissionNever },
+		"action missing":        func(p *Policy) { delete(p.Settings, "message.send") },
+		"ceiling entry missing": func(p *Policy) { delete(p.Ceiling, "message.send") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			adjust(&f.policy)
+			for _, grant := range []*AuthorityGrant{&f.standing, &f.allowOnce} {
+				use, _, err := Authorize(f.request, grant, f.policy, testNow)
+				if err != nil {
+					t.Fatalf("Authorize() error = %v", err)
+				}
+				if use.Reason != DenialByPolicy {
+					t.Fatalf("%s grant reason = %s, want denied_by_policy", grant.Mode, use.Reason)
+				}
+			}
+		})
+	}
+}
+
+func TestAskPermissionAllowsOnlyOneTimeApproval(t *testing.T) {
+	f := newFixture(t)
+	f.policy.Settings["message.send"] = PermissionAsk
+	if use, _, _ := Authorize(f.request, &f.allowOnce, f.policy, testNow); use.Outcome != UseAllowed {
+		t.Fatalf("allow-once under ask = %s/%s, want allowed", use.Outcome, use.Reason)
+	}
+	if use, _, _ := Authorize(f.request, &f.standing, f.policy, testNow); use.Reason != DenialAboveCeiling {
+		t.Fatalf("standing under ask = %s/%s, want above_ceiling", use.Outcome, use.Reason)
+	}
+}
+
+func TestPolicyEffectiveClampsSettingToCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		setting, ceiling, want Permission
+	}{
+		{PermissionAlways, PermissionAsk, PermissionAsk},
+		{PermissionAsk, PermissionAlways, PermissionAsk},
+		{PermissionAlways, PermissionAlways, PermissionAlways},
+		{PermissionNever, PermissionAlways, PermissionNever},
+	} {
+		policy := Policy{
+			Settings: map[ActionClass]Permission{"fs.write": tc.setting},
+			Ceiling:  map[ActionClass]Permission{"fs.write": tc.ceiling},
+		}
+		if got := policy.Effective("fs.write"); got != tc.want {
+			t.Errorf("Effective(setting %s, ceiling %s) = %s, want %s", tc.setting, tc.ceiling, got, tc.want)
+		}
+	}
+}
+
+func TestAuthorizeIgnoresNeverRuleForOtherTargets(t *testing.T) {
+	f := newFixture(t)
+	f.policy.Denies = []DenyPolicy{
+		{Action: "message.send", Target: "bob@example.com"},
+		{Action: "message.delete", Target: "alice@example.com"},
+	}
+	use, _, err := Authorize(f.request, &f.standing, f.policy, testNow)
+	if err != nil {
+		t.Fatalf("Authorize() error = %v", err)
+	}
+	if use.Outcome != UseAllowed {
+		t.Fatalf("Authorize() = %s/%s, want allowed", use.Outcome, use.Reason)
+	}
+}
+
 func TestAuthorizeRejectsCrossTenantPolicy(t *testing.T) {
 	f := newFixture(t)
 	f.policy.Tenant = newID[ids.Tenant](t)
@@ -204,42 +312,20 @@ func TestAuthorizeRejectsCrossTenantPolicy(t *testing.T) {
 	}
 }
 
-func TestAuthorizeIgnoresNeverRuleOutsideItsScope(t *testing.T) {
-	f := newFixture(t)
-	f.policy.Denies = []DenyPolicy{
-		{Action: "fs.write", Scope: Scope{Class: ScopeSubject, Value: "repo/other.go"}},
-		{Action: "fs.write", Scope: Scope{Class: ScopeSetting, Value: "other-workspace"}},
-		{Action: "fs.delete", Scope: Scope{Class: ScopeGlobal}},
-	}
-	use, _, err := Authorize(f.request, &f.standing, f.policy, testNow)
-	if err != nil {
-		t.Fatalf("Authorize() error = %v", err)
-	}
-	if use.Outcome != UseAllowed {
-		t.Fatalf("Authorize() = %s/%s, want allowed", use.Outcome, use.Reason)
-	}
-}
-
-func TestAuthorizeTreatsUnlistedActionAsAboveCeiling(t *testing.T) {
-	f := newFixture(t)
-	f.policy.Ceiling = map[ActionClass]ScopeClass{}
-	use, _, err := Authorize(f.request, &f.allowOnce, f.policy, testNow)
-	if err != nil {
-		t.Fatalf("Authorize() error = %v", err)
-	}
-	if use.Reason != DenialAboveCeiling {
-		t.Fatalf("Authorize() reason = %s, want above_ceiling", use.Reason)
-	}
-}
-
 func TestAuthorizeRejectsMalformedInputs(t *testing.T) {
 	f := newFixture(t)
 	badGrant := f.standing
 	badGrant.Mode = "always"
+	badRequest := f.request
+	badRequest.InputDigest = "md5:abc"
 
 	for name, call := range map[string]func() error{
 		"request": func() error {
 			_, _, err := Authorize(ActionRequest{}, &f.standing, f.policy, testNow)
+			return err
+		},
+		"request digest": func() error {
+			_, _, err := Authorize(badRequest, &f.standing, f.policy, testNow)
 			return err
 		},
 		"policy": func() error {
@@ -268,11 +354,14 @@ func TestIssueGrant(t *testing.T) {
 		arrange func(t *testing.T, f *fixture) AuthorityGrant
 		want    error
 	}{
-		"standing within ceiling": {
+		"standing under always": {
 			arrange: func(t *testing.T, f *fixture) AuthorityGrant { return f.standing },
 		},
-		"allow once": {
-			arrange: func(t *testing.T, f *fixture) AuthorityGrant { return f.allowOnce },
+		"allow once under ask": {
+			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
+				f.policy.Settings["message.send"] = PermissionAsk
+				return f.allowOnce
+			},
 		},
 		"other tenant policy": {
 			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
@@ -288,32 +377,26 @@ func TestIssueGrant(t *testing.T) {
 			},
 			want: DenialStaleGeneration,
 		},
-		"above ceiling": {
+		"standing above ceiling": {
 			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
-				f.standing.Scope = Scope{Class: ScopeGlobal}
+				f.policy.Ceiling["message.send"] = PermissionAsk
 				return f.standing
 			},
 			want: DenialAboveCeiling,
 		},
-		"never rule on same scope": {
+		"allow once under never": {
 			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
-				f.policy.Denies = []DenyPolicy{{Action: "fs.write", Scope: f.standing.Scope}}
-				return f.standing
-			},
-			want: DenialByPolicy,
-		},
-		"global never rule": {
-			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
-				f.policy.Denies = []DenyPolicy{{Action: "fs.write", Scope: Scope{Class: ScopeGlobal}}}
+				f.policy.Settings["message.send"] = PermissionNever
 				return f.allowOnce
 			},
 			want: DenialByPolicy,
 		},
-		"never rule on other action": {
+		"standing on denied target": {
 			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
-				f.policy.Denies = []DenyPolicy{{Action: "fs.delete", Scope: Scope{Class: ScopeGlobal}}}
+				f.policy.Denies = []DenyPolicy{{Action: "message.send", Target: "alice@example.com"}}
 				return f.standing
 			},
+			want: DenialByPolicy,
 		},
 		"already revoked": {
 			arrange: func(t *testing.T, f *fixture) AuthorityGrant {
@@ -342,31 +425,39 @@ func TestIssueGrant(t *testing.T) {
 func TestGrantValidateRejectsInconsistentShapes(t *testing.T) {
 	f := newFixture(t)
 	cases := map[string]func() AuthorityGrant{
-		"allow once without call scope": func() AuthorityGrant {
-			g := f.allowOnce
-			g.Scope = Scope{Class: ScopeGlobal}
-			g.Operation = ids.OperationID{}
-			return g
-		},
-		"standing with call scope": func() AuthorityGrant {
+		"standing on call-scoped action": func() AuthorityGrant {
 			g := f.standing
 			g.Scope = Scope{Class: ScopeCall}
-			g.Operation = f.request.Operation
 			return g
 		},
-		"call scope without operation": func() AuthorityGrant {
-			g := f.allowOnce
-			g.Operation = ids.OperationID{}
-			return g
-		},
-		"operation outside call scope": func() AuthorityGrant {
+		"standing with operation": func() AuthorityGrant {
 			g := f.standing
 			g.Operation = f.request.Operation
+			return g
+		},
+		"standing with input digest": func() AuthorityGrant {
+			g := f.standing
+			g.InputDigest = testDigest
 			return g
 		},
 		"retired standing grant": func() AuthorityGrant {
 			g := f.standing
 			g.RetiredAt = testNow
+			return g
+		},
+		"allow once without operation": func() AuthorityGrant {
+			g := f.allowOnce
+			g.Operation = ids.OperationID{}
+			return g
+		},
+		"allow once without digest": func() AuthorityGrant {
+			g := f.allowOnce
+			g.InputDigest = ""
+			return g
+		},
+		"allow once with scope": func() AuthorityGrant {
+			g := f.allowOnce
+			g.Scope = Scope{Class: ScopeGlobal}
 			return g
 		},
 		"expiry not after issuance": func() AuthorityGrant {
@@ -381,12 +472,17 @@ func TestGrantValidateRejectsInconsistentShapes(t *testing.T) {
 		},
 		"malformed action": func() AuthorityGrant {
 			g := f.standing
-			g.Action = "FS Write"
+			g.Action = "Message Send"
 			return g
 		},
-		"subject scope without value": func() AuthorityGrant {
+		"subject scope without target": func() AuthorityGrant {
 			g := f.standing
 			g.Scope = Scope{Class: ScopeSubject}
+			return g
+		},
+		"global scope with target": func() AuthorityGrant {
+			g := f.standing
+			g.Scope = Scope{Class: ScopeGlobal, Target: "x"}
 			return g
 		},
 	}
@@ -399,18 +495,8 @@ func TestGrantValidateRejectsInconsistentShapes(t *testing.T) {
 	}
 }
 
-func TestDenyPolicyCannotBeCallScoped(t *testing.T) {
-	deny := DenyPolicy{Action: "fs.write", Scope: Scope{Class: ScopeCall}}
-	if err := deny.Validate(); !errors.Is(err, ErrInvalid) {
+func TestDenyPolicyRequiresTarget(t *testing.T) {
+	if err := (DenyPolicy{Action: "message.send"}).Validate(); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Validate() error = %v, want ErrInvalid", err)
-	}
-}
-
-func TestEveryDenialReasonIsExercised(t *testing.T) {
-	// TestAuthorizeDenials covers every reason except retired, which
-	// TestAuthorizeRetiresAllowOnceGrant covers. This guards the enum: a new
-	// reason must get a test before this count changes.
-	if got := len(DenialReasons()); got != 13 {
-		t.Fatalf("len(DenialReasons()) = %d; add Authorize coverage for the new reason", got)
 	}
 }

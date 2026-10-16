@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ActionRequest",
-  "description": "The effective action to authorize, after any hook rewrite.",
+  "description": "The effective action to authorize, after any hook rewrite. scope is the action's catalogue scope class and target; input_digest covers the effective input.",
   "type": "object",
-  "required": ["tenant_id", "attempt_id", "provider_id", "operation_id", "action"],
+  "required": ["tenant_id", "attempt_id", "provider_id", "operation_id", "action", "scope", "input_digest"],
   "additionalProperties": false,
   "properties": {
     "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
@@ -11,7 +11,7 @@
     "provider_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "operation_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "action": { "$ref": "common.schema.json#/$defs/actionClass" },
-    "setting": { "$ref": "common.schema.json#/$defs/scopeValue" },
-    "subject": { "$ref": "common.schema.json#/$defs/scopeValue" }
+    "scope": { "$ref": "common.schema.json#/$defs/scope" },
+    "input_digest": { "$ref": "common.schema.json#/$defs/digest" }
   }
 }

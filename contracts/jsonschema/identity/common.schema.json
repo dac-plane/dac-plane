@@ -15,20 +15,30 @@
       "type": "integer",
       "minimum": 1
     },
+    "digest": {
+      "description": "SHA-256 digest of a canonical action input.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "actionClass": {
       "description": "Dotted lowercase governed-action name, for example fs.write.",
       "type": "string",
       "maxLength": 128,
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
     },
-    "scopeValue": {
+    "target": {
+      "description": "The named setting or subject of a setting- or subject-scoped action.",
       "type": "string",
       "minLength": 1,
       "maxLength": 256
     },
+    "permission": {
+      "description": "Ordered from most to least restrictive.",
+      "enum": ["never", "ask", "always"]
+    },
     "scopeClass": {
-      "description": "Ordered from narrowest to broadest.",
-      "enum": ["call", "subject", "setting", "global"]
+      "description": "How the action catalogue partitions an action for authority.",
+      "enum": ["global", "setting", "subject", "call"]
     },
     "scope": {
       "type": "object",
@@ -36,11 +46,11 @@
       "additionalProperties": false,
       "properties": {
         "class": { "$ref": "#/$defs/scopeClass" },
-        "value": { "$ref": "#/$defs/scopeValue" }
+        "target": { "$ref": "#/$defs/target" }
       },
       "if": { "properties": { "class": { "enum": ["setting", "subject"] } } },
-      "then": { "required": ["value"] },
-      "else": { "not": { "required": ["value"] } }
+      "then": { "required": ["target"] },
+      "else": { "not": { "required": ["target"] } }
     }
   }
 }

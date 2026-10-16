@@ -11,10 +11,13 @@ import (
 
 const (
 	maxActionClassLength = 128
-	maxScopeValueLength  = 256
+	maxTargetLength      = 256
 )
 
-var actionClassPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+var (
+	actionClassPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+	digestPattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
 
 // ActionClass names a governed action, for example "fs.write". The catalogue
 // of classes belongs to provider contracts; this type only fixes the syntax.
@@ -28,63 +31,77 @@ func (a ActionClass) Validate() error {
 	return nil
 }
 
-// ScopeClass is how broadly authority applies.
-type ScopeClass string
+// Digest is a SHA-256 digest of a canonical action input, in the form
+// "sha256:<64 lowercase hex>". It binds approval to exact content without
+// storing that content.
+type Digest string
 
-const (
-	ScopeCall    ScopeClass = "call"
-	ScopeSubject ScopeClass = "subject"
-	ScopeSetting ScopeClass = "setting"
-	ScopeGlobal  ScopeClass = "global"
-)
-
-// ScopeClasses lists every scope class from narrowest to broadest.
-func ScopeClasses() []ScopeClass {
-	return []ScopeClass{ScopeCall, ScopeSubject, ScopeSetting, ScopeGlobal}
-}
-
-// breadth orders scope classes; it is -1 for an unknown class.
-func (c ScopeClass) breadth() int {
-	return slices.Index(ScopeClasses(), c)
-}
-
-// Scope is where authority applies. Setting and subject scopes name their
-// setting or subject in Value. Global and call scopes have no value; a call
-// scope binds through the grant's operation.
-type Scope struct {
-	Class ScopeClass `json:"class"`
-	Value string     `json:"value,omitzero"`
-}
-
-// Validate reports whether the class is known and the value matches it.
-func (s Scope) Validate() error {
-	switch s.Class {
-	case ScopeGlobal, ScopeCall:
-		if s.Value != "" {
-			return fmt.Errorf("%w: %s scope takes no value", ErrInvalid, s.Class)
-		}
-	case ScopeSetting, ScopeSubject:
-		if s.Value == "" || len(s.Value) > maxScopeValueLength {
-			return fmt.Errorf("%w: %s scope requires a value", ErrInvalid, s.Class)
-		}
-	default:
-		return fmt.Errorf("%w: unknown scope class", ErrInvalid)
+// Validate reports whether the digest is well formed.
+func (d Digest) Validate() error {
+	if !digestPattern.MatchString(string(d)) {
+		return fmt.Errorf("%w: malformed digest", ErrInvalid)
 	}
 	return nil
 }
 
-// covers reports whether a non-call scope applies to the request.
-func (s Scope) covers(req ActionRequest) bool {
-	switch s.Class {
-	case ScopeGlobal:
-		return true
-	case ScopeSetting:
-		return req.Setting == s.Value
-	case ScopeSubject:
-		return req.Subject == s.Value
-	default:
-		return false
+// ScopeClass is how an action is partitioned for authority. It is a property
+// of the action, fixed by the action catalogue, not a breadth a grant chooses:
+// global actions are authorized as a whole, setting and subject actions per
+// named setting or subject, and call actions only one call at a time.
+type ScopeClass string
+
+const (
+	ScopeGlobal  ScopeClass = "global"
+	ScopeSetting ScopeClass = "setting"
+	ScopeSubject ScopeClass = "subject"
+	ScopeCall    ScopeClass = "call"
+)
+
+// ScopeClasses lists every valid ScopeClass.
+func ScopeClasses() []ScopeClass {
+	return []ScopeClass{ScopeGlobal, ScopeSetting, ScopeSubject, ScopeCall}
+}
+
+// targeted reports whether actions of this class name a setting or subject.
+func (c ScopeClass) targeted() bool {
+	return c == ScopeSetting || c == ScopeSubject
+}
+
+// Scope is where standing authority applies: the action's scope class and, for
+// setting and subject classes, the named target.
+type Scope struct {
+	Class  ScopeClass `json:"class"`
+	Target string     `json:"target,omitzero"`
+}
+
+// Validate reports whether the class is known and the target matches it.
+func (s Scope) Validate() error {
+	if !slices.Contains(ScopeClasses(), s.Class) {
+		return fmt.Errorf("%w: unknown scope class", ErrInvalid)
 	}
+	if s.Class.targeted() != (s.Target != "") || len(s.Target) > maxTargetLength {
+		return fmt.Errorf("%w: setting and subject scopes, and only those, name a target", ErrInvalid)
+	}
+	return nil
+}
+
+// Permission is a tenant's standing answer for an action class, ordered
+// never < ask < always.
+type Permission string
+
+const (
+	PermissionNever  Permission = "never"
+	PermissionAsk    Permission = "ask"
+	PermissionAlways Permission = "always"
+)
+
+// Permissions lists every Permission from most to least restrictive.
+func Permissions() []Permission {
+	return []Permission{PermissionNever, PermissionAsk, PermissionAlways}
+}
+
+func (p Permission) rank() int {
+	return slices.Index(Permissions(), p)
 }
 
 // GrantMode is whether authority is used once or stands until it ends.
@@ -122,15 +139,16 @@ func (m GrantMode) Source() AuthoritySource {
 }
 
 // ActionRequest is the effective action to authorize, after any hook rewrite.
-// Setting and Subject identify what the action touches for scope matching.
+// Scope is the action's catalogue scope class and target. InputDigest covers
+// the effective input, so a rewrite cannot reuse an approval for other content.
 type ActionRequest struct {
-	Tenant    ids.TenantID    `json:"tenant_id"`
-	Attempt   ids.AttemptID   `json:"attempt_id"`
-	Provider  ids.ProviderID  `json:"provider_id"`
-	Operation ids.OperationID `json:"operation_id"`
-	Action    ActionClass     `json:"action"`
-	Setting   string          `json:"setting,omitzero"`
-	Subject   string          `json:"subject,omitzero"`
+	Tenant      ids.TenantID    `json:"tenant_id"`
+	Attempt     ids.AttemptID   `json:"attempt_id"`
+	Provider    ids.ProviderID  `json:"provider_id"`
+	Operation   ids.OperationID `json:"operation_id"`
+	Action      ActionClass     `json:"action"`
+	Scope       Scope           `json:"scope"`
+	InputDigest Digest          `json:"input_digest"`
 }
 
 // Validate reports whether the request is complete.
@@ -138,61 +156,61 @@ func (r ActionRequest) Validate() error {
 	if r.Tenant.IsZero() || r.Attempt.IsZero() || r.Provider.IsZero() || r.Operation.IsZero() {
 		return fmt.Errorf("%w: action request requires tenant, attempt, provider and operation", ErrInvalid)
 	}
-	if len(r.Setting) > maxScopeValueLength || len(r.Subject) > maxScopeValueLength {
-		return fmt.Errorf("%w: action request setting or subject too long", ErrInvalid)
-	}
-	return r.Action.Validate()
-}
-
-// DenyPolicy is a never rule: it blocks issuance and use of authority for its
-// action within its scope.
-type DenyPolicy struct {
-	Action ActionClass `json:"action"`
-	Scope  Scope       `json:"scope"`
-}
-
-// Validate reports whether the rule is well formed. A never rule cannot be
-// call scoped because it outlives any single call.
-func (d DenyPolicy) Validate() error {
-	if err := d.Action.Validate(); err != nil {
+	if err := r.Action.Validate(); err != nil {
 		return err
 	}
-	if d.Scope.Class == ScopeCall {
-		return fmt.Errorf("%w: deny policy cannot be call scoped", ErrInvalid)
+	if err := r.Scope.Validate(); err != nil {
+		return err
 	}
-	return d.Scope.Validate()
+	return r.InputDigest.Validate()
 }
 
-// blocksGrant reports whether the rule overlaps the grant's action and scope.
-func (d DenyPolicy) blocksGrant(g AuthorityGrant) bool {
-	if d.Action != g.Action {
-		return false
-	}
-	return d.Scope.Class == ScopeGlobal || g.Scope.Class == ScopeGlobal || d.Scope == g.Scope
+// DenyPolicy is a never rule for one named setting or subject of an action.
+// A never rule for a whole action class is PermissionNever in the policy.
+type DenyPolicy struct {
+	Action ActionClass `json:"action"`
+	Target string      `json:"target"`
 }
 
-// Policy is a tenant's authority policy at one generation. Ceiling holds the
-// broadest scope class allowed per action class; an action class missing from
-// it is not permitted at all. Any policy change advances Generation, which
+// Validate reports whether the rule is well formed.
+func (d DenyPolicy) Validate() error {
+	if d.Target == "" || len(d.Target) > maxTargetLength {
+		return fmt.Errorf("%w: deny policy requires a target", ErrInvalid)
+	}
+	return d.Action.Validate()
+}
+
+func (d DenyPolicy) matches(action ActionClass, scope Scope) bool {
+	return d.Action == action && scope.Class.targeted() && d.Target == scope.Target
+}
+
+// Policy is a tenant's authority policy at one generation. Settings are the
+// tenant's chosen permissions and Ceiling the administrative maximum; the
+// effective permission is the lower of the two, and an action class missing
+// from either is never permitted. Any policy change advances Generation, which
 // invalidates authority issued under earlier generations.
 type Policy struct {
 	Tenant     ids.TenantID               `json:"tenant_id"`
 	Generation uint64                     `json:"generation"`
-	Ceiling    map[ActionClass]ScopeClass `json:"ceiling,omitempty"`
+	Settings   map[ActionClass]Permission `json:"settings,omitempty"`
+	Ceiling    map[ActionClass]Permission `json:"ceiling,omitempty"`
 	Denies     []DenyPolicy               `json:"denies,omitempty"`
 }
 
-// Validate reports whether the policy is well formed.
+// Validate reports whether the policy is well formed. A setting above the
+// ceiling is valid; it is clamped, never honoured.
 func (p Policy) Validate() error {
 	if p.Tenant.IsZero() || p.Generation == 0 {
 		return fmt.Errorf("%w: policy requires tenant and a positive generation", ErrInvalid)
 	}
-	for action, class := range p.Ceiling {
-		if err := action.Validate(); err != nil {
-			return err
-		}
-		if class.breadth() < 0 {
-			return fmt.Errorf("%w: unknown ceiling scope class", ErrInvalid)
+	for _, permissions := range []map[ActionClass]Permission{p.Settings, p.Ceiling} {
+		for action, permission := range permissions {
+			if err := action.Validate(); err != nil {
+				return err
+			}
+			if permission.rank() < 0 {
+				return fmt.Errorf("%w: unknown permission", ErrInvalid)
+			}
 		}
 	}
 	for _, deny := range p.Denies {
@@ -203,24 +221,40 @@ func (p Policy) Validate() error {
 	return nil
 }
 
-func (p Policy) withinCeiling(action ActionClass, class ScopeClass) bool {
-	ceiling, ok := p.Ceiling[action]
-	return ok && class.breadth() <= ceiling.breadth()
+// Effective returns the tenant's permission for an action class, clamped by
+// the ceiling.
+func (p Policy) Effective(action ActionClass) Permission {
+	setting, hasSetting := p.Settings[action]
+	ceiling, hasCeiling := p.Ceiling[action]
+	if !hasSetting || !hasCeiling {
+		return PermissionNever
+	}
+	return Permissions()[min(setting.rank(), ceiling.rank())]
+}
+
+func (p Policy) denies(action ActionClass, scope Scope) bool {
+	return slices.ContainsFunc(p.Denies, func(d DenyPolicy) bool { return d.matches(action, scope) })
 }
 
 // AuthorityGrant is authority for one Attempt to have a provider perform an
-// action within a scope. An allow-once grant is call scoped to one operation
-// and retired by its first use; a standing grant is never call scoped and lasts
-// until expiry, revocation or a policy generation change.
+// action.
+//
+// An allow-once grant is a one-time approval of one operation with one exact
+// input digest, for an action of any scope class; its first use retires it.
+// A standing grant covers the action within one scope that must equal the
+// action's catalogue scope class and target. Call-scoped actions cannot have
+// standing grants. A standing grant lasts until expiry, revocation or a policy
+// generation change, and requires the effective permission to be always.
 type AuthorityGrant struct {
 	ID               ids.GrantID     `json:"grant_id"`
 	Tenant           ids.TenantID    `json:"tenant_id"`
 	Attempt          ids.AttemptID   `json:"attempt_id"`
 	Provider         ids.ProviderID  `json:"provider_id"`
-	Operation        ids.OperationID `json:"operation_id,omitzero"`
 	Action           ActionClass     `json:"action"`
-	Scope            Scope           `json:"scope"`
 	Mode             GrantMode       `json:"mode"`
+	Operation        ids.OperationID `json:"operation_id,omitzero"`
+	InputDigest      Digest          `json:"input_digest,omitzero"`
+	Scope            Scope           `json:"scope,omitzero"`
 	GrantedBy        ids.PrincipalID `json:"granted_by"`
 	PolicyGeneration uint64          `json:"policy_generation"`
 	IssuedAt         time.Time       `json:"issued_at"`
@@ -238,26 +272,26 @@ func (g AuthorityGrant) Validate() error {
 	if err := g.Action.Validate(); err != nil {
 		return err
 	}
-	if err := g.Scope.Validate(); err != nil {
-		return err
-	}
 	switch g.Mode {
 	case GrantAllowOnce:
-		if g.Scope.Class != ScopeCall {
-			return fmt.Errorf("%w: allow-once grant must be call scoped", ErrInvalid)
+		if g.Operation.IsZero() || g.Scope != (Scope{}) {
+			return fmt.Errorf("%w: allow-once grant binds an operation, not a scope", ErrInvalid)
+		}
+		if err := g.InputDigest.Validate(); err != nil {
+			return err
 		}
 	case GrantStanding:
-		if g.Scope.Class == ScopeCall {
-			return fmt.Errorf("%w: standing grant cannot be call scoped", ErrInvalid)
+		if !g.Operation.IsZero() || g.InputDigest != "" || !g.RetiredAt.IsZero() {
+			return fmt.Errorf("%w: standing grant binds a scope, not an operation, and is never retired", ErrInvalid)
 		}
-		if !g.RetiredAt.IsZero() {
-			return fmt.Errorf("%w: standing grant cannot be retired", ErrInvalid)
+		if err := g.Scope.Validate(); err != nil {
+			return err
+		}
+		if g.Scope.Class == ScopeCall {
+			return fmt.Errorf("%w: call-scoped actions cannot have standing grants", ErrInvalid)
 		}
 	default:
 		return fmt.Errorf("%w: unknown grant mode", ErrInvalid)
-	}
-	if (g.Scope.Class == ScopeCall) == g.Operation.IsZero() {
-		return fmt.Errorf("%w: grant operation is required for and only for call scope", ErrInvalid)
 	}
 	if g.PolicyGeneration == 0 || g.IssuedAt.IsZero() || !g.ExpiresAt.After(g.IssuedAt) {
 		return fmt.Errorf("%w: grant requires a policy generation and expiry after issuance", ErrInvalid)
@@ -277,19 +311,17 @@ func IssueGrant(g AuthorityGrant, policy Policy) error {
 	if !g.RevokedAt.IsZero() || !g.RetiredAt.IsZero() {
 		return fmt.Errorf("%w: a new grant cannot be revoked or retired", ErrInvalid)
 	}
-	if g.Tenant != policy.Tenant {
+	switch {
+	case g.Tenant != policy.Tenant:
 		return DenialCrossTenant
-	}
-	if g.PolicyGeneration != policy.Generation {
+	case g.PolicyGeneration != policy.Generation:
 		return DenialStaleGeneration
-	}
-	if !policy.withinCeiling(g.Action, g.Scope.Class) {
+	case policy.Effective(g.Action) == PermissionNever:
+		return DenialByPolicy
+	case g.Mode == GrantStanding && policy.denies(g.Action, g.Scope):
+		return DenialByPolicy
+	case g.Mode == GrantStanding && policy.Effective(g.Action) != PermissionAlways:
 		return DenialAboveCeiling
-	}
-	for _, deny := range policy.Denies {
-		if deny.blocksGrant(g) {
-			return DenialByPolicy
-		}
 	}
 	return nil
 }
@@ -303,12 +335,14 @@ const (
 	DenialCrossTenant     DenialReason = "cross_tenant"
 	DenialWrongAttempt    DenialReason = "wrong_attempt"
 	DenialWrongAudience   DenialReason = "wrong_audience"
-	DenialWrongOperation  DenialReason = "wrong_operation"
 	DenialWrongAction     DenialReason = "wrong_action"
+	DenialWrongOperation  DenialReason = "wrong_operation"
+	DenialInputMismatch   DenialReason = "input_mismatch"
 	DenialScopeMismatch   DenialReason = "scope_mismatch"
-	DenialExpired         DenialReason = "expired"
 	DenialRevoked         DenialReason = "revoked"
 	DenialRetired         DenialReason = "retired"
+	DenialNotYetValid     DenialReason = "not_yet_valid"
+	DenialExpired         DenialReason = "expired"
 	DenialStaleGeneration DenialReason = "stale_generation"
 	DenialAboveCeiling    DenialReason = "above_ceiling"
 	DenialByPolicy        DenialReason = "denied_by_policy"
@@ -318,8 +352,9 @@ const (
 func DenialReasons() []DenialReason {
 	return []DenialReason{
 		DenialNoGrant, DenialCrossTenant, DenialWrongAttempt, DenialWrongAudience,
-		DenialWrongOperation, DenialWrongAction, DenialScopeMismatch, DenialExpired,
-		DenialRevoked, DenialRetired, DenialStaleGeneration, DenialAboveCeiling, DenialByPolicy,
+		DenialWrongAction, DenialWrongOperation, DenialInputMismatch, DenialScopeMismatch,
+		DenialRevoked, DenialRetired, DenialNotYetValid, DenialExpired,
+		DenialStaleGeneration, DenialAboveCeiling, DenialByPolicy,
 	}
 }
 
@@ -349,6 +384,7 @@ type AuthorityUse struct {
 	Provider         ids.ProviderID  `json:"provider_id"`
 	Operation        ids.OperationID `json:"operation_id"`
 	Action           ActionClass     `json:"action"`
+	InputDigest      Digest          `json:"input_digest"`
 	Grant            ids.GrantID     `json:"grant_id,omitzero"`
 	Source           AuthoritySource `json:"source,omitzero"`
 	GrantedBy        ids.PrincipalID `json:"granted_by,omitzero"`
@@ -364,6 +400,9 @@ func (u AuthorityUse) Validate() error {
 		return fmt.Errorf("%w: authority use requires tenant, attempt, provider and operation", ErrInvalid)
 	}
 	if err := u.Action.Validate(); err != nil {
+		return err
+	}
+	if err := u.InputDigest.Validate(); err != nil {
 		return err
 	}
 	if u.PolicyGeneration == 0 || u.DecidedAt.IsZero() {
@@ -419,6 +458,7 @@ func Authorize(req ActionRequest, grant *AuthorityGrant, policy Policy, now time
 		Provider:         req.Provider,
 		Operation:        req.Operation,
 		Action:           req.Action,
+		InputDigest:      req.InputDigest,
 		PolicyGeneration: policy.Generation,
 		DecidedAt:        now,
 	}
@@ -444,18 +484,15 @@ func Authorize(req ActionRequest, grant *AuthorityGrant, policy Policy, now time
 }
 
 // denialReason returns the first failed predicate, or "" when authority holds.
-// Tenant and never rules are checked before the grant so they are reported
-// even when no grant was presented.
+// Tenant and never rules are checked before the grant, so a never rule wins
+// over any grant and is reported even when no grant was presented.
 func denialReason(req ActionRequest, grant *AuthorityGrant, policy Policy, now time.Time) DenialReason {
-	if policy.Tenant != req.Tenant {
-		return DenialCrossTenant
-	}
-	for _, deny := range policy.Denies {
-		if deny.Action == req.Action && deny.Scope.covers(req) {
-			return DenialByPolicy
-		}
-	}
+	effective := policy.Effective(req.Action)
 	switch {
+	case policy.Tenant != req.Tenant:
+		return DenialCrossTenant
+	case effective == PermissionNever || policy.denies(req.Action, req.Scope):
+		return DenialByPolicy
 	case grant == nil:
 		return DenialNoGrant
 	case grant.Tenant != req.Tenant:
@@ -466,19 +503,23 @@ func denialReason(req ActionRequest, grant *AuthorityGrant, policy Policy, now t
 		return DenialWrongAudience
 	case grant.Action != req.Action:
 		return DenialWrongAction
-	case grant.Scope.Class == ScopeCall && grant.Operation != req.Operation:
+	case grant.Mode == GrantAllowOnce && grant.Operation != req.Operation:
 		return DenialWrongOperation
-	case grant.Scope.Class != ScopeCall && !grant.Scope.covers(req):
+	case grant.Mode == GrantAllowOnce && grant.InputDigest != req.InputDigest:
+		return DenialInputMismatch
+	case grant.Mode == GrantStanding && grant.Scope != req.Scope:
 		return DenialScopeMismatch
 	case !grant.RevokedAt.IsZero():
 		return DenialRevoked
 	case !grant.RetiredAt.IsZero():
 		return DenialRetired
+	case now.Before(grant.IssuedAt):
+		return DenialNotYetValid
 	case !now.Before(grant.ExpiresAt):
 		return DenialExpired
 	case grant.PolicyGeneration != policy.Generation:
 		return DenialStaleGeneration
-	case !policy.withinCeiling(req.Action, grant.Scope.Class):
+	case grant.Mode == GrantStanding && effective != PermissionAlways:
 		return DenialAboveCeiling
 	}
 	return ""
