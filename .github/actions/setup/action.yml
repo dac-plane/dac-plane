@@ -1,5 +1,5 @@
 name: setup
-description: Check out the repository and set up Go and just.
+description: Set up Go and just after checking out the repository.
 
 inputs:
   go-version:
@@ -20,9 +20,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Check out repository
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
     - name: Set up Go
       id: go
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
