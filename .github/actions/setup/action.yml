@@ -1,0 +1,36 @@
+name: setup
+description: Check out the repository and set up Go and just.
+
+inputs:
+  go-version:
+    description: Go version range to install.
+    default: 1.26.x
+  go-cache:
+    description: Whether setup-go restores the module and build cache.
+    default: 'true'
+  just-version:
+    description: just version to install.
+    required: true
+
+outputs:
+  go-version:
+    description: Installed Go version, for cache keys.
+    value: ${{ steps.go.outputs.go-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out repository
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Set up Go
+      id: go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: ${{ inputs.go-cache }}
+
+    - name: Set up just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      with:
+        just-version: ${{ inputs.just-version }}
