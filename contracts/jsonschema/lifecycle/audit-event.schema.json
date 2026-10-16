@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditEvent",
+  "description": "Append-only record of one transition decision. Distinct from domain events and outbox delivery records; carries state names and identifiers, never payloads.",
+  "type": "object",
+  "required": [
+    "audit_id", "tenant_id", "record", "record_id", "actor", "event", "from_state",
+    "version", "outcome", "occurred_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "audit_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "record": { "enum": ["task", "attempt", "attention_request"] },
+    "record_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "actor": { "$ref": "#/$defs/actor" },
+    "event": { "type": "string", "minLength": 1 },
+    "from_state": { "type": "string", "minLength": 1 },
+    "to_state": { "type": "string", "minLength": 1 },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "outcome": { "enum": ["applied", "rejected"] },
+    "reason": {
+      "enum": [
+        "version_conflict", "terminal_state", "invalid_transition", "ambiguous_target",
+        "invalid_target", "cross_tenant", "wrong_record", "unauthorized_actor",
+        "decision_not_allowed", "request_expired", "stop_already_observed"
+      ]
+    },
+    "occurred_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "outcome": { "const": "applied" } } },
+  "then": { "required": ["to_state"], "not": { "required": ["reason"] } },
+  "else": { "required": ["reason"], "not": { "required": ["to_state"] } },
+  "$defs": {
+    "actor": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["principal", "provider", "system"] },
+        "principal_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "principal" } } },
+          "then": { "required": ["principal_id"] },
+          "else": { "not": { "required": ["principal_id"] } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "provider" } } },
+          "then": { "required": ["provider_id"] },
+          "else": { "not": { "required": ["provider_id"] } }
+        }
+      ]
+    }
+  }
+}

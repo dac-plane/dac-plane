@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AttentionRequest",
+  "description": "A request for authorized responders to unblock an Attempt. An action approval names the operation and digest of the exact action. expires_at must be after created_at; that comparison is enforced by the Go contract, not expressible here.",
+  "type": "object",
+  "required": [
+    "attention_id", "tenant_id", "task_id", "attempt_id", "kind", "responders", "state",
+    "version", "expires_at", "created_at", "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attention_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "kind": { "enum": ["question", "action_approval", "authentication_handoff", "blocked_work"] },
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "action_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "responders": { "type": "array", "minItems": 1, "items": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" } },
+    "state": {
+      "enum": [
+        "pending", "decided", "dispatching", "delivered", "consumed", "expired", "cancelled", "superseded"
+      ]
+    },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "decision_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "expires_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "action_approval" } } },
+      "then": { "required": ["operation_id", "action_digest"] },
+      "else": {
+        "allOf": [
+          { "not": { "required": ["operation_id"] } },
+          { "not": { "required": ["action_digest"] } }
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "state": { "enum": ["decided", "dispatching", "delivered", "consumed"] } } },
+      "then": { "required": ["decision_id"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "pending" } } },
+      "then": { "not": { "required": ["decision_id"] } }
+    }
+  ],
+  "$defs": {
+    "event": {
+      "enum": ["decide", "dispatch", "redeliver", "deliver", "consume", "expire", "cancel", "supersede"]
+    }
+  }
+}
