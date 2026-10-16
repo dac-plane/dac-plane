@@ -93,7 +93,7 @@ func readJSON(t *testing.T, path string) map[string]any {
 // vendorIdentifiers are names from the exploration evidence and from choices
 // ADR-0003 rejects. Contracts adopt behaviour, not vendors: none may appear in
 // a schema.
-var vendorIdentifiers = []string{"grok", "plane-bot", "planebot", "anysphere", "webauthn", "connectrpc", "temporal"}
+var vendorIdentifiers = []string{"grok", "grok bot", "plane-bot", "planebot", "anysphere", "webauthn", "connectrpc", "temporal", "native helper"}
 
 func TestContractsCarryNoVendorIdentifiers(t *testing.T) {
 	err := filepath.WalkDir(contractsDir, func(path string, entry fs.DirEntry, err error) error {
