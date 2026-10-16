@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Principal",
+  "description": "An actor within exactly one tenant.",
+  "type": "object",
+  "required": ["tenant_id", "principal_id", "kind"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "principal_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "kind": { "enum": ["human", "service"] }
+  }
+}

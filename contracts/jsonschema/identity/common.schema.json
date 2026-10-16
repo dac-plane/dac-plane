@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shared identity contract definitions",
+  "$defs": {
+    "uuidv7": {
+      "description": "Opaque record identifier: a canonical lowercase UUIDv7.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "digest": {
+      "description": "SHA-256 digest of a canonical action input.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "actionClass": {
+      "description": "Dotted lowercase governed-action name, for example fs.write.",
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "target": {
+      "description": "The named setting or subject of a setting- or subject-scoped action.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "permission": {
+      "description": "Ordered from most to least restrictive.",
+      "enum": ["never", "ask", "always"]
+    },
+    "scopeClass": {
+      "description": "How the action catalogue partitions an action for authority.",
+      "enum": ["global", "setting", "subject", "call"]
+    },
+    "scope": {
+      "type": "object",
+      "required": ["class"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "$ref": "#/$defs/scopeClass" },
+        "target": { "$ref": "#/$defs/target" }
+      },
+      "if": { "properties": { "class": { "enum": ["setting", "subject"] } } },
+      "then": { "required": ["target"] },
+      "else": { "not": { "required": ["target"] } }
+    }
+  }
+}

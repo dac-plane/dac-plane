@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Policy",
+  "description": "A tenant's authority policy at one generation. The effective permission for an action class is the lower of its setting and ceiling; an action class missing from either is never permitted.",
+  "type": "object",
+  "required": ["tenant_id", "generation"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "generation": { "$ref": "common.schema.json#/$defs/generation" },
+    "settings": { "$ref": "#/$defs/permissionMap" },
+    "ceiling": { "$ref": "#/$defs/permissionMap" },
+    "denies": {
+      "description": "Never rules for one named setting or subject of an action.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "target"],
+        "additionalProperties": false,
+        "properties": {
+          "action": { "$ref": "common.schema.json#/$defs/actionClass" },
+          "target": { "$ref": "common.schema.json#/$defs/target" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "permissionMap": {
+      "type": "object",
+      "propertyNames": { "$ref": "common.schema.json#/$defs/actionClass" },
+      "additionalProperties": { "$ref": "common.schema.json#/$defs/permission" }
+    }
+  }
+}

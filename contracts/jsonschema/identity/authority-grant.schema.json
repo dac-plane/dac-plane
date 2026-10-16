@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorityGrant",
+  "description": "Authority for one Attempt to have a provider perform an action. An allow-once grant binds one operation and input digest; a standing grant binds the action's scope and cannot cover call-scoped actions. expires_at must be after issued_at; that comparison is enforced by the Go contract, not expressible here.",
+  "type": "object",
+  "required": [
+    "grant_id", "tenant_id", "attempt_id", "provider_id", "action", "mode",
+    "granted_by", "policy_generation", "issued_at", "expires_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "grant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "action": { "$ref": "common.schema.json#/$defs/actionClass" },
+    "mode": { "enum": ["allow_once", "standing"] },
+    "operation_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "input_digest": { "$ref": "common.schema.json#/$defs/digest" },
+    "scope": { "$ref": "common.schema.json#/$defs/scope" },
+    "granted_by": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "policy_generation": { "$ref": "common.schema.json#/$defs/generation" },
+    "issued_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "revoked_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "retired_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "mode": { "const": "allow_once" } } },
+  "then": {
+    "required": ["operation_id", "input_digest"],
+    "not": { "required": ["scope"] }
+  },
+  "else": {
+    "required": ["scope"],
+    "properties": { "scope": { "properties": { "class": { "not": { "const": "call" } } } } },
+    "allOf": [
+      { "not": { "required": ["operation_id"] } },
+      { "not": { "required": ["input_digest"] } },
+      { "not": { "required": ["retired_at"] } }
+    ]
+  }
+}
