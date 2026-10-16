@@ -12,6 +12,29 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
+// GetBudgetForUpdateByTaskUnit locks the budget covering one task in one
+// unit. It reports ErrNotFound when the task holds no budget in that unit,
+// which the dispatch loop reads as unconstrained.
+func GetBudgetForUpdateByTaskUnit(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, task ids.TaskID, unit lifecycle.Unit) (lifecycle.Budget, error) {
+	var idText string
+	err := u.QueryRow(ctx, `
+		select budget_id::text from budget
+		where tenant_id = $1 and task_id = $2 and unit = $3 for update`,
+		tenant.String(), task.String(), string(unit),
+	).Scan(&idText)
+	if err != nil {
+		if isNoRows(err) {
+			return lifecycle.Budget{}, ErrNotFound
+		}
+		return lifecycle.Budget{}, err
+	}
+	id, err := parseID[ids.Budget](`budget.budget_id`, idText)
+	if err != nil {
+		return lifecycle.Budget{}, err
+	}
+	return GetBudgetForUpdate(ctx, u, tenant, id)
+}
+
 // GetBudget loads a budget by tenant and id.
 func GetBudget(ctx context.Context, q Querier, tenant ids.TenantID, id ids.BudgetID) (lifecycle.Budget, error) {
 	var budget lifecycle.Budget

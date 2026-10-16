@@ -23,6 +23,29 @@ func InsertTenant(ctx context.Context, u *UnitOfWork, tenant ids.TenantID) error
 	return nil
 }
 
+// ListTenants returns every tenant identity, oldest first. The dispatch
+// loop ticks tenants sequentially; cross-tenant fairness is out of scope.
+func ListTenants(ctx context.Context, q Querier) ([]ids.TenantID, error) {
+	rows, err := q.Query(ctx, `select id::text from tenant order by id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ids.TenantID
+	for rows.Next() {
+		var idText string
+		if err := rows.Scan(&idText); err != nil {
+			return nil, err
+		}
+		id, err := parseID[ids.Tenant](`tenant.id`, idText)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // InsertPrincipal persists a principal with replay comparison.
 func InsertPrincipal(ctx context.Context, u *UnitOfWork, principal identity.Principal) error {
 	if err := principal.Validate(); err != nil {

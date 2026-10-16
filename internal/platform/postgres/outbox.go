@@ -22,10 +22,19 @@ type OutboxClaim struct {
 	Owner string
 }
 
-// ClaimOutboxRow takes the oldest due, unexhausted row for owner. The
-// SELECT skips rows locked by a live worker; the UPDATE moves the row to
-// 'processing' from 'pending' or from a lapsed 'processing' lease, so a
-// crashed holder's row is reclaimable and a concurrent claim loses exactly
+// dispatchableRows matches the outbox rows the dispatch loop owns: provider
+// operation dispatches and attempt cancellation intents. It mirrors the
+// prototype's command-only outbox (StartAttempt, CancelAttempt, ...): every
+// other row belongs to future surfaces and stays pending. The lifecycle
+// names are lifecycle.RecordOperation, lifecycle.RecordAttempt and
+// lifecycle.AttemptRequestCancel; SQL spells them out because placeholders
+// cannot carry identifiers.
+const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel'))`
+
+// ClaimOutboxRow takes the oldest due, unexhausted, dispatchable row for
+// owner. The SELECT skips rows locked by a live worker; the UPDATE moves the
+// row to 'processing' from 'pending' or from a lapsed 'processing' lease, so
+// a crashed holder's row is reclaimable and a concurrent claim loses exactly
 // once. Person-demand rows come first, mirroring Scheduler.Select. It
 // reports claimed=false (and no error) when nothing is due.
 func ClaimOutboxRow(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, owner string, ttl time.Duration, now time.Time) (OutboxClaim, bool, error) {
@@ -39,11 +48,12 @@ func ClaimOutboxRow(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, own
 		where (tenant_id, outbox_id) = (
 			select tenant_id, outbox_id from outbox
 			where tenant_id = $1 and exhausted_at is null and next_attempt_at <= $2
+				and `+dispatchableRows+`
 				and (status = 'pending'
 					or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $3))
 			order by case when demand = 'person' then 0 else 1 end, next_attempt_at
 			limit 1 for update skip locked
-		) and (status = 'pending'
+		) and `+dispatchableRows+` and (status = 'pending'
 			or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $3))
 		returning outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload,
 			demand, attempts, next_attempt_at, last_error, created_at, lease_epoch, claimed_by`,
@@ -74,6 +84,67 @@ func ClaimOutboxRow(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, own
 		claim.Row.LastError = *lastErrText
 	}
 	return claim, true, nil
+}
+
+// ClaimOutboxRowByID takes one dispatchable row the caller selected, e.g.
+// from OutboxReadyDispatch. The status predicate makes the take atomic: zero
+// rows mean another worker took it first (or it stopped being dispatchable),
+// reported as ErrStaleVersion so the caller skips it.
+func ClaimOutboxRowByID(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AnyID, owner string, ttl time.Duration, now time.Time) (OutboxClaim, error) {
+	var claim OutboxClaim
+	var idText, recordText, recordIDText, eventText, demandText string
+	var attemptText, lastErrText *string
+	var payload []byte
+	err := u.QueryRow(ctx, `
+		update outbox set status = 'processing', claimed_at = $3, claimed_by = $4,
+			lease_epoch = lease_epoch + 1, lease_expires_at = $5, updated_at = $3
+		where tenant_id = $1 and outbox_id = $2 and exhausted_at is null
+			and `+dispatchableRows+`
+			and (status = 'pending'
+				or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $3))
+		returning outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload,
+			demand, attempts, next_attempt_at, last_error, created_at, lease_epoch, claimed_by`,
+		tenant.String(), id.String(), now, owner, now.Add(ttl),
+	).Scan(&idText, &attemptText, &recordText, &recordIDText, &eventText, &payload,
+		&demandText, &claim.Row.Attempts, &claim.Row.NextTryAt, &lastErrText,
+		&claim.Row.CreatedAt, &claim.Epoch, &claim.Owner)
+	if err != nil {
+		if isNoRows(err) {
+			return OutboxClaim{}, ErrStaleVersion
+		}
+		return OutboxClaim{}, err
+	}
+	var parseErr error
+	if claim.Row.ID, parseErr = parseID[ids.Any](`outbox.outbox_id`, idText); parseErr != nil {
+		return OutboxClaim{}, parseErr
+	}
+	if claim.Row.Attempt, parseErr = parseOptionalID[ids.Attempt](`outbox.attempt_id`, attemptText); parseErr != nil {
+		return OutboxClaim{}, parseErr
+	}
+	claim.Row.Record = lifecycle.RecordKind(recordText)
+	if claim.Row.RecordID, parseErr = parseID[ids.Any](`outbox.record_id`, recordIDText); parseErr != nil {
+		return OutboxClaim{}, parseErr
+	}
+	claim.Row.Event, claim.Row.Payload = eventText, payload
+	claim.Row.Demand = contracts.Demand(demandText)
+	if lastErrText != nil {
+		claim.Row.LastError = *lastErrText
+	}
+	return claim, nil
+}
+
+// ReleaseOutboxRow yields a held row back to pending without advancing its
+// retry facts: no attempts bump, due immediately. The epoch predicate fences
+// a holder whose claim moved on. Use it for no-fault yields (lease
+// contention, lost races, no registered provider) so contention never burns
+// the retry budget.
+func ReleaseOutboxRow(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AnyID, epoch int64, now time.Time) error {
+	return execVersionedUpdate(ctx, u, `
+		update outbox set status = 'pending', claimed_at = null, claimed_by = null,
+			next_attempt_at = $4, updated_at = $4
+		where tenant_id = $1 and outbox_id = $2 and status = 'processing' and lease_epoch = $3`,
+		tenant.String(), id.String(), epoch, now,
+	)
 }
 
 // AckOutboxRow marks a claimed row dispatched. The lease-epoch predicate
