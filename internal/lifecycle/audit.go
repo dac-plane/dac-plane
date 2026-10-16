@@ -19,11 +19,17 @@ const (
 	RecordTask      RecordKind = "task"
 	RecordAttempt   RecordKind = "attempt"
 	RecordAttention RecordKind = "attention_request"
+	RecordOperation RecordKind = "provider_operation"
+	RecordHarness   RecordKind = "harness_qualification"
+	RecordMigration RecordKind = "migration_pass"
+	RecordClaim     RecordKind = "maintenance_claim"
 )
 
 // RecordKinds lists every valid RecordKind.
 func RecordKinds() []RecordKind {
-	return []RecordKind{RecordTask, RecordAttempt, RecordAttention}
+	return []RecordKind{
+		RecordTask, RecordAttempt, RecordAttention, RecordOperation, RecordHarness, RecordMigration, RecordClaim,
+	}
 }
 
 // RejectionCode is why a transition was refused.
@@ -41,6 +47,8 @@ const (
 	RejectDecisionNotAllowed  RejectionCode = "decision_not_allowed"
 	RejectRequestExpired      RejectionCode = "request_expired"
 	RejectStopAlreadyObserved RejectionCode = "stop_already_observed"
+	RejectStaleClaim          RejectionCode = "stale_claim"
+	RejectClaimHeld           RejectionCode = "claim_held"
 )
 
 // RejectionCodes lists every valid RejectionCode.
@@ -48,7 +56,8 @@ func RejectionCodes() []RejectionCode {
 	return []RejectionCode{
 		RejectVersionConflict, RejectTerminalState, RejectInvalidTransition, RejectAmbiguousTarget,
 		RejectInvalidTarget, RejectCrossTenant, RejectWrongRecord, RejectUnauthorizedActor,
-		RejectDecisionNotAllowed, RejectRequestExpired, RejectStopAlreadyObserved,
+		RejectDecisionNotAllowed, RejectRequestExpired, RejectStopAlreadyObserved, RejectStaleClaim,
+		RejectClaimHeld,
 	}
 }
 

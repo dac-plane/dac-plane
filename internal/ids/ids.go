@@ -26,6 +26,8 @@ type (
 	Attention struct{}
 	Decision  struct{}
 	Audit     struct{}
+	Migration struct{}
+	Claim     struct{}
 	// Any marks an identifier whose record kind is carried alongside it, such
 	// as the subject of an audit event.
 	Any struct{}
@@ -43,6 +45,8 @@ type (
 	AttentionID = ID[Attention]
 	DecisionID  = ID[Decision]
 	AuditID     = ID[Audit]
+	MigrationID = ID[Migration]
+	ClaimID     = ID[Claim]
 	AnyID       = ID[Any]
 )
 
