@@ -16,9 +16,9 @@ const (
 
 // TestEveryContractSchemaIsValidAndCovered guards the contract directory as a
 // whole: every schema must compile against its declared metaschema, and every
-// record schema must be exercised by a Go agreement test. A schema with no
-// root type only holds shared definitions and is covered through the records
-// that reference it.
+// record schema must be exercised by a Go agreement test. A schema whose root
+// only holds shared definitions is covered through the records that reference
+// it.
 func TestEveryContractSchemaIsValidAndCovered(t *testing.T) {
 	testSources := readTestSources(t)
 	var schemas int
@@ -33,7 +33,7 @@ func TestEveryContractSchemaIsValidAndCovered(t *testing.T) {
 				t.Fatalf("$schema = %v, want JSON Schema 2020-12", document["$schema"])
 			}
 			Compile(t, path)
-			if _, isRecord := document["type"]; isRecord && !strings.Contains(testSources, entry.Name()) {
+			if isRecordSchema(document) && !strings.Contains(testSources, entry.Name()) {
 				t.Fatalf("no Go agreement test references %s", entry.Name())
 			}
 		})
@@ -45,6 +45,17 @@ func TestEveryContractSchemaIsValidAndCovered(t *testing.T) {
 	if schemas == 0 {
 		t.Fatalf("no schemas found under %s", contractsDir)
 	}
+}
+
+// isRecordSchema reports whether a schema validates documents itself, rather
+// than only holding $defs: its root declares a type, a reference or properties.
+func isRecordSchema(document map[string]any) bool {
+	for _, keyword := range []string{"type", "$ref", "properties"} {
+		if _, ok := document[keyword]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // readTestSources concatenates the Go test files outside this package, where

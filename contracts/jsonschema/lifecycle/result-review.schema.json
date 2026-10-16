@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResultReview",
+  "description": "An append-only judgement of one exact revision by one principal, made on the task version the reviewer saw. Concurrent reviews conflict on that version.",
+  "type": "object",
+  "required": ["review_id", "tenant_id", "task_id", "revision_id", "reviewer_id", "disposition", "task_version", "reviewed_at"],
+  "additionalProperties": false,
+  "properties": {
+    "review_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "revision_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "reviewer_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "disposition": { "enum": ["accept", "request_changes", "reject"] },
+    "task_version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "reviewed_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ArtifactManifest",
+  "description": "What a writer declares it uploaded. operation_id is the stable commit operation and the manifest's identity; writer_epoch is the writer's fence. The product admits it only after the store verifies digest and size.",
+  "$ref": "#/$defs/manifestFields",
+  "unevaluatedProperties": false,
+  "$defs": {
+    "manifestFields": {
+      "type": "object",
+      "required": [
+        "artifact_id", "tenant_id", "task_id", "attempt_id", "operation_id", "producer_id", "kind",
+        "digest", "size", "media_type", "writer_epoch"
+      ],
+      "properties": {
+        "artifact_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "producer_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "kind": { "enum": ["code_change", "test_result", "visual_proof", "external_action", "agent_claim"] },
+        "digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+        "size": { "$ref": "common.schema.json#/$defs/amount" },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$"
+        },
+        "source_revision": { "$ref": "common.schema.json#/$defs/nativeRef" },
+        "writer_epoch": { "$ref": "../identity/common.schema.json#/$defs/generation" }
+      }
+    },
+    "commitOutcome": { "enum": ["committed", "retry", "fenced"] },
+    "retryReason": { "enum": ["missing_bytes", "digest_mismatch", "size_mismatch"] }
+  }
+}
