@@ -50,11 +50,14 @@ jobs:
       - name: Run vet
         run: just vet
 
+      - name: Run vet on integration files
+        run: just vet-integration
+
       - name: Run race tests
         run: just test-race
 
-      - name: Run PostgreSQL integration tests
-        run: just test-integration
+      - name: Run PostgreSQL integration tests under race
+        run: just test-integration-race
 
   vulnerabilities:
     name: Go vulnerabilities
