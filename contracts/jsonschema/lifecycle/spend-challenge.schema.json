@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpendChallenge",
+  "description": "First phase of spend authorization. Never reserves or consumes budget. expires_at must be after created_at; the Go contract enforces that.",
+  "type": "object",
+  "required": ["spend_id", "terms", "state", "version", "expires_at", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "spend_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "terms": { "$ref": "common.schema.json#/$defs/spendTerms" },
+    "state": { "enum": ["pending", "asserted", "expired"] },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "expires_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}

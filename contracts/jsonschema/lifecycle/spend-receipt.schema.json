@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpendReceipt",
+  "description": "Durable evidence of an authorized spend. Records authorization only; it reserves and consumes nothing. proof is the digest of the credential ceremony output.",
+  "type": "object",
+  "required": ["spend_id", "terms", "proof", "issued_at"],
+  "additionalProperties": false,
+  "properties": {
+    "spend_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "terms": { "$ref": "common.schema.json#/$defs/spendTerms" },
+    "proof": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "issued_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}

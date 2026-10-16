@@ -16,19 +16,23 @@ var ErrInvalid = errors.New("invalid lifecycle contract value")
 type RecordKind string
 
 const (
-	RecordTask      RecordKind = "task"
-	RecordAttempt   RecordKind = "attempt"
-	RecordAttention RecordKind = "attention_request"
-	RecordOperation RecordKind = "provider_operation"
-	RecordHarness   RecordKind = "harness_qualification"
-	RecordMigration RecordKind = "migration_pass"
-	RecordClaim     RecordKind = "maintenance_claim"
+	RecordTask        RecordKind = "task"
+	RecordAttempt     RecordKind = "attempt"
+	RecordAttention   RecordKind = "attention_request"
+	RecordOperation   RecordKind = "provider_operation"
+	RecordHarness     RecordKind = "harness_qualification"
+	RecordMigration   RecordKind = "migration_pass"
+	RecordClaim       RecordKind = "maintenance_claim"
+	RecordBudget      RecordKind = "budget"
+	RecordReservation RecordKind = "reservation"
+	RecordSpend       RecordKind = "spend_challenge"
 )
 
 // RecordKinds lists every valid RecordKind.
 func RecordKinds() []RecordKind {
 	return []RecordKind{
 		RecordTask, RecordAttempt, RecordAttention, RecordOperation, RecordHarness, RecordMigration, RecordClaim,
+		RecordBudget, RecordReservation, RecordSpend,
 	}
 }
 
@@ -50,6 +54,8 @@ const (
 	RejectStaleClaim          RejectionCode = "stale_claim"
 	RejectClaimHeld           RejectionCode = "claim_held"
 	RejectStalePolicy         RejectionCode = "stale_policy"
+	RejectCeilingReached      RejectionCode = "ceiling_reached"
+	RejectAssertionMismatch   RejectionCode = "assertion_mismatch"
 )
 
 // RejectionCodes lists every valid RejectionCode.
@@ -58,7 +64,7 @@ func RejectionCodes() []RejectionCode {
 		RejectVersionConflict, RejectTerminalState, RejectInvalidTransition, RejectAmbiguousTarget,
 		RejectInvalidTarget, RejectCrossTenant, RejectWrongRecord, RejectUnauthorizedActor,
 		RejectDecisionNotAllowed, RejectRequestExpired, RejectStopAlreadyObserved, RejectStaleClaim,
-		RejectClaimHeld, RejectStalePolicy,
+		RejectClaimHeld, RejectStalePolicy, RejectCeilingReached, RejectAssertionMismatch,
 	}
 }
 
