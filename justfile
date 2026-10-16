@@ -20,7 +20,7 @@ default:
 
 # Run every check CI runs, in CI's order
 [group('ci')]
-ci: fmt-check mod-check vet test test-race test-integration vuln lint-workflows
+ci: fmt-check mod-check vet vet-integration test test-race test-integration-race vuln lint-workflows
 
 # Rewrite Go files into gofmt style
 [group('dev')]
@@ -44,6 +44,12 @@ mod-check:
 vet:
     go vet ./...
 
+# Unit files build without tags; integration files only build behind the
+# integration tag, so they need their own vet pass.
+[group('check')]
+vet-integration:
+    go vet -tags=integration ./...
+
 # Run unit tests, including the JSON Schema contract conformance suites
 [group('test')]
 test:
@@ -55,11 +61,19 @@ test-race:
     go test -race ./...
 
 # -count=1 bypasses the test cache, which cannot see the container and would
-# otherwise report a pass without starting PostgreSQL.
+# otherwise report a pass without starting PostgreSQL. Pass package paths to
+# run a subset, e.g. `just test-integration ./internal/platform/postgres/`.
 [doc('Run integration tests against a real PostgreSQL container (needs Docker)')]
 [group('test')]
-test-integration:
-    {{ sdkroot }}go test -count=1 -tags=integration ./...
+test-integration *pkgs="./...":
+    {{ sdkroot }}go test -count=1 -tags=integration {{ pkgs }}
+
+# Race plus integration for the concurrency-sensitive store paths; CI runs
+# this instead of the plain variant so row-lock races fail the build.
+[doc('Run integration tests under the race detector (needs Docker)')]
+[group('test')]
+test-integration-race *pkgs="./...":
+    {{ sdkroot }}go test -race -count=1 -tags=integration {{ pkgs }}
 
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]

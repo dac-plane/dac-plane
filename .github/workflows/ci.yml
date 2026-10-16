@@ -14,27 +14,23 @@ permissions:
 
 # Every check is a recipe in the root justfile, so CI and `just ci` run the
 # same commands. Tool versions live in the justfile; only the version of just
-# itself is pinned here.
+# itself is pinned here. Jobs split by concern so slow suites run in parallel
+# and each can be re-run on its own; shared setup lives in
+# .github/actions/setup.
 env:
   JUST_VERSION: 1.57.0
 
 jobs:
-  verify:
-    name: Go foundation
+  check:
+    name: Static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: 1.26.x
-          cache: true
-
-      - name: Set up just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - name: Set up tools
+        uses: ./.github/actions/setup
         with:
           just-version: ${{ env.JUST_VERSION }}
 
@@ -44,17 +40,52 @@ jobs:
       - name: Check modules
         run: just mod-check
 
-      - name: Run unit tests
-        run: just test
-
       - name: Run vet
         run: just vet
+
+      - name: Run vet on integration files
+        run: just vet-integration
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Run unit tests
+        run: just test
 
       - name: Run race tests
         run: just test-race
 
-      - name: Run PostgreSQL integration tests
-        run: just test-integration
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      # Warm the daemon with the test image so testcontainers startup does
+      # not depend on a cold pull mid-run. Failure here is non-blocking:
+      # the tests pull on demand anyway.
+      - name: Pre-pull PostgreSQL test image
+        run: docker pull postgres:16.15-alpine || true
+
+      - name: Run PostgreSQL integration tests under race
+        run: just test-integration-race
 
   vulnerabilities:
     name: Go vulnerabilities
@@ -64,18 +95,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      # The shared Go cache is left to the Go foundation job, so its contents
-      # do not depend on which job finishes first.
-      - name: Set up Go
-        id: go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - name: Set up tools
+        id: setup
+        uses: ./.github/actions/setup
         with:
-          go-version: 1.26.x
-          cache: false
-
-      - name: Set up just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
+          # The shared Go cache is left to the build jobs, so its contents
+          # do not depend on which job finishes first.
+          go-cache: 'false'
           just-version: ${{ env.JUST_VERSION }}
 
       # The justfile pins the tool version, so its hash keys the binary.
@@ -83,7 +109,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .work/tools/govulncheck-*
-          key: govulncheck-${{ runner.os }}-go${{ steps.go.outputs.go-version }}-${{ hashFiles('justfile') }}
+          key: govulncheck-${{ runner.os }}-go${{ steps.setup.outputs.go-version }}-${{ hashFiles('justfile') }}
 
       - name: Run govulncheck
         run: just vuln
@@ -96,23 +122,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Set up Go
-        id: go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - name: Set up tools
+        id: setup
+        uses: ./.github/actions/setup
         with:
-          go-version: 1.26.x
-          cache: false
-
-      - name: Set up just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
+          # The shared Go cache is left to the build jobs, so its contents
+          # do not depend on which job finishes first.
+          go-cache: 'false'
           just-version: ${{ env.JUST_VERSION }}
 
       - name: Restore actionlint
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .work/tools/actionlint-*
-          key: actionlint-${{ runner.os }}-go${{ steps.go.outputs.go-version }}-${{ hashFiles('justfile') }}
+          key: actionlint-${{ runner.os }}-go${{ steps.setup.outputs.go-version }}-${{ hashFiles('justfile') }}
 
       - name: Run actionlint
         run: just lint-workflows
