@@ -444,7 +444,7 @@ func TestPersistenceDecideAttention(t *testing.T) {
 	}
 }
 
-func TestPersistenceBudgetSpendAndAuthority(t *testing.T) {
+func TestPersistenceBudgetSpend(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	databaseURL := testpostgres.Start(t)
@@ -507,6 +507,31 @@ func TestPersistenceBudgetSpendAndAuthority(t *testing.T) {
 	}
 	if _, _, replayed, err := store.AssertSpendChallenge(ctx, uow, f.tenant, challenge.ID, assertion, 1, assertTr); err != nil || !replayed {
 		t.Fatalf("replay AssertSpendChallenge() = %v, %v, want replayed", replayed, err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+}
+
+func TestPersistenceAuthorityLifecycle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	databaseURL := testpostgres.Start(t)
+	migrate(t, ctx, databaseURL)
+	pool := openPool(t, ctx, databaseURL)
+	f := seedTenant(t, ctx, pool)
+	now := time.Now().UTC()
+
+	uow, _ := store.Begin(ctx, pool)
+	defer func() { _ = uow.Rollback(ctx) }()
+	task := createTask(t, ctx, uow, f, now)
+	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
+	operation, err := lifecycle.NewProviderOperation(mustID[ids.Operation](t), f.tenant, attempt.ID, f.provider, now)
+	if err != nil {
+		t.Fatalf("NewProviderOperation() error = %v", err)
+	}
+	if _, _, err := store.InsertOperation(ctx, uow, operation); err != nil {
+		t.Fatalf("InsertOperation() error = %v", err)
 	}
 
 	// Approval confers a one-time grant; authorizing retires it in the same
@@ -574,7 +599,7 @@ func TestPersistenceBudgetSpendAndAuthority(t *testing.T) {
 	}
 }
 
-func TestPersistenceClaimsCursorsAndResume(t *testing.T) {
+func TestPersistenceClaimFencing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	databaseURL := testpostgres.Start(t)
@@ -585,16 +610,6 @@ func TestPersistenceClaimsCursorsAndResume(t *testing.T) {
 
 	uow, _ := store.Begin(ctx, pool)
 	defer func() { _ = uow.Rollback(ctx) }()
-	task := createTask(t, ctx, uow, f, now)
-	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
-	operation, err := lifecycle.NewProviderOperation(mustID[ids.Operation](t), f.tenant, attempt.ID, f.provider, now)
-	if err != nil {
-		t.Fatalf("NewProviderOperation() error = %v", err)
-	}
-	if _, _, err := store.InsertOperation(ctx, uow, operation); err != nil {
-		t.Fatalf("InsertOperation() error = %v", err)
-	}
-
 	claim, err := lifecycle.NewMaintenanceClaim(mustID[ids.Claim](t), f.tenant, f.provider, "worker-a", now)
 	if err != nil {
 		t.Fatalf("NewMaintenanceClaim() error = %v", err)
@@ -625,6 +640,42 @@ func TestPersistenceClaimsCursorsAndResume(t *testing.T) {
 	staleTr := store.Transition{At: now.Add(3 * time.Minute), Actor: f.actor, AuditID: newAuditID(t)}
 	if _, err := store.HoldClaim(ctx, uow, f.tenant, claim.ID, staleRelease, staleTr); lifecycle.RejectionOf(err) != lifecycle.RejectStaleClaim {
 		t.Fatalf("stale HoldClaim() = %v, want stale_claim", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+}
+
+func TestPersistenceResumeReaders(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	databaseURL := testpostgres.Start(t)
+	migrate(t, ctx, databaseURL)
+	pool := openPool(t, ctx, databaseURL)
+	f := seedTenant(t, ctx, pool)
+	now := time.Now().UTC()
+
+	uow, _ := store.Begin(ctx, pool)
+	defer func() { _ = uow.Rollback(ctx) }()
+	task := createTask(t, ctx, uow, f, now)
+	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
+	operation, err := lifecycle.NewProviderOperation(mustID[ids.Operation](t), f.tenant, attempt.ID, f.provider, now)
+	if err != nil {
+		t.Fatalf("NewProviderOperation() error = %v", err)
+	}
+	if _, _, err := store.InsertOperation(ctx, uow, operation); err != nil {
+		t.Fatalf("InsertOperation() error = %v", err)
+	}
+	claim, err := lifecycle.NewMaintenanceClaim(mustID[ids.Claim](t), f.tenant, f.provider, "worker-a", now)
+	if err != nil {
+		t.Fatalf("NewMaintenanceClaim() error = %v", err)
+	}
+	if _, _, err := store.InsertClaim(ctx, uow, claim); err != nil {
+		t.Fatalf("InsertClaim() error = %v", err)
+	}
+	take := store.Transition{At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, err := store.TakeClaim(ctx, uow, f.tenant, claim.ID, "worker-a", time.Minute, take); err != nil {
+		t.Fatalf("TakeClaim() error = %v", err)
 	}
 
 	cursor := contracts.Cursor{Tenant: f.tenant, Attempt: attempt.ID, Operation: operation.ID, Stream: "transcript", Generation: 1}
