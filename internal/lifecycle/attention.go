@@ -103,23 +103,27 @@ var attentionMachine = newMachine(AttentionStates(), AttentionEvents(),
 )
 
 // AttentionRequest asks authorized responders to unblock an Attempt. An action
-// approval names the operation and the digest of the exact action it would
-// approve, so a changed action needs a new request.
+// approval names the provider, operation and digest of the exact action it
+// would approve, so a changed action needs a new request. PolicyGeneration is
+// the tenant policy the request was raised under: a policy change invalidates
+// any decision on it, so the person re-evaluates under the new policy.
 type AttentionRequest struct {
-	ID           ids.AttentionID   `json:"attention_id"`
-	Tenant       ids.TenantID      `json:"tenant_id"`
-	Task         ids.TaskID        `json:"task_id"`
-	Attempt      ids.AttemptID     `json:"attempt_id"`
-	Kind         AttentionKind     `json:"kind"`
-	Operation    ids.OperationID   `json:"operation_id,omitzero"`
-	ActionDigest identity.Digest   `json:"action_digest,omitzero"`
-	Responders   []ids.PrincipalID `json:"responders"`
-	State        AttentionState    `json:"state"`
-	Version      uint64            `json:"version"`
-	Decision     ids.DecisionID    `json:"decision_id,omitzero"`
-	ExpiresAt    time.Time         `json:"expires_at"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	ID               ids.AttentionID   `json:"attention_id"`
+	Tenant           ids.TenantID      `json:"tenant_id"`
+	Task             ids.TaskID        `json:"task_id"`
+	Attempt          ids.AttemptID     `json:"attempt_id"`
+	Kind             AttentionKind     `json:"kind"`
+	Provider         ids.ProviderID    `json:"provider_id,omitzero"`
+	Operation        ids.OperationID   `json:"operation_id,omitzero"`
+	ActionDigest     identity.Digest   `json:"action_digest,omitzero"`
+	PolicyGeneration uint64            `json:"policy_generation"`
+	Responders       []ids.PrincipalID `json:"responders"`
+	State            AttentionState    `json:"state"`
+	Version          uint64            `json:"version"`
+	Decision         ids.DecisionID    `json:"decision_id,omitzero"`
+	ExpiresAt        time.Time         `json:"expires_at"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 // NewAttentionRequest returns a pending request at version 1.
@@ -133,21 +137,21 @@ func NewAttentionRequest(request AttentionRequest, at time.Time) (AttentionReque
 
 // Validate reports whether the record is complete and consistent.
 func (r AttentionRequest) Validate() error {
-	if r.ID.IsZero() || r.Tenant.IsZero() || r.Task.IsZero() || r.Attempt.IsZero() || r.Version == 0 {
-		return fmt.Errorf("%w: attention request requires identifiers and a positive version", ErrInvalid)
+	if r.ID.IsZero() || r.Tenant.IsZero() || r.Task.IsZero() || r.Attempt.IsZero() || r.Version == 0 || r.PolicyGeneration == 0 {
+		return fmt.Errorf("%w: attention request requires identifiers, a positive version and a policy generation", ErrInvalid)
 	}
 	if !slices.Contains(AttentionKinds(), r.Kind) || !slices.Contains(AttentionStates(), r.State) {
 		return fmt.Errorf("%w: unknown attention kind or state", ErrInvalid)
 	}
 	if r.Kind == AttentionActionApproval {
-		if r.Operation.IsZero() {
-			return fmt.Errorf("%w: action approval requires an operation", ErrInvalid)
+		if r.Provider.IsZero() || r.Operation.IsZero() {
+			return fmt.Errorf("%w: action approval requires a provider and an operation", ErrInvalid)
 		}
 		if err := validDigest(r.ActionDigest); err != nil {
 			return err
 		}
-	} else if !r.Operation.IsZero() || r.ActionDigest != "" {
-		return fmt.Errorf("%w: only action approvals name an operation and action digest", ErrInvalid)
+	} else if !r.Provider.IsZero() || !r.Operation.IsZero() || r.ActionDigest != "" {
+		return fmt.Errorf("%w: only action approvals name a provider, operation and action digest", ErrInvalid)
 	}
 	if len(r.Responders) == 0 || slices.ContainsFunc(r.Responders, ids.PrincipalID.IsZero) {
 		return fmt.Errorf("%w: attention request requires authorized responders", ErrInvalid)
@@ -255,11 +259,12 @@ func (d Decision) Validate() error {
 	return nil
 }
 
-// Decide records decision against the request version it was made on. The
-// first valid decision wins: any later decision, or one made on a stale view,
-// is a version conflict. The decider must be an authorized responder and the
-// request must not have expired.
-func (r AttentionRequest) Decide(decision Decision) (AttentionRequest, Change, error) {
+// Decide records decision against the request version it was made on, under
+// the tenant's current policy generation. The first valid decision wins: any
+// later decision, or one made on a stale view, is a version conflict. The
+// decider must be an authorized responder, the request must not have expired,
+// and the policy must not have changed since the request was raised.
+func (r AttentionRequest) Decide(decision Decision, currentPolicyGeneration uint64) (AttentionRequest, Change, error) {
 	change := r.change(AttentionDecide)
 	if err := decision.Validate(); err != nil {
 		return r, change, err
@@ -273,6 +278,8 @@ func (r AttentionRequest) Decide(decision Decision) (AttentionRequest, Change, e
 		return r, change, reject(change, RejectUnauthorizedActor)
 	case !decision.Kind.allowedFor(r.Kind):
 		return r, change, reject(change, RejectDecisionNotAllowed)
+	case r.PolicyGeneration != currentPolicyGeneration:
+		return r, change, reject(change, RejectStalePolicy)
 	case r.State == AttentionPending && r.Version == decision.RequestVersion && !decision.DecidedAt.Before(r.ExpiresAt):
 		return r, change, reject(change, RejectRequestExpired)
 	}
@@ -282,6 +289,24 @@ func (r AttentionRequest) Decide(decision Decision) (AttentionRequest, Change, e
 	}
 	next.Decision = decision.ID
 	return next, change, nil
+}
+
+// AllowOnceGrant derives the one-time authority an approval confers: bound to
+// the request's attempt, provider, operation, exact action digest and policy
+// generation, and attributed to the approving principal. identity.IssueGrant
+// then refuses it if the policy has changed since the request was raised.
+func (r AttentionRequest) AllowOnceGrant(decision Decision, id ids.GrantID, action identity.ActionClass, expiresAt time.Time) (identity.AuthorityGrant, error) {
+	if r.Kind != AttentionActionApproval || decision.Kind != DecisionApproveOnce ||
+		decision.ID != r.Decision || !slices.Contains(decidedStates, r.State) {
+		return identity.AuthorityGrant{}, fmt.Errorf("%w: only a recorded approval of an action approval confers authority", ErrInvalid)
+	}
+	grant := identity.AuthorityGrant{
+		ID: id, Tenant: r.Tenant, Attempt: r.Attempt, Provider: r.Provider, Action: action,
+		Mode: identity.GrantAllowOnce, Operation: r.Operation, InputDigest: r.ActionDigest,
+		GrantedBy: decision.Principal, PolicyGeneration: r.PolicyGeneration,
+		IssuedAt: decision.DecidedAt, ExpiresAt: expiresAt,
+	}
+	return grant, grant.Validate()
 }
 
 // validDigest reports a malformed digest as a lifecycle error that also matches
