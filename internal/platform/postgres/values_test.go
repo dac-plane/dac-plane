@@ -2,11 +2,26 @@ package postgres
 
 import (
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 )
+
+func TestSameInstantToleratesStoragePrecision(t *testing.T) {
+	full := time.Date(2026, 10, 16, 18, 0, 48, 349810123, time.UTC)
+	stored := full.Truncate(time.Microsecond)
+	if full.Equal(stored) {
+		t.Skip("clock already at microsecond precision")
+	}
+	if !sameInstant(full, stored) {
+		t.Fatal("sameInstant() rejected a sub-microsecond round trip")
+	}
+	if sameInstant(full, stored.Add(2*time.Microsecond)) {
+		t.Fatal("sameInstant() equated distinct microseconds")
+	}
+}
 
 func TestIsUniqueViolationMatchesConstraint(t *testing.T) {
 	conflict := &pgconn.PgError{Code: "23505", ConstraintName: "task_pkey"}

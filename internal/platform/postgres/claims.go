@@ -46,7 +46,7 @@ func InsertClaim(ctx context.Context, u *UnitOfWork, claim lifecycle.Maintenance
 func claimsEqual(a, b lifecycle.MaintenanceClaim) bool {
 	return a.ID == b.ID && a.Tenant == b.Tenant && a.Provider == b.Provider &&
 		a.ResourceRef == b.ResourceRef && a.State == b.State && a.Claimant == b.Claimant &&
-		a.Epoch == b.Epoch && a.ExpiresAt.Equal(b.ExpiresAt) && a.Version == b.Version
+		a.Epoch == b.Epoch && sameInstant(a.ExpiresAt, b.ExpiresAt) && a.Version == b.Version
 }
 
 // GetClaim loads a claim by tenant and id.

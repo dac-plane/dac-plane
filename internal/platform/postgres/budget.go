@@ -420,7 +420,7 @@ func GetSpendChallenge(ctx context.Context, q Querier, tenant ids.TenantID, id i
 
 func spendChallengesEqual(a, b lifecycle.SpendChallenge) bool {
 	return a.ID == b.ID && a.Terms == b.Terms && a.State == b.State && a.Version == b.Version &&
-		a.ExpiresAt.Equal(b.ExpiresAt) && a.CreatedAt.Equal(b.CreatedAt) && a.UpdatedAt.Equal(b.UpdatedAt)
+		sameInstant(a.ExpiresAt, b.ExpiresAt) && sameInstant(a.CreatedAt, b.CreatedAt) && sameInstant(a.UpdatedAt, b.UpdatedAt)
 }
 
 // AssertSpendChallenge completes a challenge with a matching assertion: the
@@ -549,7 +549,7 @@ func InsertSpendReceipt(ctx context.Context, u *UnitOfWork, receipt lifecycle.Sp
 	if loadErr != nil {
 		return lifecycle.SpendReceipt{}, false, loadErr
 	}
-	if stored.Terms != receipt.Terms || stored.Proof != receipt.Proof || !stored.IssuedAt.Equal(receipt.IssuedAt) {
+	if stored.Terms != receipt.Terms || stored.Proof != receipt.Proof || !sameInstant(stored.IssuedAt, receipt.IssuedAt) {
 		return lifecycle.SpendReceipt{}, false, ErrPayloadMismatch
 	}
 	return stored, true, nil

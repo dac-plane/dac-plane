@@ -78,6 +78,14 @@ func parseUUIDArray[K any](column string, value string) ([]ids.ID[K], error) {
 	return out, nil
 }
 
+// sameInstant compares timestamps at PostgreSQL storage precision.
+// timestamptz keeps microseconds; sub-microsecond digits cannot survive a
+// round trip, so replay comparison truncates them instead of failing on
+// clock granularity the database never stored.
+func sameInstant(a, b time.Time) bool {
+	return a.Truncate(time.Microsecond).Equal(b.Truncate(time.Microsecond))
+}
+
 // isNoRows reports pgx.ErrNoRows without importing it at call sites.
 func isNoRows(err error) bool {
 	return errors.Is(err, pgx.ErrNoRows)

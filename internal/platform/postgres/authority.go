@@ -237,7 +237,7 @@ func grantsEqualIssuance(a, b identity.AuthorityGrant) bool {
 	return a.ID == b.ID && a.Tenant == b.Tenant && a.Attempt == b.Attempt && a.Provider == b.Provider &&
 		a.Action == b.Action && a.Mode == b.Mode && a.Operation == b.Operation &&
 		a.InputDigest == b.InputDigest && a.Scope == b.Scope && a.GrantedBy == b.GrantedBy &&
-		a.PolicyGeneration == b.PolicyGeneration && a.IssuedAt.Equal(b.IssuedAt) && a.ExpiresAt.Equal(b.ExpiresAt)
+		a.PolicyGeneration == b.PolicyGeneration && sameInstant(a.IssuedAt, b.IssuedAt) && sameInstant(a.ExpiresAt, b.ExpiresAt)
 }
 
 // GetGrant loads a grant by tenant and id.
@@ -456,7 +456,7 @@ func usesEqual(a, b identity.AuthorityUse) bool {
 		a.Provider == b.Provider && a.Action == b.Action && a.InputDigest == b.InputDigest &&
 		a.Grant == b.Grant && a.Source == b.Source && a.GrantedBy == b.GrantedBy &&
 		a.Outcome == b.Outcome && a.Reason == b.Reason &&
-		a.PolicyGeneration == b.PolicyGeneration && a.DecidedAt.Equal(b.DecidedAt)
+		a.PolicyGeneration == b.PolicyGeneration && sameInstant(a.DecidedAt, b.DecidedAt)
 }
 
 // InsertHookEvidence persists pre-action hook evidence digests under the

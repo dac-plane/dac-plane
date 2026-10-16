@@ -589,7 +589,7 @@ func DecideAttention(ctx context.Context, u *UnitOfWork, decision lifecycle.Deci
 func decisionsEqual(a, b lifecycle.Decision) bool {
 	return a.ID == b.ID && a.Tenant == b.Tenant && a.Request == b.Request &&
 		a.RequestVersion == b.RequestVersion && a.Principal == b.Principal &&
-		a.Kind == b.Kind && a.AnswerDigest == b.AnswerDigest && a.DecidedAt.Equal(b.DecidedAt)
+		a.Kind == b.Kind && a.AnswerDigest == b.AnswerDigest && sameInstant(a.DecidedAt, b.DecidedAt)
 }
 
 // GetDecision loads a decision by tenant and id.

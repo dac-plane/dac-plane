@@ -304,7 +304,7 @@ func GetTurnEnd(ctx context.Context, q Querier, tenant ids.TenantID, provider id
 func turnEndsEqual(a, b lifecycle.TurnEnd) bool {
 	if a.Tenant != b.Tenant || a.Attempt != b.Attempt || a.Provider != b.Provider ||
 		a.SessionRef != b.SessionRef || a.TurnRef != b.TurnRef || a.Outcome != b.Outcome ||
-		!a.EndedAt.Equal(b.EndedAt) {
+		!sameInstant(a.EndedAt, b.EndedAt) {
 		return false
 	}
 	if (a.Failure == nil) != (b.Failure == nil) {

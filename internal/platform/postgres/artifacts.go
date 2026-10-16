@@ -186,7 +186,7 @@ func GetArtifact(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Art
 }
 
 func artifactsEqual(a, b lifecycle.Artifact) bool {
-	return a.ArtifactManifest == b.ArtifactManifest && a.CommittedAt.Equal(b.CommittedAt)
+	return a.ArtifactManifest == b.ArtifactManifest && sameInstant(a.CommittedAt, b.CommittedAt)
 }
 
 // InsertRevision persists an immutable revision with its artifact links.
@@ -293,7 +293,7 @@ func GetRevision(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Rev
 
 func revisionsEqual(a, b lifecycle.ResultRevision) bool {
 	if a.ID != b.ID || a.Tenant != b.Tenant || a.Task != b.Task || a.Attempt != b.Attempt ||
-		a.Number != b.Number || a.Previous != b.Previous || !a.CreatedAt.Equal(b.CreatedAt) ||
+		a.Number != b.Number || a.Previous != b.Previous || !sameInstant(a.CreatedAt, b.CreatedAt) ||
 		len(a.Artifacts) != len(b.Artifacts) {
 		return false
 	}
@@ -435,7 +435,7 @@ func GetReview(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Revie
 func reviewsEqual(a, b lifecycle.ResultReview) bool {
 	return a.ID == b.ID && a.Tenant == b.Tenant && a.Task == b.Task && a.Revision == b.Revision &&
 		a.Reviewer == b.Reviewer && a.Disposition == b.Disposition && a.TaskVersion == b.TaskVersion &&
-		a.ReviewedAt.Equal(b.ReviewedAt)
+		sameInstant(a.ReviewedAt, b.ReviewedAt)
 }
 
 // isNotFound reports ErrNotFound so replays distinguish absence from failure.
