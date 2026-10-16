@@ -78,6 +78,12 @@ jobs:
         with:
           just-version: ${{ env.JUST_VERSION }}
 
+      # Warm the daemon with the test image so testcontainers startup does
+      # not depend on a cold pull mid-run. Failure here is non-blocking:
+      # the tests pull on demand anyway.
+      - name: Pre-pull PostgreSQL test image
+        run: docker pull postgres:16.15-alpine || true
+
       - name: Run PostgreSQL integration tests under race
         run: just test-integration-race
 
