@@ -32,11 +32,12 @@ The foundation requires Go 1.26.9 or a newer Go 1.26 patch release. Unit tests d
 external services; integration tests use Docker to start a pinned PostgreSQL 16 container.
 
 ```sh
-go test ./...
-go vet ./...
-go test -race ./...
-go test -count=1 -tags=integration ./...
+just        # list every check
+just ci     # run what CI runs
 ```
+
+Checks are recipes in the root `justfile`, which CI also calls; it needs
+[just](https://just.systems) 1.57 or newer.
 
 The current process requires `DAC_DATABASE_URL` and accepts an optional positive Go duration in
 `DAC_DATABASE_CONNECT_TIMEOUT` (default `10s`). It connects to PostgreSQL, waits for SIGINT or SIGTERM,
