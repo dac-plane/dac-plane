@@ -80,3 +80,13 @@ func TestUnmarshalRejectsInvalidText(t *testing.T) {
 		t.Fatal("failed Unmarshal() modified the identifier")
 	}
 }
+
+func TestUntypedPreservesValue(t *testing.T) {
+	id, err := Parse[Task](canonical)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got := id.Untyped().String(); got != canonical {
+		t.Fatalf("Untyped() = %s, want %s", got, canonical)
+	}
+}
