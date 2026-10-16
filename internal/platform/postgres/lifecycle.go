@@ -31,19 +31,31 @@ type Transition struct {
 	Outbox          *OutboxPayload
 }
 
+// ReplayCheck identifies one committed transition for idempotent replay:
+// the record at Committed version already carries Event (and Target, when
+// the caller names one), so the command already committed.
+type ReplayCheck struct {
+	Tenant    ids.TenantID
+	Record    lifecycle.RecordKind
+	RecordID  ids.AnyID
+	Committed uint64
+	Event     string
+	Target    string
+}
+
 // replayIfCommitted answers idempotent retries: when a row already sits one
 // version past the expected version and its durable record names the same
 // event (and target, when the caller names one), the command already
 // committed and the stored row is the original outcome.
-func replayIfCommitted(ctx context.Context, q Querier, tenant ids.TenantID, record lifecycle.RecordKind, recordID ids.AnyID, committed uint64, event, target string) (bool, error) {
-	storedEvent, storedTo, found, err := findDurable(ctx, q, tenant, record, recordID, committed)
+func replayIfCommitted(ctx context.Context, q Querier, check ReplayCheck) (bool, error) {
+	storedEvent, storedTo, found, err := findDurable(ctx, q, check.Tenant, check.Record, check.RecordID, check.Committed)
 	if err != nil {
 		return false, err
 	}
-	if !found || storedEvent != event {
+	if !found || storedEvent != check.Event {
 		return false, ErrStaleVersion
 	}
-	if target != "" && storedTo != target {
+	if check.Target != "" && storedTo != check.Target {
 		return false, ErrPayloadMismatch
 	}
 	return true, nil
@@ -147,7 +159,7 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 	}
 	if task.Version != tr.ExpectedVersion {
 		if task.Version == tr.ExpectedVersion+1 {
-			replayed, replayErr := replayIfCommitted(ctx, u, tenant, lifecycle.RecordTask, task.ID.Untyped(), task.Version, string(event), string(target))
+			replayed, replayErr := replayIfCommitted(ctx, u, ReplayCheck{Tenant: tenant, Record: lifecycle.RecordTask, RecordID: task.ID.Untyped(), Committed: task.Version, Event: string(event), Target: string(target)})
 			if replayErr != nil {
 				return lifecycle.Task{}, false, replayErr
 			}
@@ -302,7 +314,7 @@ func ApplyAttempt(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id id
 	}
 	if attempt.Version != tr.ExpectedVersion {
 		if attempt.Version == tr.ExpectedVersion+1 {
-			replayed, replayErr := replayIfCommitted(ctx, u, tenant, lifecycle.RecordAttempt, attempt.ID.Untyped(), attempt.Version, string(event), string(target))
+			replayed, replayErr := replayIfCommitted(ctx, u, ReplayCheck{Tenant: tenant, Record: lifecycle.RecordAttempt, RecordID: attempt.ID.Untyped(), Committed: attempt.Version, Event: string(event), Target: string(target)})
 			if replayErr != nil {
 				return lifecycle.Attempt{}, false, replayErr
 			}
@@ -485,7 +497,7 @@ func ApplyAttention(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id 
 	}
 	if request.Version != tr.ExpectedVersion {
 		if request.Version == tr.ExpectedVersion+1 {
-			replayed, replayErr := replayIfCommitted(ctx, u, tenant, lifecycle.RecordAttention, request.ID.Untyped(), request.Version, string(event), "")
+			replayed, replayErr := replayIfCommitted(ctx, u, ReplayCheck{Tenant: tenant, Record: lifecycle.RecordAttention, RecordID: request.ID.Untyped(), Committed: request.Version, Event: string(event)})
 			if replayErr != nil {
 				return lifecycle.AttentionRequest{}, false, replayErr
 			}

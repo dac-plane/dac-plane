@@ -116,7 +116,7 @@ func ApplyOperation(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id 
 	}
 	if operation.Version != tr.ExpectedVersion {
 		if operation.Version == tr.ExpectedVersion+1 {
-			replayed, replayErr := replayIfCommitted(ctx, u, tenant, lifecycle.RecordOperation, operation.ID.Untyped(), operation.Version, string(event), string(target))
+			replayed, replayErr := replayIfCommitted(ctx, u, ReplayCheck{Tenant: tenant, Record: lifecycle.RecordOperation, RecordID: operation.ID.Untyped(), Committed: operation.Version, Event: string(event), Target: string(target)})
 			if replayErr != nil {
 				return lifecycle.ProviderOperation{}, false, replayErr
 			}

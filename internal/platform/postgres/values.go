@@ -44,7 +44,7 @@ func corruptRow(column string, err error) error {
 }
 
 // parseID parses a uuid text column back into a typed identifier.
-func parseID[K any](column string, value string) (ids.ID[K], error) {
+func parseID[K any](column, value string) (ids.ID[K], error) {
 	id, err := ids.Parse[K](value)
 	if err != nil {
 		return ids.ID[K]{}, fmt.Errorf("parse %s: %w", column, err)
@@ -61,7 +61,7 @@ func parseOptionalID[K any](column string, value *string) (ids.ID[K], error) {
 }
 
 // parseUUIDArray parses a uuid[] column selected as text ({a,b}).
-func parseUUIDArray[K any](column string, value string) ([]ids.ID[K], error) {
+func parseUUIDArray[K any](column, value string) ([]ids.ID[K], error) {
 	trimmed := strings.Trim(value, "{}")
 	if trimmed == "" {
 		return nil, nil

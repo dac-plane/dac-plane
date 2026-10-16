@@ -167,25 +167,37 @@ func marshalPolicyPart(value any) (*string, error) {
 	return &text, nil
 }
 
+// PolicyUpdate advances a tenant's policy, invalidating authority issued
+// under earlier generations.
+type PolicyUpdate struct {
+	Tenant             ids.TenantID
+	ExpectedGeneration uint64
+	NextGeneration     uint64
+	Settings           map[identity.ActionClass]identity.Permission
+	Ceiling            map[identity.ActionClass]identity.Permission
+	Denies             []identity.DenyPolicy
+	At                 time.Time
+}
+
 // UpdatePolicyGeneration advances a tenant's policy, invalidating authority
 // issued under earlier generations. Zero updated rows mean stale.
-func UpdatePolicyGeneration(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, expectedGeneration, nextGeneration uint64, settings map[identity.ActionClass]identity.Permission, ceiling map[identity.ActionClass]identity.Permission, denies []identity.DenyPolicy, at time.Time) (identity.Policy, error) {
-	settingsJSON, err := marshalPolicyPart(settings)
+func UpdatePolicyGeneration(ctx context.Context, u *UnitOfWork, update PolicyUpdate) (identity.Policy, error) {
+	settingsJSON, err := marshalPolicyPart(update.Settings)
 	if err != nil {
 		return identity.Policy{}, err
 	}
-	ceilingJSON, err := marshalPolicyPart(ceiling)
+	ceilingJSON, err := marshalPolicyPart(update.Ceiling)
 	if err != nil {
 		return identity.Policy{}, err
 	}
-	deniesJSON, err := marshalPolicyPart(denies)
+	deniesJSON, err := marshalPolicyPart(update.Denies)
 	if err != nil {
 		return identity.Policy{}, err
 	}
 	res, err := u.Exec(ctx, `
 		update policy set generation = $2, settings = $3::jsonb, ceiling = $4::jsonb, denies = $5::jsonb, updated_at = $6
 		where tenant_id = $1 and generation = $7`,
-		tenant.String(), int64(nextGeneration), settingsJSON, ceilingJSON, deniesJSON, at, int64(expectedGeneration),
+		update.Tenant.String(), int64(update.NextGeneration), settingsJSON, ceilingJSON, deniesJSON, update.At, int64(update.ExpectedGeneration),
 	)
 	if err != nil {
 		return identity.Policy{}, err
@@ -193,7 +205,7 @@ func UpdatePolicyGeneration(ctx context.Context, u *UnitOfWork, tenant ids.Tenan
 	if res.RowsAffected() == 0 {
 		return identity.Policy{}, ErrStaleVersion
 	}
-	return GetPolicy(ctx, u, tenant)
+	return GetPolicy(ctx, u, update.Tenant)
 }
 
 // InsertGrant persists an authority grant. The generation trigger refuses

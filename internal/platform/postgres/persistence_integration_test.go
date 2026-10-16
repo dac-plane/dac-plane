@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib" // Register the pgx stdlib driver for database/sql migration setup.
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
@@ -158,6 +158,11 @@ func TestPersistenceAtomicCommitAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
 	}
+	defer func() {
+		if uow != nil {
+			_ = uow.Rollback(ctx)
+		}
+	}()
 	task := createTask(t, ctx, uow, f, now)
 	tr := store.Transition{ExpectedVersion: 1, At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
 	submitted, replayed, err := store.ApplyTask(ctx, uow, f.tenant, task.ID, lifecycle.TaskSubmit, "", tr)
@@ -181,6 +186,11 @@ func TestPersistenceAtomicCommitAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
 	}
+	defer func() {
+		if abandoned != nil {
+			_ = abandoned.Rollback(ctx)
+		}
+	}()
 	other, err := lifecycle.NewTask(mustID[ids.Task](t), f.tenant, f.principal, now)
 	if err != nil {
 		t.Fatalf("NewTask() error = %v", err)
@@ -213,6 +223,11 @@ func TestPersistenceStaleReplayAndMismatch(t *testing.T) {
 		}
 	}
 	uow, _ := store.Begin(ctx, pool)
+	defer func() {
+		if uow != nil {
+			_ = uow.Rollback(ctx)
+		}
+	}()
 	task := createTask(t, ctx, uow, f, now)
 	base := store.Transition{At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
 	for _, step := range []struct {
@@ -270,6 +285,11 @@ func TestPersistenceTenantIsolation(t *testing.T) {
 	now := time.Now().UTC()
 
 	uow, _ := store.Begin(ctx, pool)
+	defer func() {
+		if uow != nil {
+			_ = uow.Rollback(ctx)
+		}
+	}()
 	task := createTask(t, ctx, uow, f, now)
 	if err := uow.Commit(ctx); err != nil {
 		t.Fatalf("Commit() error = %v", err)
@@ -446,7 +466,7 @@ func TestPersistenceBudgetSpendAndAuthority(t *testing.T) {
 		t.Fatalf("InsertBudget() error = %v", err)
 	}
 	tr := store.Transition{ExpectedVersion: 1, At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
-	reserved, reservation, replayed, err := store.ReserveBudget(ctx, uow, f.tenant, budget.ID, mustID[ids.Reservation](t), attempt.ID, 60, tr)
+	reserved, reservation, replayed, err := store.ReserveBudget(ctx, uow, store.ReservationRequest{Tenant: f.tenant, Budget: budget.ID, Reservation: mustID[ids.Reservation](t), Attempt: attempt.ID, Amount: 60}, tr)
 	if err != nil || replayed || reserved.Reserved != 60 {
 		t.Fatalf("ReserveBudget() = %v, %v, %v, %v", reserved, reservation, replayed, err)
 	}
@@ -532,10 +552,12 @@ func TestPersistenceBudgetSpendAndAuthority(t *testing.T) {
 		t.Fatalf("Authorize() reuse = %v, want denied retired", reuse)
 	}
 	// A policy change fences the old generation both purely and in storage.
-	if _, err := store.UpdatePolicyGeneration(ctx, uow, f.tenant, 1, 2,
-		map[identity.ActionClass]identity.Permission{"message.send": identity.PermissionAlways},
-		map[identity.ActionClass]identity.Permission{"message.send": identity.PermissionAlways},
-		nil, now); err != nil {
+	if _, err := store.UpdatePolicyGeneration(ctx, uow, store.PolicyUpdate{
+		Tenant: f.tenant, ExpectedGeneration: 1, NextGeneration: 2,
+		Settings: map[identity.ActionClass]identity.Permission{"message.send": identity.PermissionAlways},
+		Ceiling:  map[identity.ActionClass]identity.Permission{"message.send": identity.PermissionAlways},
+		At:       now,
+	}); err != nil {
 		t.Fatalf("UpdatePolicyGeneration() error = %v", err)
 	}
 	current, err := store.GetPolicy(ctx, uow, f.tenant)

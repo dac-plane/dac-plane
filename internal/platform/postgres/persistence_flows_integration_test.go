@@ -121,7 +121,7 @@ func TestPersistenceCrashWindows(t *testing.T) {
 	})
 }
 
-func TestPersistenceRemainingTransitions(t *testing.T) {
+func TestPersistenceHarnessAndMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	databaseURL := testpostgres.Start(t)
@@ -135,9 +135,6 @@ func TestPersistenceRemainingTransitions(t *testing.T) {
 
 	uow, _ := store.Begin(ctx, pool)
 	defer func() { _ = uow.Rollback(ctx) }()
-	task := createTask(t, ctx, uow, f, now)
-	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
-
 	// Harness: off -> shadow -> live -> shadow, plus a refused promotion by
 	// a non-principal actor.
 	harness := lifecycle.HarnessQualification{Tenant: f.tenant, Provider: f.provider, Mode: lifecycle.HarnessOff, Version: 1, UpdatedAt: now}
@@ -223,6 +220,27 @@ func TestPersistenceRemainingTransitions(t *testing.T) {
 		t.Fatalf("execute-from-hold = %v, want invalid_transition", err)
 	}
 
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+}
+
+func TestPersistenceSpendBudgetRelease(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	databaseURL := testpostgres.Start(t)
+	migrate(t, ctx, databaseURL)
+	pool := openPool(t, ctx, databaseURL)
+	f := seedTenant(t, ctx, pool)
+	now := time.Now().UTC()
+	fresh := func() store.Transition {
+		return store.Transition{At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	}
+
+	uow, _ := store.Begin(ctx, pool)
+	defer func() { _ = uow.Rollback(ctx) }()
+	task := createTask(t, ctx, uow, f, now)
+	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
 	// Spend expiry, budget release, stale policy update.
 	operation, err := lifecycle.NewProviderOperation(mustID[ids.Operation](t), f.tenant, attempt.ID, f.provider, now)
 	if err != nil {
@@ -258,7 +276,7 @@ func TestPersistenceRemainingTransitions(t *testing.T) {
 	}
 	hold := fresh()
 	hold.ExpectedVersion = 1
-	_, reservation, _, err := store.ReserveBudget(ctx, uow, f.tenant, budget.ID, mustID[ids.Reservation](t), attempt.ID, 60, hold)
+	_, reservation, _, err := store.ReserveBudget(ctx, uow, store.ReservationRequest{Tenant: f.tenant, Budget: budget.ID, Reservation: mustID[ids.Reservation](t), Attempt: attempt.ID, Amount: 60}, hold)
 	if err != nil {
 		t.Fatalf("ReserveBudget() error = %v", err)
 	}
@@ -274,10 +292,28 @@ func TestPersistenceRemainingTransitions(t *testing.T) {
 		t.Fatalf("double release = %v, want terminal_state", err)
 	}
 
-	if _, err := store.UpdatePolicyGeneration(ctx, uow, f.tenant, 99, 100, nil, nil, nil, now); !errors.Is(err, store.ErrStaleVersion) {
+	if _, err := store.UpdatePolicyGeneration(ctx, uow, store.PolicyUpdate{Tenant: f.tenant, ExpectedGeneration: 99, NextGeneration: 100, At: now}); !errors.Is(err, store.ErrStaleVersion) {
 		t.Fatalf("stale UpdatePolicyGeneration() = %v, want stale version", err)
 	}
 
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+}
+
+func TestPersistenceGrantsAndPrincipals(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	databaseURL := testpostgres.Start(t)
+	migrate(t, ctx, databaseURL)
+	pool := openPool(t, ctx, databaseURL)
+	f := seedTenant(t, ctx, pool)
+	now := time.Now().UTC()
+
+	uow, _ := store.Begin(ctx, pool)
+	defer func() { _ = uow.Rollback(ctx) }()
+	task := createTask(t, ctx, uow, f, now)
+	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
 	// Standing grant revoke and replay.
 	standing := identity.AuthorityGrant{
 		ID: mustID[ids.Grant](t), Tenant: f.tenant, Attempt: attempt.ID, Provider: f.provider,
@@ -310,6 +346,31 @@ func TestPersistenceRemainingTransitions(t *testing.T) {
 		t.Fatalf("GetCursor() miss = %v, want not found", err)
 	}
 
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+}
+
+func TestPersistenceObservationsAndEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	databaseURL := testpostgres.Start(t)
+	migrate(t, ctx, databaseURL)
+	pool := openPool(t, ctx, databaseURL)
+	f := seedTenant(t, ctx, pool)
+	now := time.Now().UTC()
+
+	uow, _ := store.Begin(ctx, pool)
+	defer func() { _ = uow.Rollback(ctx) }()
+	task := createTask(t, ctx, uow, f, now)
+	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
+	operation, err := lifecycle.NewProviderOperation(mustID[ids.Operation](t), f.tenant, attempt.ID, f.provider, now)
+	if err != nil {
+		t.Fatalf("NewProviderOperation() error = %v", err)
+	}
+	if _, _, err := store.InsertOperation(ctx, uow, operation); err != nil {
+		t.Fatalf("InsertOperation() error = %v", err)
+	}
 	// Turn ends, bindings, observations, hook evidence.
 	turn := lifecycle.TurnEnd{
 		Tenant: f.tenant, Attempt: attempt.ID, Provider: f.provider,

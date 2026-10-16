@@ -127,14 +127,24 @@ func secondAuditID() (ids.AuditID, error) {
 	return ids.New[ids.Audit]()
 }
 
+// ReservationRequest holds an amount for an attempt: the budget update, the
+// reservation insert and history commit together.
+type ReservationRequest struct {
+	Tenant      ids.TenantID
+	Budget      ids.BudgetID
+	Reservation ids.ReservationID
+	Attempt     ids.AttemptID
+	Amount      uint64
+}
+
 // ReserveBudget holds an amount for an attempt: budget update, reservation
 // insert and history commit together. Rejections persist refusal evidence.
-func ReserveBudget(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, budgetID ids.BudgetID, reservationID ids.ReservationID, attempt ids.AttemptID, amount uint64, tr Transition) (lifecycle.Budget, lifecycle.Reservation, bool, error) {
-	budget, err := GetBudgetForUpdate(ctx, u, tenant, budgetID)
+func ReserveBudget(ctx context.Context, u *UnitOfWork, req ReservationRequest, tr Transition) (lifecycle.Budget, lifecycle.Reservation, bool, error) {
+	budget, err := GetBudgetForUpdate(ctx, u, req.Tenant, req.Budget)
 	if err != nil {
 		return lifecycle.Budget{}, lifecycle.Reservation{}, false, err
 	}
-	next, reservation, change, reserveErr := budget.Reserve(reservationID, attempt, amount, tr.ExpectedVersion, tr.At)
+	next, reservation, change, reserveErr := budget.Reserve(req.Reservation, req.Attempt, req.Amount, tr.ExpectedVersion, tr.At)
 	if reserveErr != nil {
 		if terr, ok := reserveErr.(*lifecycle.TransitionError); ok {
 			audit := terr.Audit(tr.AuditID, tr.Actor, tr.At)
