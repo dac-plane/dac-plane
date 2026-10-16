@@ -11,8 +11,8 @@ integrations.
 
 **The product lifecycle is being implemented, contracts first.** The repository holds the reviewed
 architecture baseline, its ADRs, the Go process foundation (`cmd/`, `internal/`) and the first
-pure domain contracts: identity and scoped authority, and lifecycle records with their
-transitions and audit, each mirrored by JSON Schema. There is no persistence, product database
+pure domain contracts: identity and scoped authority, the nine lifecycle records with their
+transitions and audit, and the provider adapter protocol, each mirrored by JSON Schema. There is no persistence, product database
 schema, worker or HTTP surface yet. M1 is tracked by epic #11, whose ordered issues are the implementation
 sequence. Do not start writing implementation code against a reading of the docs alone; work starts
 from one of those issues and a plan in `tasks/plan.md` against the baseline below. The earlier
@@ -37,7 +37,8 @@ Read, in this order:
 docs/architecture/    the baseline: README, views (.drawio/.svg/.png), responsibility map
 docs/adr/             accepted architecture decisions, numbered sequentially
 cmd/dac-plane/        the control-plane process entry point
-internal/             application modules: bootstrap, config, ids, identity, lifecycle, platform
+internal/             application modules: bootstrap, config, ids, identity, lifecycle, contracts
+                      (provider adapter protocol), platform
 contracts/jsonschema/ language-neutral JSON Schema 2020-12 contracts, tested against the Go types
 tasks/plan.md         the plan for the issue currently in progress, rewritten per issue
 architecture-explore/ retained research, experiments and prototypes (read-only by default)
@@ -92,9 +93,10 @@ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 Every schema under `contracts/jsonschema/` must compile against JSON Schema 2020-12, and every
 record schema must be referenced by a Go agreement test
 (`internal/testsupport/schematest/contracts_test.go` enforces both). In the other direction,
-every exported struct with `Validate()` in `internal/identity` and `internal/lifecycle` must have
-a `GoContract` agreement test or be listed as a nested record
-(`internal/testsupport/schematest/records_test.go`). When a change adds
+every exported struct with `Validate()` in `internal/identity`, `internal/lifecycle` and
+`internal/contracts` must have a `GoContract` agreement test or be listed as a nested record
+(`internal/testsupport/schematest/records_test.go`). No schema may name a vendor or a choice
+ADR-0003 rejects (`contracts_test.go`). When a change adds
 something CI should guard, the same PR adds the check.
 
 ## Hygiene

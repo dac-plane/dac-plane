@@ -12,7 +12,7 @@ import (
 )
 
 // contractPackages hold the Go types that JSON Schema contracts mirror.
-var contractPackages = []string{"../../identity", "../../lifecycle"}
+var contractPackages = []string{"../../identity", "../../lifecycle", "../../contracts"}
 
 // nestedRecords are validated structs that never travel alone: each is a
 // nested object inside a record schema, covered by that record's agreement
@@ -23,6 +23,13 @@ var nestedRecords = map[string]string{
 	"Actor":       "lifecycle/audit-event.schema.json#/$defs/actor",
 	"TurnFailure": "lifecycle/turn-end.schema.json#/properties/failure",
 	"SpendTerms":  "lifecycle/common.schema.json#/$defs/spendTerms",
+	"Failure":     "adapter/common.schema.json#/$defs/failure",
+	"Lifecycle":   "adapter/frame.schema.json#/$defs/lifecycle",
+	"Request":     "adapter/frame.schema.json#/$defs/request",
+	"Cancel":      "adapter/frame.schema.json#/$defs/cancel",
+	"Reply":       "adapter/frame.schema.json#/$defs/reply",
+	"Entry":       "adapter/stream-frame.schema.json#/$defs/entry",
+	"Tombstone":   "adapter/stream-frame.schema.json#/$defs/tombstone",
 }
 
 var goContractPattern = regexp.MustCompile(`GoContract\[(\w+)\]`)
