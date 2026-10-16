@@ -627,3 +627,110 @@ func TestDispatchOutboxIgnoresForeignRows(t *testing.T) {
 		t.Fatalf("ClaimOutboxRow() took %v, want the operation row %v", first.Row.ID, opOutboxID)
 	}
 }
+
+func TestDispatchStaleAttemptTransition(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f := seedTenant(t, ctx, pool)
+	uow, err := store.Begin(ctx, pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = uow.Rollback(ctx)
+		}
+	}()
+	task := createTask(t, ctx, uow, f, now)
+	attempt := createAttempt(t, ctx, uow, f, task, 1, now)
+	provision := store.Transition{ExpectedVersion: 1, At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, _, err := store.ApplyAttempt(ctx, uow, f.tenant, attempt.ID, lifecycle.AttemptProvision, lifecycle.AttemptProvisioning, provision); err != nil {
+		t.Fatalf("ApplyAttempt(provision) error = %v", err)
+	}
+	stale := store.Transition{ExpectedVersion: 1, At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, _, err := store.ApplyAttempt(ctx, uow, f.tenant, attempt.ID, lifecycle.AttemptStart, lifecycle.AttemptStarting, stale); !errors.Is(err, store.ErrStaleVersion) {
+		t.Fatalf("ApplyAttempt() with a stale version = %v, want ErrStaleVersion", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	committed = true
+}
+
+func TestDispatchStaleDecisionAck(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f := seedTenant(t, ctx, pool)
+	uow, err := store.Begin(ctx, pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = uow.Rollback(ctx)
+		}
+	}()
+	request, _ := approvalFixture(t, ctx, uow, f, now)
+	first := lifecycle.Decision{
+		ID: mustID[ids.Decision](t), Tenant: f.tenant, Request: request.ID,
+		RequestVersion: 1, Principal: f.principal, Kind: lifecycle.DecisionApproveOnce, DecidedAt: now,
+	}
+	tr := store.Transition{At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, _, _, err := store.DecideAttention(ctx, uow, first, 1, tr); err != nil {
+		t.Fatalf("DecideAttention() error = %v", err)
+	}
+	// A stale worker answers the already-decided request version.
+	rival := lifecycle.Decision{
+		ID: mustID[ids.Decision](t), Tenant: f.tenant, Request: request.ID,
+		RequestVersion: 1, Principal: f.principal, Kind: lifecycle.DecisionDeny, DecidedAt: now,
+	}
+	rivalTr := store.Transition{At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, _, _, err := store.DecideAttention(ctx, uow, rival, 1, rivalTr); lifecycle.RejectionOf(err) != lifecycle.RejectVersionConflict {
+		t.Fatalf("DecideAttention() stale ack = %v, want version_conflict", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	committed = true
+}
+
+func TestDispatchStaleMigrationPass(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f := seedTenant(t, ctx, pool)
+	uow, err := store.Begin(ctx, pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = uow.Rollback(ctx)
+		}
+	}()
+	other, err := ids.New[ids.Provider]()
+	if err != nil {
+		t.Fatalf("ids.New() error = %v", err)
+	}
+	pass, err := lifecycle.NewMigrationPass(mustID[ids.Migration](t), f.tenant, f.provider, other, now)
+	if err != nil {
+		t.Fatalf("NewMigrationPass() error = %v", err)
+	}
+	if _, _, err := store.InsertMigrationPass(ctx, uow, pass); err != nil {
+		t.Fatalf("InsertMigrationPass() error = %v", err)
+	}
+	preview := store.Transition{ExpectedVersion: 1, At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, err := store.ApplyMigrationPass(ctx, uow, f.tenant, pass.ID, lifecycle.MigrationPreview, preview); err != nil {
+		t.Fatalf("ApplyMigrationPass(preview) error = %v", err)
+	}
+	stale := store.Transition{ExpectedVersion: 1, At: now, Actor: f.actor, AuditID: newAuditID(t), Outbox: newOutbox()}
+	if _, err := store.ApplyMigrationPass(ctx, uow, f.tenant, pass.ID, lifecycle.MigrationHold, stale); lifecycle.RejectionOf(err) != lifecycle.RejectVersionConflict {
+		t.Fatalf("ApplyMigrationPass() stale hold = %v, want version_conflict", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	committed = true
+}
