@@ -12,14 +12,11 @@ concurrency:
 permissions:
   contents: read
 
-# Tool versions are pinned here and installed with `go install module@version`,
-# so the checksum database verifies them and they stay out of go.mod. Each tool
-# binary is cached under its own key (tool, version, Go version), because the
-# shared setup-go cache is keyed on go.sum and never re-saved on a hit, so it
-# would never gain the tools.
+# Every check is a recipe in the root justfile, so CI and `just ci` run the
+# same commands. Tool versions live in the justfile; only the version of just
+# itself is pinned here.
 env:
-  GOVULNCHECK_VERSION: v1.9.0
-  ACTIONLINT_VERSION: v1.7.12
+  JUST_VERSION: 1.57.0
 
 jobs:
   verify:
@@ -36,29 +33,28 @@ jobs:
           go-version: 1.26.x
           cache: true
 
-      - name: Verify formatting
-        run: test -z "$(gofmt -l cmd internal)"
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: ${{ env.JUST_VERSION }}
 
-      - name: Verify module checksums
-        run: go mod verify
+      - name: Check formatting
+        run: just fmt-check
 
-      - name: Verify go.mod and go.sum are tidy
-        run: go mod tidy -diff
+      - name: Check modules
+        run: just mod-check
 
       - name: Run unit tests
-        run: go test ./...
+        run: just test
 
       - name: Run vet
-        run: go vet ./...
+        run: just vet
 
       - name: Run race tests
-        run: go test -race ./...
+        run: just test-race
 
-      # -count=1 bypasses the restored test cache. Integration tests depend on
-      # a PostgreSQL container the cache cannot see, so a cached pass would
-      # report success without starting PostgreSQL at all.
       - name: Run PostgreSQL integration tests
-        run: go test -count=1 -tags=integration ./...
+        run: just test-integration
 
   vulnerabilities:
     name: Go vulnerabilities
@@ -77,20 +73,20 @@ jobs:
           go-version: 1.26.x
           cache: false
 
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      # The justfile pins the tool version, so its hash keys the binary.
       - name: Restore govulncheck
-        id: tool
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/go/bin/govulncheck
-          key: govulncheck-${{ runner.os }}-${{ env.GOVULNCHECK_VERSION }}-go${{ steps.go.outputs.go-version }}
+          path: .work/tools/govulncheck-*
+          key: govulncheck-${{ runner.os }}-go${{ steps.go.outputs.go-version }}-${{ hashFiles('justfile') }}
 
-      - name: Install govulncheck
-        if: steps.tool.outputs.cache-hit != 'true'
-        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
-
-      # Reports only vulnerabilities in code paths the module actually calls.
       - name: Run govulncheck
-        run: ~/go/bin/govulncheck ./...
+        run: just vuln
 
   workflows:
     name: Workflow lint
@@ -107,16 +103,16 @@ jobs:
           go-version: 1.26.x
           cache: false
 
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
       - name: Restore actionlint
-        id: tool
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/go/bin/actionlint
-          key: actionlint-${{ runner.os }}-${{ env.ACTIONLINT_VERSION }}-go${{ steps.go.outputs.go-version }}
-
-      - name: Install actionlint
-        if: steps.tool.outputs.cache-hit != 'true'
-        run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          path: .work/tools/actionlint-*
+          key: actionlint-${{ runner.os }}-go${{ steps.go.outputs.go-version }}-${{ hashFiles('justfile') }}
 
       - name: Run actionlint
-        run: ~/go/bin/actionlint
+        run: just lint-workflows

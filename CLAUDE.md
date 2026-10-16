@@ -42,7 +42,8 @@ internal/             application modules: bootstrap, config, ids, identity, lif
 contracts/jsonschema/ language-neutral JSON Schema 2020-12 contracts, tested against the Go types
 tasks/plan.md         the plan for the issue currently in progress, rewritten per issue
 architecture-explore/ retained research, experiments and prototypes (read-only by default)
-.github/              the PR-title gate and workflow conventions
+.github/              the PR-title gate and CI workflow, which calls justfile recipes
+justfile              every local and CI check, with pinned tool versions
 CONTRIBUTING.md       commit conventions, PR template, house rules
 ```
 
@@ -75,19 +76,17 @@ A change to the baseline is a change to what future implementation builds agains
 
 ## Go verification
 
-CI (`.github/workflows/ci.yml`) runs these; run them before opening a PR. Integration tests need
-Docker and run with `-count=1`: a cached result would pass without starting PostgreSQL. On macOS
-hosts whose Command Line Tools SDK breaks the linker, prefix the integration run with
-`SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"`.
+Checks are recipes in the root `justfile`; CI (`.github/workflows/ci.yml`) calls the same
+recipes. Run `just` to list them and `just ci` before opening a PR. Integration tests need Docker
+and run uncached (`-count=1`), because a cached result would pass without starting PostgreSQL;
+on macOS the recipe points `SDKROOT` at the active Xcode SDK to avoid a broken Command Line Tools
+linker. Tool versions (govulncheck, actionlint) are pinned in the justfile only, and CI pins the
+version of just.
 
 ```sh
-test -z "$(gofmt -l cmd internal)"
-go mod tidy -diff
-go vet ./...
-go test -race ./...
-go test -count=1 -tags=integration ./...
-go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
-go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+just ci              # fmt-check, mod-check, vet, test, test-race, test-integration, vuln, lint-workflows
+just test-contracts  # schema conformance and the contract coverage guards only
+just fmt             # rewrite Go files into gofmt style
 ```
 
 Every schema under `contracts/jsonschema/` must compile against JSON Schema 2020-12, and every
@@ -97,7 +96,7 @@ every exported struct with `Validate()` in `internal/identity`, `internal/lifecy
 `internal/contracts` must have a `GoContract` agreement test or be listed as a nested record
 (`internal/testsupport/schematest/records_test.go`). No schema may name a vendor or a choice
 ADR-0003 rejects (`contracts_test.go`). When a change adds
-something CI should guard, the same PR adds the check.
+something CI should guard, the same PR adds the check as a justfile recipe that CI calls.
 
 ## Hygiene
 
