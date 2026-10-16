@@ -115,6 +115,39 @@ func OutboxReadyEntries(ctx context.Context, q Querier, tenant ids.TenantID, now
 	return out, rows.Err()
 }
 
+// OutboxReadyDispatch returns the dispatchable subset of due rows: pending
+// rows plus processing rows whose claim lease lapsed (crash or SendPending
+// leftovers the claim path reclaims), oldest due first. It owns the
+// dispatchable definition; the claim statements mirror it as an atomic
+// backstop. Every other pending row belongs to future surfaces.
+func OutboxReadyDispatch(ctx context.Context, q Querier, tenant ids.TenantID, now time.Time, limit int) ([]OutboxRow, error) {
+	query := selectOutboxRow + ` where tenant_id = $1 and exhausted_at is null and next_attempt_at <= $2
+		and ((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel'))
+		and (status = 'pending'
+			or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $2))
+		order by next_attempt_at`
+	var args []any
+	args = append(args, tenant.String(), now)
+	if limit > 0 {
+		query += ` limit $3`
+		args = append(args, limit)
+	}
+	rows, err := q.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboxRow
+	for rows.Next() {
+		var row OutboxRow
+		if err := scanOutboxRow(rows, &row); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // UncertainOperations returns operations stuck in unknown durability for
 // reconciliation. They are never redispatched; #21 resolves them.
 func UncertainOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {

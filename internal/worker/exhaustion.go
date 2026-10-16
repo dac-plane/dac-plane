@@ -1,11 +1,16 @@
 package worker
 
 import (
+	"errors"
+	"fmt"
 	"math/rand/v2"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 )
+
+// errInvalidPolicy reports an exhaustion policy that cannot bound a retry.
+var errInvalidPolicy = errors.New("invalid exhaustion policy")
 
 // ExhaustionPolicy bounds dispatch retries. The bound travels as worker
 // config; the per-row facts (attempts, not-before, last error) live on the
@@ -24,6 +29,14 @@ type ExhaustionPolicy struct {
 // attempts for safe operations, then an actionable (inspectable) failure.
 func DefaultExhaustionPolicy() ExhaustionPolicy {
 	return ExhaustionPolicy{MaxAttempts: 3, BaseBackoff: 5 * time.Second, MaxBackoff: 5 * time.Minute}
+}
+
+// Validate reports whether the policy can bound a retry.
+func (p ExhaustionPolicy) Validate() error {
+	if p.MaxAttempts <= 0 || p.BaseBackoff <= 0 || p.MaxBackoff < p.BaseBackoff {
+		return fmt.Errorf("exhaustion policy requires positive attempts and backoff within max: %w", errInvalidPolicy)
+	}
+	return nil
 }
 
 // Classify maps a send failure to retry-or-give-up. It returns the delay
