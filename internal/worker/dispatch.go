@@ -19,6 +19,7 @@ const (
 	reasonNoHandler         = "no_dispatch_handler"
 	reasonOperationMismatch = "operation_mismatch"
 	reasonUnknownOperation  = "unknown_operation"
+	reasonUnknownState      = "unknown_operation_state"
 	reasonNoHarness         = "no_harness"
 	reasonHarnessNotLive    = "harness_not_live"
 	reasonUnknownAttempt    = "unknown_attempt"
@@ -257,18 +258,12 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	case lifecycle.OperationUncertain:
 		// The reconciler owns uncertain operations; the intent is recorded.
 		return ack(claim)
-	case lifecycle.OperationRecorded:
-		tr, err := w.transition(operation.Version, now)
-		if err != nil {
-			return nil, err
-		}
-		operation, _, err = store.ApplyOperation(ctx, uow, tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
-		if err != nil {
-			if errors.Is(err, store.ErrStaleVersion) {
-				return release(claim)
-			}
-			return nil, err
-		}
+	case lifecycle.OperationRecorded, lifecycle.OperationDispatched, lifecycle.OperationAccepted:
+		// Recorded operations promote to dispatched only at the end, once
+		// every checklist gate passed: an exhausted row must never leave
+		// behind a dispatched-never-sent operation.
+	default:
+		return exhaust(claim, reasonUnknownState)
 	}
 	if now.After(body.Deadline) {
 		return exhaust(claim, reasonDeadlineExceeded)
@@ -305,6 +300,22 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			return release(claim)
 		}
 		return nil, err
+	}
+	if operation.State == lifecycle.OperationRecorded {
+		// Promote only now that every gate passed: the row below commits
+		// together with a send that follows, so dispatched always means
+		// a delivery is in flight or recorded.
+		tr, err := w.transition(operation.Version, now)
+		if err != nil {
+			return nil, err
+		}
+		operation, _, err = store.ApplyOperation(ctx, uow, tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
+		if err != nil {
+			if errors.Is(err, store.ErrStaleVersion) {
+				return release(claim)
+			}
+			return nil, err
+		}
 	}
 	if err := commit(); err != nil {
 		return nil, err

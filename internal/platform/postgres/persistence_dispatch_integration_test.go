@@ -532,6 +532,22 @@ func TestDispatchOutboxReclaimLapsedLease(t *testing.T) {
 		t.Fatalf("Commit() error = %v", err)
 	}
 	done()
+	// While the lease is live the row is invisible to the poll; once it
+	// lapses the row is due again so a tick can reclaim it.
+	ready, err := store.OutboxReadyDispatch(ctx, pool, f.tenant, pollAt.Add(30*time.Second), 10)
+	if err != nil {
+		t.Fatalf("OutboxReadyDispatch() error = %v", err)
+	}
+	if len(ready) != 0 {
+		t.Fatalf("OutboxReadyDispatch() with a live lease = %d rows, want 0", len(ready))
+	}
+	ready, err = store.OutboxReadyDispatch(ctx, pool, f.tenant, pollAt.Add(2*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("OutboxReadyDispatch() error = %v", err)
+	}
+	if len(ready) != 1 || ready[0].ID != outboxID {
+		t.Fatalf("OutboxReadyDispatch() with a lapsed lease = %v, want the row", ready)
+	}
 
 	// worker-b reclaims the lapsed processing row at a bumped epoch.
 	second, uow, done := claimTx("worker-b", pollAt.Add(2*time.Minute))
