@@ -6,6 +6,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
@@ -19,14 +20,14 @@ type OutboxRow struct {
 	RecordID  ids.AnyID
 	Event     string
 	Payload   []byte
-	CreatedAt int64
+	CreatedAt time.Time
 }
 
 // OpenOutboxEntries returns pending outbox rows oldest first, bounded by
 // limit. Non-positive limits read everything pending.
 func OpenOutboxEntries(ctx context.Context, q Querier, tenant ids.TenantID, limit int) ([]OutboxRow, error) {
 	query := `
-		select outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload
+		select outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload, created_at
 		from outbox where tenant_id = $1 and status = 'pending' order by created_at`
 	var args []any
 	args = append(args, tenant.String())
@@ -45,7 +46,7 @@ func OpenOutboxEntries(ctx context.Context, q Querier, tenant ids.TenantID, limi
 		var idText, recordText, recordIDText, eventText string
 		var attemptText *string
 		var payload []byte
-		if err := rows.Scan(&idText, &attemptText, &recordText, &recordIDText, &eventText, &payload); err != nil {
+		if err := rows.Scan(&idText, &attemptText, &recordText, &recordIDText, &eventText, &payload, &row.CreatedAt); err != nil {
 			return nil, err
 		}
 		var parseErr error

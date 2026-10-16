@@ -183,8 +183,9 @@ func HoldClaim(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.C
 }
 
 // UpsertHarness persists a harness qualification, replacing the tenant's
-// provider row. Qualification moves stepwise in memory; the store writes the
-// decided mode with a version predicate.
+// provider row unconditionally. Stepwise moves go through ApplyHarness so
+// the version predicate and history still apply; this is the initial seed
+// and test path, not a transition.
 func UpsertHarness(ctx context.Context, u *UnitOfWork, harness lifecycle.HarnessQualification) (lifecycle.HarnessQualification, error) {
 	if err := harness.Validate(); err != nil {
 		return lifecycle.HarnessQualification{}, err

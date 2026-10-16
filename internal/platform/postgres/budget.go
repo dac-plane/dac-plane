@@ -70,10 +70,19 @@ func InsertBudget(ctx context.Context, u *UnitOfWork, budget lifecycle.Budget) (
 	if loadErr != nil {
 		return lifecycle.Budget{}, false, loadErr
 	}
-	if stored != budget {
+	if !budgetsEqual(stored, budget) {
 		return lifecycle.Budget{}, false, ErrPayloadMismatch
 	}
 	return stored, true, nil
+}
+
+// budgetsEqual compares the domain payload of two budgets. UpdatedAt is a
+// server stamp, not command payload: a replayed insert carries a fresh clock
+// but the same counts, ceiling and version.
+func budgetsEqual(a, b lifecycle.Budget) bool {
+	return a.ID == b.ID && a.Tenant == b.Tenant && a.Task == b.Task && a.Unit == b.Unit &&
+		a.Ceiling == b.Ceiling && a.Reserved == b.Reserved && a.Consumed == b.Consumed &&
+		a.Overshoot == b.Overshoot && a.Version == b.Version
 }
 
 // updateBudgetRow writes a budget with a version predicate.
@@ -334,10 +343,17 @@ func InsertReservation(ctx context.Context, u *UnitOfWork, reservation lifecycle
 	if loadErr != nil {
 		return lifecycle.Reservation{}, false, loadErr
 	}
-	if stored != reservation {
+	if !reservationsEqual(stored, reservation) {
 		return lifecycle.Reservation{}, false, ErrPayloadMismatch
 	}
 	return stored, true, nil
+}
+
+// reservationsEqual compares the domain payload of two reservations,
+// excluding server stamps for the same reason as budgetsEqual.
+func reservationsEqual(a, b lifecycle.Reservation) bool {
+	return a.ID == b.ID && a.Tenant == b.Tenant && a.Budget == b.Budget && a.Attempt == b.Attempt &&
+		a.Amount == b.Amount && a.Consumed == b.Consumed && a.State == b.State && a.Version == b.Version
 }
 
 // InsertSpendChallenge persists a new spend challenge with replay comparison.

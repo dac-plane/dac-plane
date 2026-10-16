@@ -396,7 +396,9 @@ func InsertUse(ctx context.Context, u *UnitOfWork, use identity.AuthorityUse) (i
 	return stored, true, nil
 }
 
-// GetUse loads one authorization decision by its natural key.
+// GetUse loads one authorization decision by its natural key. The timestamp
+// is truncated to storage precision so a replayed lookup matches the row a
+// previous call wrote.
 func GetUse(ctx context.Context, q Querier, tenant ids.TenantID, operation ids.OperationID, decidedAt time.Time, action identity.ActionClass) (identity.AuthorityUse, error) {
 	var use identity.AuthorityUse
 	var actionText, idText, tenantText, attemptText, providerText, digestText string
@@ -407,7 +409,7 @@ func GetUse(ctx context.Context, q Querier, tenant ids.TenantID, operation ids.O
 		select operation_id::text, tenant_id::text, attempt_id::text, provider_id::text, action, input_digest,
 			grant_id::text, source, granted_by::text, outcome, reason, policy_generation, decided_at
 		from authority_use where tenant_id = $1 and operation_id = $2 and decided_at = $3 and action = $4`,
-		tenant.String(), operation.String(), decidedAt, string(action),
+		tenant.String(), operation.String(), decidedAt.Truncate(time.Microsecond), string(action),
 	).Scan(&idText, &tenantText, &attemptText, &providerText, &actionText, &digestText,
 		&grantText, &sourceText, &grantedByText, &outcomeText, &reasonText, &generation, &use.DecidedAt)
 	if err != nil {

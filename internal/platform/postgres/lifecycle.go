@@ -6,6 +6,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -564,7 +565,11 @@ func DecideAttention(ctx context.Context, u *UnitOfWork, decision lifecycle.Deci
 		}
 		return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, decideErr
 	}
-	_, err = u.Exec(ctx, `
+	// The decision row goes first so a retry can tell a crash between the
+	// insert and the request move (complete below) from a true duplicate.
+	// Retrying with the same Transition is safe: the audit identity is fresh
+	// per call while the outbox identity may be reused.
+	inserted, err := insertReturning(ctx, u, `
 		insert into decision (tenant_id, decision_id, attention_id, request_version, principal_id, kind, answer_digest, decided_at)
 		values ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		decision.Tenant.String(), decision.ID.String(), decision.Request.String(),
@@ -574,14 +579,40 @@ func DecideAttention(ctx context.Context, u *UnitOfWork, decision lifecycle.Deci
 	if err != nil {
 		return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, err
 	}
+	continued := false
+	if !inserted {
+		stored, loadErr := GetDecision(ctx, u, decision.Tenant, decision.ID)
+		if loadErr != nil {
+			if isNotFound(loadErr) {
+				return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, ErrPayloadMismatch
+			}
+			return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, loadErr
+		}
+		if !decisionsEqual(stored, decision) {
+			return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, ErrPayloadMismatch
+		}
+		decision = stored
+		continued = true
+	}
 	if err := updateAttentionRow(ctx, u, decided, decision.RequestVersion); err != nil {
+		if continued && errors.Is(err, ErrStaleVersion) {
+			// A concurrent duplicate already moved the request: confirm it
+			// carries this decision and report the replay.
+			req, loadErr := GetAttention(ctx, u, decision.Tenant, decision.Request)
+			if loadErr != nil {
+				return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, loadErr
+			}
+			if req.Decision == decision.ID {
+				return req, decision, true, nil
+			}
+		}
 		return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, err
 	}
 	audit := change.Audit(tr.AuditID, tr.Actor, decision.DecidedAt)
 	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
 		return lifecycle.AttentionRequest{}, lifecycle.Decision{}, false, err
 	}
-	return decided, decision, false, nil
+	return decided, decision, continued, nil
 }
 
 // decisionsEqual compares decisions field by field, using Equal for the

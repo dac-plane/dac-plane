@@ -29,9 +29,6 @@ func InsertManifest(ctx context.Context, u *UnitOfWork, manifest lifecycle.Artif
 	if err != nil {
 		return lifecycle.ArtifactManifest{}, false, err
 	}
-	if err != nil {
-		return lifecycle.ArtifactManifest{}, false, err
-	}
 	if inserted {
 		return manifest, false, nil
 	}
@@ -113,9 +110,6 @@ func InsertArtifact(ctx context.Context, u *UnitOfWork, artifact lifecycle.Artif
 		string(artifact.Kind), string(artifact.Digest), int64(artifact.Size), artifact.MediaType,
 		textOrNil(artifact.SourceRevision), int64(artifact.WriterEpoch), artifact.CommittedAt,
 	)
-	if err != nil {
-		return lifecycle.Artifact{}, false, err
-	}
 	if err != nil {
 		return lifecycle.Artifact{}, false, err
 	}
@@ -321,7 +315,25 @@ func RecordReview(ctx context.Context, u *UnitOfWork, current lifecycle.ResultRe
 		if err != nil {
 			return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
 		}
-		return task, stored, true, nil
+		if task.Version != review.TaskVersion {
+			// The review already moved the task (or something else did):
+			// the recorded decision stands, report the replay.
+			return task, stored, true, nil
+		}
+		// The review row exists but the task never moved: a crash landed
+		// between the insert and the update. Complete the move now.
+		next, change, applyErr := lifecycle.ApplyReview(task, current, review, reviewers)
+		if applyErr != nil {
+			return lifecycle.Task{}, lifecycle.ResultReview{}, false, applyErr
+		}
+		if err := updateTaskForReview(ctx, u, review, next); err != nil {
+			return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
+		}
+		audit := change.Audit(tr.AuditID, tr.Actor, review.ReviewedAt)
+		if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
+			return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
+		}
+		return next, stored, true, nil
 	} else if !isNotFound(err) {
 		return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
 	}
@@ -342,6 +354,19 @@ func RecordReview(ctx context.Context, u *UnitOfWork, current lifecycle.ResultRe
 	if _, _, err := InsertReviewRow(ctx, u, review); err != nil {
 		return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
 	}
+	if err := updateTaskForReview(ctx, u, review, next); err != nil {
+		return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
+	}
+	audit := change.Audit(tr.AuditID, tr.Actor, review.ReviewedAt)
+	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
+		return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
+	}
+	return next, review, false, nil
+}
+
+// updateTaskForReview moves the reviewed task with a version predicate so a
+// concurrent review loses exactly once.
+func updateTaskForReview(ctx context.Context, u *UnitOfWork, review lifecycle.ResultReview, next lifecycle.Task) error {
 	res, err := u.Exec(ctx, `
 		update task set state = $3, version = $4, updated_at = $5
 		where tenant_id = $1 and task_id = $2 and version = $6`,
@@ -349,16 +374,12 @@ func RecordReview(ctx context.Context, u *UnitOfWork, current lifecycle.ResultRe
 		int64(next.Version), next.UpdatedAt, int64(review.TaskVersion),
 	)
 	if err != nil {
-		return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
+		return err
 	}
 	if res.RowsAffected() == 0 {
-		return lifecycle.Task{}, lifecycle.ResultReview{}, false, ErrStaleVersion
+		return ErrStaleVersion
 	}
-	audit := change.Audit(tr.AuditID, tr.Actor, review.ReviewedAt)
-	if err := appendHistory(ctx, u, change, audit, tr.Outbox); err != nil {
-		return lifecycle.Task{}, lifecycle.ResultReview{}, false, err
-	}
-	return next, review, false, nil
+	return nil
 }
 
 // InsertReviewRow persists a review row without moving its task.
@@ -372,9 +393,6 @@ func InsertReviewRow(ctx context.Context, u *UnitOfWork, review lifecycle.Result
 		review.Tenant.String(), review.ID.String(), review.Task.String(), review.Revision.String(),
 		review.Reviewer.String(), string(review.Disposition), int64(review.TaskVersion), review.ReviewedAt,
 	)
-	if err != nil {
-		return lifecycle.ResultReview{}, false, err
-	}
 	if err != nil {
 		return lifecycle.ResultReview{}, false, err
 	}
