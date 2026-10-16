@@ -74,14 +74,16 @@ A change to the baseline is a change to what future implementation builds agains
 ## Go verification
 
 CI (`.github/workflows/ci.yml`) runs these; run them before opening a PR. Integration tests need
-Docker.
+Docker and run with `-count=1`: a cached result would pass without starting PostgreSQL. On macOS
+hosts whose Command Line Tools SDK breaks the linker, prefix the integration run with
+`SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"`.
 
 ```sh
 test -z "$(gofmt -l cmd internal)"
 go mod tidy -diff
 go vet ./...
 go test -race ./...
-go test -tags=integration ./...
+go test -count=1 -tags=integration ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ```
