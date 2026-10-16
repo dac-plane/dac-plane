@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
 func TestSameInstantToleratesStoragePrecision(t *testing.T) {
@@ -60,6 +61,45 @@ func TestParseIDRoundTrip(t *testing.T) {
 	if _, err := parseOptionalID[ids.Task](`task.task_id`, nil); err != nil {
 		t.Fatalf("parseOptionalID(nil) error = %v", err)
 	}
+}
+
+func TestRevisionsEqualIgnoresArtifactOrder(t *testing.T) {
+	newArtifact := func(t *testing.T) ids.ArtifactID {
+		t.Helper()
+		id, err := ids.New[ids.Artifact]()
+		if err != nil {
+			t.Fatalf("ids.New() error = %v", err)
+		}
+		return id
+	}
+	a, b := newArtifact(t), newArtifact(t)
+	base := lifecycle.ResultRevision{
+		ID:        mustIDHelper[ids.Revision](t),
+		Tenant:    mustIDHelper[ids.Tenant](t),
+		Task:      mustIDHelper[ids.Task](t),
+		Attempt:   mustIDHelper[ids.Attempt](t),
+		Number:    1,
+		CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
+	}
+	first, second := base, base
+	first.Artifacts, second.Artifacts = []ids.ArtifactID{a, b}, []ids.ArtifactID{b, a}
+	if !revisionsEqual(first, second) {
+		t.Fatal("revisionsEqual() distinguished artifact order")
+	}
+	other := base
+	other.Artifacts = []ids.ArtifactID{a, mustIDHelper[ids.Artifact](t)}
+	if revisionsEqual(first, other) {
+		t.Fatal("revisionsEqual() equated different artifact sets")
+	}
+}
+
+func mustIDHelper[T any](t *testing.T) ids.ID[T] {
+	t.Helper()
+	id, err := ids.New[T]()
+	if err != nil {
+		t.Fatalf("ids.New() error = %v", err)
+	}
+	return id
 }
 
 func TestUUIDHelpers(t *testing.T) {

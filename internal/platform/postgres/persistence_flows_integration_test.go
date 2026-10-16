@@ -3,7 +3,6 @@
 package postgres_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -13,15 +12,10 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
 )
 
 func TestPersistenceCrashWindows(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	now := time.Now().UTC()
 
 	t.Run("decision completes after crash between insert and move", func(t *testing.T) {
@@ -122,11 +116,7 @@ func TestPersistenceCrashWindows(t *testing.T) {
 }
 
 func TestPersistenceHarnessAndMigration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 	now := time.Now().UTC()
 	fresh := func() store.Transition {
@@ -226,11 +216,7 @@ func TestPersistenceHarnessAndMigration(t *testing.T) {
 }
 
 func TestPersistenceSpendBudgetRelease(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 	now := time.Now().UTC()
 	fresh := func() store.Transition {
@@ -302,11 +288,7 @@ func TestPersistenceSpendBudgetRelease(t *testing.T) {
 }
 
 func TestPersistenceGrantsAndPrincipals(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 	now := time.Now().UTC()
 
@@ -352,11 +334,7 @@ func TestPersistenceGrantsAndPrincipals(t *testing.T) {
 }
 
 func TestPersistenceObservationsAndEvidence(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 	now := time.Now().UTC()
 
@@ -445,11 +423,7 @@ func TestPersistenceObservationsAndEvidence(t *testing.T) {
 }
 
 func TestPersistenceConcurrentWriters(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 	now := time.Now().UTC()
 
@@ -503,11 +477,7 @@ func TestPersistenceConcurrentWriters(t *testing.T) {
 }
 
 func TestPersistenceEmptyResume(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 
 	if rows, err := store.OpenOutboxEntries(ctx, pool, f.tenant, 0); err != nil || len(rows) != 0 {
@@ -525,11 +495,7 @@ func TestPersistenceEmptyResume(t *testing.T) {
 }
 
 func TestPersistenceOutboxLimit(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	databaseURL := testpostgres.Start(t)
-	migrate(t, ctx, databaseURL)
-	pool := openPool(t, ctx, databaseURL)
+	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
 	now := time.Now().UTC()
 
