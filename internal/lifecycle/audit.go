@@ -53,6 +53,7 @@ const (
 	RejectStopAlreadyObserved RejectionCode = "stop_already_observed"
 	RejectStaleClaim          RejectionCode = "stale_claim"
 	RejectClaimHeld           RejectionCode = "claim_held"
+	RejectStalePolicy         RejectionCode = "stale_policy"
 	RejectCeilingReached      RejectionCode = "ceiling_reached"
 	RejectAssertionMismatch   RejectionCode = "assertion_mismatch"
 )
@@ -63,7 +64,7 @@ func RejectionCodes() []RejectionCode {
 		RejectVersionConflict, RejectTerminalState, RejectInvalidTransition, RejectAmbiguousTarget,
 		RejectInvalidTarget, RejectCrossTenant, RejectWrongRecord, RejectUnauthorizedActor,
 		RejectDecisionNotAllowed, RejectRequestExpired, RejectStopAlreadyObserved, RejectStaleClaim,
-		RejectClaimHeld, RejectCeilingReached, RejectAssertionMismatch,
+		RejectClaimHeld, RejectStalePolicy, RejectCeilingReached, RejectAssertionMismatch,
 	}
 }
 

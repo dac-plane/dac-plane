@@ -64,9 +64,10 @@ func TaskEvents() []TaskEvent {
 	}
 }
 
-// taskMachine follows the historical specification §11 with two changes:
-// waiting for input is an explicit condition, and a review rejection ends in
-// rejected, which is distinct from failed execution.
+// taskMachine follows the historical specification §11 with three changes:
+// waiting for input is an explicit condition, a review rejection ends in
+// rejected, which is distinct from failed execution, and success is reached
+// only through review acceptance.
 var taskMachine = newMachine(TaskStates(), TaskEvents(),
 	[]TaskState{TaskSucceeded, TaskFailed, TaskRejected, TaskCancelled},
 	map[TaskState]map[TaskEvent][]TaskState{
@@ -93,10 +94,11 @@ var taskMachine = newMachine(TaskStates(), TaskEvents(),
 			TaskInputUnresolved: {TaskRunning, TaskFailed, TaskCancelling},
 			TaskCancel:          {TaskCancelling},
 		},
-		// Passing verification reaches review, or success only under an
-		// explicit auto-accept policy.
+		// Passing verification always reaches review: the baseline's lifecycle
+		// ends in accept, reject or request rework, and no active document
+		// adopts automatic acceptance. Adding it would need its own ADR.
 		TaskVerifying: {
-			TaskVerificationPassed: {TaskReadyForReview, TaskSucceeded},
+			TaskVerificationPassed: {TaskReadyForReview},
 			TaskVerificationFailed: {TaskRunning, TaskFailed},
 			TaskCancel:             {TaskCancelling},
 		},
