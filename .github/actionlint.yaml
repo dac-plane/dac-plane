@@ -1,8 +1,8 @@
 # actionlint refuses any `runs-on` label that is not GitHub-hosted. Declare
 # self-hosted labels here when dac-plane gets its own runner pools, so
-# `actionlint` runs clean locally (no workflow runs it; run it before pushing).
+# `actionlint` runs clean in CI and locally.
 #
 # The current workflows use `ubuntu-latest` (GitHub-hosted), so no labels are
-# declared yet.
+# declared yet. CI runs actionlint in the "Workflow lint" job of ci.yml.
 self-hosted-runner:
   labels: []
