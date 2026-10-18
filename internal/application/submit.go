@@ -118,13 +118,17 @@ func (c SubmitTask) normalize() SubmitTask {
 	return c
 }
 
+// validate checks what every submit must carry, including replays. The
+// deadline is compared with the command time only when new work is created
+// (see checkDeadline): At is excluded from the fingerprint so a client can
+// recover an uncertain outcome later, even after the deadline has passed.
 func (c SubmitTask) validate() error {
 	if err := c.Command.validate(true); err != nil {
 		return err
 	}
 	switch {
-	case c.At.IsZero() || !c.Deadline.After(c.At):
-		return fmt.Errorf("%w: the deadline must be after the command time", ErrInvalidCommand)
+	case c.At.IsZero() || c.Deadline.IsZero():
+		return fmt.Errorf("%w: a command time and a deadline are required", ErrInvalidCommand)
 	case c.Provider.IsZero():
 		return fmt.Errorf("%w: a provider is required", ErrInvalidCommand)
 	case !slices.Contains(contracts.Demands(), c.Demand):
@@ -137,15 +141,27 @@ func (c SubmitTask) validate() error {
 	return nil
 }
 
-// dispatchBody is the worker's dispatch envelope for a runtime start_turn.
-func dispatchBody(operation ids.OperationID, deadline time.Time, unit lifecycle.Unit, amount uint64) ([]byte, error) {
+// dispatchSpec is one runtime start_turn to enqueue for a recorded
+// operation: its attempt, the submission's demand and deadline, and the
+// budget unit and amount the dispatch loop charges.
+type dispatchSpec struct {
+	operation lifecycle.ProviderOperation
+	attempt   ids.AttemptID
+	demand    contracts.Demand
+	deadline  time.Time
+	unit      lifecycle.Unit
+	amount    uint64
+}
+
+// body is the worker's dispatch envelope for the start_turn.
+func (d dispatchSpec) body() ([]byte, error) {
 	return json.Marshal(map[string]any{
-		"operation": operation.String(),
+		"operation": d.operation.ID.String(),
 		"role":      contracts.RoleRuntime,
 		"method":    contracts.MethodStartTurn,
-		"deadline":  deadline.Format(time.RFC3339Nano),
-		"unit":      unit,
-		"amount":    amount,
+		"deadline":  d.deadline.Format(time.RFC3339Nano),
+		"unit":      d.unit,
+		"amount":    d.amount,
 	})
 }
 
@@ -178,7 +194,20 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, cmd SubmitTask) (Submission
 	return GetSubmission(ctx, pool, cmd.Actor, cmd.Nonce)
 }
 
+// checkDeadline rejects new work whose deadline is not after the command
+// time. It runs inside the command after replays were resolved, so a late
+// retry of a committed submission still returns that submission.
+func (c SubmitTask) checkDeadline() error {
+	if !c.Deadline.After(c.At) {
+		return fmt.Errorf("%w: the deadline must be after the command time", ErrInvalidCommand)
+	}
+	return nil
+}
+
 func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, error) {
+	if err := cmd.checkDeadline(); err != nil {
+		return nil, err
+	}
 	principal := cmd.Actor.Principal()
 	tenant := principal.Tenant
 
@@ -285,7 +314,10 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 			return nil, err
 		}
 		result.Spend = spendID.String()
-	} else if err := enqueue(ctx, u, tenant, operation, attempt.ID, cmd.Demand, cmd.Deadline, cmd.Unit, cmd.Amount); err != nil {
+	} else if err := enqueue(ctx, u, tenant, dispatchSpec{
+		operation: operation, attempt: attempt.ID, demand: cmd.Demand,
+		deadline: cmd.Deadline, unit: cmd.Unit, amount: cmd.Amount,
+	}); err != nil {
 		return nil, err
 	}
 	return json.Marshal(result)
@@ -295,18 +327,18 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 // outbox row. The row names the operation as its record, which is how the
 // dispatch loop finds what to send. A replay of an already-dispatched
 // operation writes nothing.
-func enqueue(ctx context.Context, u *unit, tenant ids.TenantID, operation lifecycle.ProviderOperation, attempt ids.AttemptID, demand contracts.Demand, deadline time.Time, unit lifecycle.Unit, amount uint64) error {
-	body, err := dispatchBody(operation.ID, deadline, unit, amount)
+func enqueue(ctx context.Context, u *unit, tenant ids.TenantID, d dispatchSpec) error {
+	body, err := d.body()
 	if err != nil {
 		return err
 	}
-	tr, err := u.transition(operation.Version, &store.OutboxPayload{
-		ID: dispatchID(operation.ID), Attempt: attempt, Demand: demand, Body: body,
+	tr, err := u.transition(d.operation.Version, &store.OutboxPayload{
+		ID: dispatchID(d.operation.ID), Attempt: d.attempt, Demand: d.demand, Body: body,
 	})
 	if err != nil {
 		return err
 	}
-	_, _, err = store.ApplyOperation(ctx, u.uow, tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
+	_, _, err = store.ApplyOperation(ctx, u.uow, tenant, d.operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
 	return err
 }
 

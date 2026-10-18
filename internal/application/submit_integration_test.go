@@ -238,6 +238,27 @@ func TestSubmitTaskReplayReturnsOriginalSubmission(t *testing.T) {
 	}
 }
 
+func TestSubmitTaskLateRetryReturnsOriginalSubmission(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	original := f.submit(t, f.submitCommand("n-1"))
+	for _, at := range []time.Time{original.Deadline, original.Deadline.Add(time.Hour)} {
+		retry := f.submitCommand("n-1")
+		retry.At = at
+		replay, err := application.Submit(f.ctx, f.pool, retry)
+		if err != nil || replay.Task.ID != original.Task.ID {
+			t.Fatalf("retry at %s = %s, %v; want the original submission", at, replay.Task.ID, err)
+		}
+	}
+	fresh := f.submitCommand("n-late")
+	fresh.At = fresh.Deadline
+	if _, err := application.Submit(f.ctx, f.pool, fresh); !errors.Is(err, application.ErrInvalidCommand) {
+		t.Fatalf("new work at its deadline = %v, want ErrInvalidCommand", err)
+	}
+	if _, err := application.GetSubmission(f.ctx, f.pool, f.actor, "n-late"); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("refused late submission was recorded: %v", err)
+	}
+}
+
 func TestSubmitTaskConcurrentDuplicatesConverge(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	const racers = 4

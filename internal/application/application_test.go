@@ -48,7 +48,7 @@ func TestSubmitValidation(t *testing.T) {
 		"empty nonce":         func(c *SubmitTask) { c.Nonce = "" },
 		"over-long nonce":     func(c *SubmitTask) { c.Nonce = strings.Repeat("n", maxNonceLength+1) },
 		"expected version":    func(c *SubmitTask) { c.ExpectedVersion = 1 },
-		"deadline at time":    func(c *SubmitTask) { c.Deadline = c.At },
+		"no deadline":         func(c *SubmitTask) { c.Deadline = time.Time{} },
 		"no command time":     func(c *SubmitTask) { c.At = time.Time{} },
 		"no provider":         func(c *SubmitTask) { c.Provider = ids.ProviderID{} },
 		"unknown demand":      func(c *SubmitTask) { c.Demand = "urgent" },
@@ -62,6 +62,22 @@ func TestSubmitValidation(t *testing.T) {
 		if err := c.normalize().validate(); !errors.Is(err, ErrInvalidCommand) {
 			t.Errorf("%s: validate() = %v, want ErrInvalidCommand", name, err)
 		}
+	}
+}
+
+func TestDeadlineIsCheckedOnlyForNewWork(t *testing.T) {
+	late := validSubmit(t)
+	late.At = late.Deadline
+	// Envelope validation accepts a late retry, so it can replay a committed
+	// submission; only creating new work compares the deadline.
+	if err := late.normalize().validate(); err != nil {
+		t.Fatalf("validate() rejected a late retry: %v", err)
+	}
+	if err := late.normalize().checkDeadline(); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("checkDeadline() = %v, want ErrInvalidCommand", err)
+	}
+	if err := validSubmit(t).normalize().checkDeadline(); err != nil {
+		t.Fatalf("checkDeadline() on time = %v", err)
 	}
 }
 
