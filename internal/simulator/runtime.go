@@ -3,7 +3,6 @@ package simulator
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -55,12 +54,10 @@ type RuntimeOp struct {
 
 // Runtime is a deterministic runtime provider behind contracts.Port.
 type Runtime struct {
-	config   Config
-	scenario RuntimeScenario
-	ledger   *Ledger
-	mu       sync.Mutex
-	finished map[ids.OperationID]contracts.Reply
-	inflight map[ids.OperationID]chan struct{}
+	config     Config
+	scenario   RuntimeScenario
+	ledger     *Ledger
+	deliveries *deliveries
 }
 
 // NewRuntime validates the config and the scenario and returns the simulator.
@@ -75,11 +72,10 @@ func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
 		}
 	}
 	return &Runtime{
-		config:   config,
-		scenario: scenario,
-		ledger:   newLedger(),
-		finished: map[ids.OperationID]contracts.Reply{},
-		inflight: map[ids.OperationID]chan struct{}{},
+		config:     config,
+		scenario:   scenario,
+		ledger:     newLedger(),
+		deliveries: newDeliveries(),
 	}, nil
 }
 
@@ -118,11 +114,8 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	if err := ctx.Err(); err != nil {
 		return contracts.Reply{}, err
 	}
-	if err := request.Validate(); err != nil {
-		return contracts.Reply{}, fmt.Errorf("%w: %v", ErrMalformedRequest, err)
-	}
-	if request.Tenant != r.config.Tenant || request.Role != contracts.RoleRuntime {
-		return contracts.Reply{}, fmt.Errorf("%w: %s is not this runtime's", ErrForeignRequest, request.Operation)
+	if err := checkRequest(r.config, contracts.RoleRuntime, request); err != nil {
+		return contracts.Reply{}, err
 	}
 	r.ledger.recordRequest(request)
 	step, ok := r.scenario.Operations[request.Operation]
@@ -133,27 +126,14 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		return contracts.Reply{}, fmt.Errorf("%w: %s applies no %s", ErrInvalidScenario, request.Method, step.Effect)
 	}
 
-	for {
-		r.mu.Lock()
-		if recorded, ok := r.finished[request.Operation]; ok {
-			r.mu.Unlock()
-			recorded.Delivery = request.Delivery
-			return recorded, nil
-		}
-		inflight, ok := r.inflight[request.Operation]
-		if !ok {
-			r.inflight[request.Operation] = make(chan struct{})
-			r.mu.Unlock()
-			break
-		}
-		r.mu.Unlock()
-		select {
-		case <-inflight:
-		case <-ctx.Done():
-			return contracts.Reply{}, ctx.Err()
-		}
+	recorded, done, release, err := r.deliveries.claim(ctx, request)
+	if err != nil {
+		return contracts.Reply{}, err
 	}
-	defer r.release(request.Operation)
+	if done {
+		return recorded, nil
+	}
+	defer release()
 
 	reply, err := step.Reply.stamp(request.Operation, request.Delivery)
 	if err != nil {
@@ -166,9 +146,7 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		r.ledger.recordEffect(Effect{
 			Role: contracts.RoleRuntime, Operation: request.Operation, Method: request.Method, Kind: step.Effect,
 		})
-		r.mu.Lock()
-		r.finished[request.Operation] = reply
-		r.mu.Unlock()
+		r.deliveries.finish(request.Operation, request.Method, reply)
 		if err := r.config.Control.reach(ctx, request.Operation, AfterEffect); err != nil {
 			return contracts.Reply{}, err
 		}
@@ -179,19 +157,6 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	return reply, nil
 }
 
-// release settles the operation's in-flight slot, waking deliveries that were
-// waiting for the attempt to finish.
-func (r *Runtime) release(operation ids.OperationID) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	inflight, ok := r.inflight[operation]
-	if !ok {
-		return
-	}
-	delete(r.inflight, operation)
-	close(inflight)
-}
-
 // Cancel records the cancellation intent. Cancellation is confirmed by
 // observation, never by this call returning; the script may fail the
 // transport instead.
@@ -199,10 +164,9 @@ func (r *Runtime) Cancel(ctx context.Context, cancel contracts.Cancel) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := cancel.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrMalformedRequest, err)
+	if err := recordCancel(r.ledger, cancel); err != nil {
+		return err
 	}
-	r.ledger.recordCancel(cancel)
 	if step, ok := r.scenario.Operations[cancel.Operation]; ok && step.CancelError != nil {
 		return step.CancelError
 	}

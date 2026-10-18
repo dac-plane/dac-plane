@@ -71,6 +71,18 @@ func (c Config) validate() error {
 	return nil
 }
 
+// checkRequest refuses a request a simulator cannot serve: a malformed one,
+// and one for another tenant or role.
+func checkRequest(config Config, role contracts.Role, request contracts.Request) error {
+	if err := request.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrMalformedRequest, err)
+	}
+	if request.Tenant != config.Tenant || request.Role != role {
+		return fmt.Errorf("%w: %s is not this %s's", ErrForeignRequest, request.Operation, role)
+	}
+	return nil
+}
+
 // Boundary is a point in handling one operation at which a test can pause a
 // simulator before it continues.
 type Boundary string
@@ -313,4 +325,111 @@ func (r Reply) stamp(operation ids.OperationID, delivery ids.DeliveryID) (contra
 		return contracts.Reply{}, fmt.Errorf("%w: %v", ErrInvalidScenario, err)
 	}
 	return reply, nil
+}
+
+// recordedReply is a finished operation's reply and the method it answered.
+type recordedReply struct {
+	Method contracts.Method
+	Reply  contracts.Reply
+}
+
+// deliveries is the delivery discipline every simulator shares: it serializes
+// deliveries of one operation and remembers each finished operation's reply.
+// Deliveries of different operations never block each other, and no lock is
+// held while an attempt runs, so a pause boundary never stalls other traffic.
+type deliveries struct {
+	mu       sync.Mutex
+	finished map[ids.OperationID]recordedReply
+	inflight map[ids.OperationID]chan struct{}
+}
+
+func newDeliveries() *deliveries {
+	return &deliveries{
+		finished: map[ids.OperationID]recordedReply{},
+		inflight: map[ids.OperationID]chan struct{}{},
+	}
+}
+
+// claim starts one attempt at the request's operation. A finished operation
+// answers from its record: the recorded reply, stamped with the new delivery,
+// and done true. Otherwise claim returns a release function the attempt must
+// defer. A delivery that races an in-flight attempt waits for that attempt
+// only, observing ctx, and then answers from the record or becomes the attempt
+// that applies. A redelivery that changes the method is a scenario bug.
+func (d *deliveries) claim(ctx context.Context, request contracts.Request) (contracts.Reply, bool, func(), error) {
+	for {
+		d.mu.Lock()
+		recorded, finished := d.finished[request.Operation]
+		if finished {
+			d.mu.Unlock()
+			if recorded.Method != request.Method {
+				return contracts.Reply{}, false, nil, fmt.Errorf(
+					"%w: %s finished as %s, not %s", ErrInvalidScenario, request.Operation, recorded.Method, request.Method)
+			}
+			reply := recorded.Reply
+			reply.Delivery = request.Delivery
+			return reply, true, nil, nil
+		}
+		inflight, ok := d.inflight[request.Operation]
+		if !ok {
+			d.inflight[request.Operation] = make(chan struct{})
+			d.mu.Unlock()
+			return contracts.Reply{}, false, d.release(request.Operation), nil
+		}
+		d.mu.Unlock()
+		select {
+		case <-inflight:
+		case <-ctx.Done():
+			return contracts.Reply{}, false, nil, ctx.Err()
+		}
+	}
+}
+
+// finish records the operation's reply, so redeliveries answer from it.
+func (d *deliveries) finish(operation ids.OperationID, method contracts.Method, reply contracts.Reply) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.finished[operation] = recordedReply{Method: method, Reply: reply}
+}
+
+// release settles the operation's in-flight slot, waking deliveries that wait
+// on it.
+func (d *deliveries) release(operation ids.OperationID) func() {
+	return func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		inflight, ok := d.inflight[operation]
+		if !ok {
+			return
+		}
+		delete(d.inflight, operation)
+		close(inflight)
+	}
+}
+
+// recordCancel validates and records one cancel, for simulators whose scenario
+// scripts no cancel transport failure.
+func recordCancel(ledger *Ledger, cancel contracts.Cancel) error {
+	if err := cancel.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrMalformedRequest, err)
+	}
+	ledger.recordCancel(cancel)
+	return nil
+}
+
+// subscribeInert opens an empty stream for a scripted operation: these roles
+// answer in replies, not frames, and the cursor still names a scripted
+// operation.
+func subscribeInert(config Config, ledger *Ledger, scripted bool, cursor contracts.Cursor) (contracts.Stream, error) {
+	if err := cursor.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrMalformedRequest, err)
+	}
+	if cursor.Tenant != config.Tenant {
+		return nil, fmt.Errorf("%w: %s is not this simulator's stream", ErrForeignRequest, cursor.Operation)
+	}
+	if !scripted {
+		return nil, fmt.Errorf("%w: %s", ErrUnscripted, cursor.Operation)
+	}
+	ledger.recordSubscription(cursor)
+	return &scriptStream{control: config.Control, operation: cursor.Operation}, nil
 }
