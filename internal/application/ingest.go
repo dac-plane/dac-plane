@@ -240,7 +240,9 @@ func (a entryApplier) bind(ctx context.Context, kind lifecycle.ResourceKind, nat
 	}
 	for _, stored := range existing {
 		if stored.Attempt == binding.Attempt {
-			return true, nil
+			// A replay names the same session; a turn reported under another
+			// session contradicts its recorded binding.
+			return stored.SessionRef == binding.SessionRef, nil
 		}
 	}
 	if err := lifecycle.CheckBinding(existing, binding); err != nil {
@@ -336,9 +338,17 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 	if payload.Outcome != lifecycle.TurnFailed {
 		return entryApplied, nil
 	}
-	_, applied, refusal, err := a.step.Attempt(ctx, a.event.Attempt, lifecycle.AttemptFail, "")
+	attempt, applied, refusal, err := a.step.Attempt(ctx, a.event.Attempt, lifecycle.AttemptFail, "")
 	if err != nil {
 		return 0, err
+	}
+	if !applied && attempt.State == lifecycle.AttemptReconciling {
+		// A failed turn is a definite observation that the work ran and
+		// failed: it resolves the reconciliation, so a later outcome for the
+		// uncertain operation cannot return the Attempt to executing.
+		if _, applied, refusal, err = a.step.Attempt(ctx, a.event.Attempt, lifecycle.AttemptReconciled, lifecycle.AttemptFailed); err != nil {
+			return 0, err
+		}
 	}
 	if !applied && refusal != nil {
 		// A failure reported for an Attempt that already ended is late: it is

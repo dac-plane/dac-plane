@@ -321,12 +321,15 @@ func TestEventRehydrationReplaysWithoutRepeating(t *testing.T) {
 // uncertain.
 func (f *fixture) lost(t *testing.T, nonce string) (application.Submission, *simulator.Runtime) {
 	t.Helper()
+	return f.replied(t, nonce, simulator.Unknown(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "lost reply"}))
+}
+
+// replied submits a task and dispatches it to a runtime answering reply.
+func (f *fixture) replied(t *testing.T, nonce string, reply simulator.Reply) (application.Submission, *simulator.Runtime) {
+	t.Helper()
 	s := f.submit(t, f.submitCommand(nonce))
 	rt, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
-		Operations: map[ids.OperationID]simulator.RuntimeOp{s.Operation.ID: {
-			Reply:  simulator.Unknown(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "lost reply"}),
-			Effect: simulator.TurnStarted,
-		}},
+		Operations: map[ids.OperationID]simulator.RuntimeOp{s.Operation.ID: {Reply: reply, Effect: simulator.TurnStarted}},
 	})
 	if err != nil {
 		t.Fatalf("NewRuntime() error = %v", err)
@@ -465,5 +468,91 @@ func TestEventCursorNeverMovesBackwards(t *testing.T) {
 	stored, err := store.GetCursor(f.ctx, f.pool, f.tenant, s.Operation.ID, eventStream)
 	if err != nil || stored.After != 4 {
 		t.Fatalf("cursor = %+v, %v; want 4", stored, err)
+	}
+}
+
+func TestReconcileFailedTurnWhileReconcilingStaysFailed(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.lost(t, "n-1")
+	got := f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-1"}),
+		row(2, contracts.EntryTurnFinished, failedTurn("s-1", "t-1", f.at)),
+	)))
+	if got.Applied != 2 || got.Refused != 0 {
+		t.Fatalf("ingestion = %+v, want the failure applied", got)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskFailed || attempt != lifecycle.AttemptFailed {
+		t.Fatalf("failed turn while reconciling: states = %s/%s, want failed/failed", task, attempt)
+	}
+	f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false, row(3, contracts.EntryOperationOutcome, contracts.OperationOutcome{State: lifecycle.OperationAccepted}))))
+	if after := f.reload(t, "n-1"); after.Operation.State != lifecycle.OperationAccepted {
+		t.Fatalf("operation = %s, want reconciled to accepted", after.Operation.State)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskFailed || attempt != lifecycle.AttemptFailed {
+		t.Fatalf("a later outcome revived failed work: %s/%s", task, attempt)
+	}
+}
+
+func TestDispatchRejectedReplyFailsAttemptAndTask(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.replied(t, "n-1", simulator.Rejected(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "refused"}))
+	if after := f.reload(t, "n-1"); after.Operation.State != lifecycle.OperationRejected {
+		t.Fatalf("operation = %s, want rejected", after.Operation.State)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskFailed || attempt != lifecycle.AttemptFailed {
+		t.Fatalf("rejected dispatch: states = %s/%s, want failed/failed", task, attempt)
+	}
+	f.tick(t, rt)
+	if got := len(rt.Ledger().Sent()); got != 1 {
+		t.Fatalf("sent %d requests, want no redispatch after a rejection", got)
+	}
+}
+
+func TestEventTurnUnderAnotherSessionRefused(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.live(t, "n-1")
+	got := f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-1"}),
+		row(2, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-2"}),
+		row(3, contracts.EntryTurnStarted, contracts.TurnStarted{NativeRef: "t-1", SessionRef: "s-1"}),
+		row(4, contracts.EntryTurnFinished, failedTurn("s-2", "t-1", f.at)),
+	)))
+	if got.Applied != 3 || got.Refused != 1 {
+		t.Fatalf("ingestion = %+v, want the turn under another session refused", got)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptExecuting {
+		t.Fatalf("contradicting turn changed state: %s/%s", task, attempt)
+	}
+	if n := f.count(t, "turn_end", "true"); n != 0 {
+		t.Fatalf("turn ends = %d, want none for the contradicting report", n)
+	}
+}
+
+func TestReconcileWorkerCursorNeverRestoresOlderProgress(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.lost(t, "n-1")
+	const dispatchStream = "dispatch"
+	progressRows := simulator.RowsFrame(false, row(1, "progress", map[string]int{}), row(4, "progress", map[string]int{}))
+	f.ingest(t, rt.Event(s.Attempt.ID, s.Operation.ID, dispatchStream, 1, progressRows))
+	stale := contracts.Cursor{Tenant: f.tenant, Attempt: s.Attempt.ID, Operation: s.Operation.ID, Stream: dispatchStream, Generation: 1, After: 2}
+	advance := func(cursor contracts.Cursor) contracts.Cursor {
+		t.Helper()
+		var stored contracts.Cursor
+		f.seed(t, func(uow *store.UnitOfWork) error {
+			var err error
+			stored, err = store.AdvanceCursor(f.ctx, uow, cursor)
+			return err
+		})
+		return stored
+	}
+	if got := advance(stale); got.Generation != 1 || got.After != 4 {
+		t.Fatalf("older position = %+v, want the stored cursor 4 kept", got)
+	}
+	f.ingest(t, rt.Event(s.Attempt.ID, s.Operation.ID, dispatchStream, 1, simulator.ClearedFrame(2)))
+	if got := advance(contracts.Cursor{Tenant: f.tenant, Attempt: s.Attempt.ID, Operation: s.Operation.ID, Stream: dispatchStream, Generation: 1, After: 9}); got.Generation != 2 || got.After != 0 {
+		t.Fatalf("older generation = %+v, want generation 2 kept", got)
+	}
+	if got := advance(contracts.Cursor{Tenant: f.tenant, Attempt: s.Attempt.ID, Operation: s.Operation.ID, Stream: dispatchStream, Generation: 2, After: 3}); got.Generation != 2 || got.After != 3 {
+		t.Fatalf("newer position = %+v, want it stored", got)
 	}
 }
