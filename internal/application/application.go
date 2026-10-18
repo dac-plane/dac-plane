@@ -132,21 +132,19 @@ func execute(ctx context.Context, pool *pgxpool.Pool, cmd Command, kind string, 
 		}
 	}()
 
-	stored, err := store.GetPrincipal(ctx, uow, principal.Tenant, principal.ID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && stored != principal) {
+	switch stored, err := store.GetPrincipal(ctx, uow, principal.Tenant, principal.ID); {
+	case errors.Is(err, store.ErrNotFound), err == nil && stored != principal:
 		return nil, ErrUnauthorized
-	}
-	if err != nil {
+	case err != nil:
 		return nil, err
 	}
-	inserted, err := store.InsertCommandRecord(ctx, uow, store.CommandRecord{
+	switch inserted, err := store.InsertCommandRecord(ctx, uow, store.CommandRecord{
 		Tenant: principal.Tenant, Principal: principal.ID, Command: kind, Nonce: cmd.Nonce,
 		RequestDigest: digest, CreatedAt: at,
-	})
-	if err != nil {
+	}); {
+	case err != nil:
 		return nil, err
-	}
-	if !inserted {
+	case !inserted:
 		// The nonce is already bound: committed earlier, or by a concurrent
 		// duplicate this insert waited for. Replay it.
 		_ = uow.Rollback(ctx)

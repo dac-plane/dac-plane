@@ -47,15 +47,14 @@ func InsertCommandRecord(ctx context.Context, u *UnitOfWork, record CommandRecor
 // of work. It runs once, before commit; no code path changes a committed
 // record.
 func SetCommandResult(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, principal ids.PrincipalID, command, nonce string, result json.RawMessage) error {
-	tag, err := u.Exec(ctx, `
+	switch tag, err := u.Exec(ctx, `
 		update command_record set result = $5::jsonb
 		where tenant_id = $1 and principal_id = $2 and command = $3 and nonce = $4`,
 		tenant.String(), principal.String(), command, nonce, []byte(result),
-	)
-	if err != nil {
+	); {
+	case err != nil:
 		return err
-	}
-	if tag.RowsAffected() != 1 {
+	case tag.RowsAffected() != 1:
 		return ErrNotFound
 	}
 	return nil

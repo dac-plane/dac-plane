@@ -110,7 +110,10 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 	// An assertion replayed after its dispatch was enqueued converges: the
 	// operation already left recorded, so nothing is enqueued twice.
 	if submission.Operation.State == lifecycle.OperationRecorded {
-		if err := enqueue(ctx, u, tenant, submission.Operation, submission.Attempt.ID, submission.Demand, submission.Deadline, submission.Unit, submission.Amount); err != nil {
+		if err := enqueue(ctx, u, tenant, dispatchSpec{
+			operation: submission.Operation, attempt: submission.Attempt.ID, demand: submission.Demand,
+			deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
+		}); err != nil {
 			return nil, err
 		}
 	}
