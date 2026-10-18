@@ -459,3 +459,45 @@ func ListCursors(ctx context.Context, q Querier, tenant ids.TenantID, attempt id
 func identityDigest(s string) identity.Digest {
 	return identity.Digest(s)
 }
+
+// LockCursor returns a stream's cursor locked for the rest of the unit of
+// work, creating it from start when the stream has none. Ingestion of one
+// stream is serialized by this lock, so a slower ingest of an older frame can
+// never move the cursor backwards.
+func LockCursor(ctx context.Context, u *UnitOfWork, start contracts.Cursor) (contracts.Cursor, error) {
+	if err := start.Validate(); err != nil {
+		return contracts.Cursor{}, err
+	}
+	if _, err := u.Exec(ctx, `
+		insert into stream_cursor (tenant_id, attempt_id, operation_id, stream, generation, after_updated_sequence, updated_at)
+		values ($1, $2, $3, $4, $5, $6, now())
+		on conflict (tenant_id, operation_id, stream) do nothing`,
+		start.Tenant.String(), start.Attempt.String(), start.Operation.String(),
+		start.Stream, int64(start.Generation), int64(start.After),
+	); err != nil {
+		return contracts.Cursor{}, err
+	}
+	if _, err := u.Exec(ctx, `
+		select 1 from stream_cursor where tenant_id = $1 and operation_id = $2 and stream = $3 for update`,
+		start.Tenant.String(), start.Operation.String(), start.Stream,
+	); err != nil {
+		return contracts.Cursor{}, err
+	}
+	return GetCursor(ctx, u, start.Tenant, start.Operation, start.Stream)
+}
+
+// AdvanceCursor stores cursor only when it is ahead of the stream's stored
+// progress: a newer generation, or a later position in the same generation.
+// It takes the same lock as LockCursor, so a writer that read its cursor
+// before another ingest committed can never move the stream backwards. It
+// returns the stream's cursor after the write.
+func AdvanceCursor(ctx context.Context, u *UnitOfWork, cursor contracts.Cursor) (contracts.Cursor, error) {
+	stored, err := LockCursor(ctx, u, cursor)
+	if err != nil {
+		return contracts.Cursor{}, err
+	}
+	if cursor.Generation < stored.Generation || (cursor.Generation == stored.Generation && cursor.After <= stored.After) {
+		return stored, nil
+	}
+	return UpsertCursor(ctx, u, cursor)
+}

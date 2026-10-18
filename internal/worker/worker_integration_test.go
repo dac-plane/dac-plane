@@ -200,6 +200,72 @@ func (f *fixture) operationState(t *testing.T, ctx context.Context, op ids.Opera
 	return operation
 }
 
+func (f *fixture) attemptState(t *testing.T, ctx context.Context, op ids.OperationID) lifecycle.Attempt {
+	t.Helper()
+	attempt, err := store.GetAttempt(ctx, f.pool, f.tenant, f.operationState(t, ctx, op).Attempt)
+	if err != nil {
+		t.Fatalf("GetAttempt() error = %v", err)
+	}
+	return attempt
+}
+
+func (f *fixture) taskState(t *testing.T, ctx context.Context, attempt lifecycle.Attempt) lifecycle.Task {
+	t.Helper()
+	task, err := store.GetTask(ctx, f.pool, f.tenant, attempt.Task)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	return task
+}
+
+// moveDispatched applies the enqueue follow Submit performs when it enqueues
+// a dispatch: the Task runs and the Attempt provisions. Tests that assert
+// what giving up on a dispatch leaves behind start from those states.
+func (f *fixture) moveDispatched(t *testing.T, ctx context.Context, op ids.OperationID, at time.Time) {
+	t.Helper()
+	uow, err := store.Begin(ctx, f.pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = uow.Rollback(ctx)
+		}
+	}()
+	operation, err := store.GetOperation(ctx, uow, f.tenant, op)
+	if err != nil {
+		t.Fatalf("GetOperation() error = %v", err)
+	}
+	attempt, err := store.GetAttempt(ctx, uow, f.tenant, operation.Attempt)
+	if err != nil {
+		t.Fatalf("GetAttempt() error = %v", err)
+	}
+	tr := store.Transition{ExpectedVersion: attempt.Version, At: at, Actor: f.actor, AuditID: mustID[ids.Audit](t)}
+	if _, _, err := store.ApplyAttempt(ctx, uow, f.tenant, attempt.ID, lifecycle.AttemptProvision, "", tr); err != nil {
+		t.Fatalf("ApplyAttempt() error = %v", err)
+	}
+	task, err := store.GetTask(ctx, uow, f.tenant, attempt.Task)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if task.State == lifecycle.TaskDraft {
+		trSubmit := store.Transition{ExpectedVersion: task.Version, At: at, Actor: f.actor, AuditID: mustID[ids.Audit](t)}
+		task, _, err = store.ApplyTask(ctx, uow, f.tenant, task.ID, lifecycle.TaskSubmit, "", trSubmit)
+		if err != nil {
+			t.Fatalf("ApplyTask() error = %v", err)
+		}
+	}
+	trTask := store.Transition{ExpectedVersion: task.Version, At: at, Actor: f.actor, AuditID: mustID[ids.Audit](t)}
+	if _, _, err := store.ApplyTask(ctx, uow, f.tenant, task.ID, lifecycle.TaskDispatch, "", trTask); err != nil {
+		t.Fatalf("ApplyTask() error = %v", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	committed = true
+}
+
 func (f *fixture) readyCount(t *testing.T, ctx context.Context, at time.Time) int {
 	t.Helper()
 	rows, err := store.OutboxReadyDispatch(ctx, f.pool, f.tenant, at, 100)
@@ -344,6 +410,7 @@ func TestWorkerExhaustionStopsDispatch(t *testing.T) {
 	ctx, f := setupFixture(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	opID, _ := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 1)
+	f.moveDispatched(t, ctx, opID, now)
 	cfg := worker.DefaultConfig()
 	cfg.Policy.MaxAttempts = 1
 	w := testWorker(t, f, cfg)
@@ -372,8 +439,19 @@ func TestWorkerExhaustionStopsDispatch(t *testing.T) {
 	if got := f.readyCount(t, ctx, now.Add(24*time.Hour)); got != 0 {
 		t.Fatalf("OutboxReadyDispatch() = %d rows, want the row exhausted", got)
 	}
-	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationDispatched {
-		t.Fatalf("operation state = %s, want dispatched (untouched by give-up)", operation.State)
+	// Giving up on a failed send cannot leave the operation dispatched: an
+	// earlier attempt may have delivered the request, so the operation is
+	// uncertain and the Attempt waits in reconciliation under its running
+	// Task. No woken state of the dispatch alone may fail such work.
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationUncertain {
+		t.Fatalf("operation state = %s, want uncertain (outcome of failed dispatch)", operation.State)
+	}
+	attempt := f.attemptState(t, ctx, opID)
+	if attempt.State != lifecycle.AttemptReconciling {
+		t.Fatalf("attempt state = %s, want reconciling", attempt.State)
+	}
+	if task := f.taskState(t, ctx, attempt); task.State != lifecycle.TaskRunning {
+		t.Fatalf("task state = %s, want running under reconciliation", task.State)
 	}
 	if err := w.Tick(ctx); err != nil {
 		t.Fatalf("Tick() error = %v", err)
@@ -649,6 +727,7 @@ func TestWorkerBudgetCeilingStopsDispatch(t *testing.T) {
 	ctx, f := setupFixture(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	opID, _ := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 10)
+	f.moveDispatched(t, ctx, opID, now)
 	w := testWorker(t, f, worker.DefaultConfig())
 
 	uow, err := store.Begin(ctx, f.pool)
@@ -694,7 +773,18 @@ func TestWorkerBudgetCeilingStopsDispatch(t *testing.T) {
 	if got := f.readyCount(t, ctx, now.Add(24*time.Hour)); got != 0 {
 		t.Fatalf("OutboxReadyDispatch() = %d rows, want the over-ceiling row exhausted", got)
 	}
-	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationDispatched {
-		t.Fatalf("operation state = %s, want dispatched (a later intent may still drive it)", operation.State)
+	// Nothing in flight with nothing sent: the worker refuses its own
+	// dispatch, so the operation is rejected and carrying the Attempt and
+	// its running Task to failed ends the live states rather than leaving a
+	// Task running past an exhausted row.
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationRejected {
+		t.Fatalf("operation state = %s, want rejected (never sent, ceiling exhausted)", operation.State)
+	}
+	attempt = f.attemptState(t, ctx, opID)
+	if attempt.State != lifecycle.AttemptFailed {
+		t.Fatalf("attempt state = %s, want failed", attempt.State)
+	}
+	if task := f.taskState(t, ctx, attempt); task.State != lifecycle.TaskFailed {
+		t.Fatalf("task state = %s, want failed", task.State)
 	}
 }

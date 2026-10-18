@@ -352,3 +352,52 @@ func TestNewRecordKindsAreAuditable(t *testing.T) {
 		}
 	}
 }
+
+func TestAttemptFollowsOperation(t *testing.T) {
+	for _, tc := range []struct {
+		operation OperationState
+		attempt   AttemptState
+		event     AttemptEvent
+		target    AttemptState
+		ok        bool
+	}{
+		{OperationUncertain, AttemptExecuting, AttemptOutcomeUnknown, AttemptReconciling, true},
+		{OperationUncertain, AttemptProvisioning, AttemptOutcomeUnknown, AttemptReconciling, true},
+		{OperationUncertain, AttemptAllocated, "", "", false},
+		{OperationUncertain, AttemptCancellationRequested, "", "", false},
+		{OperationUncertain, AttemptReconciling, "", "", false},
+		{OperationSucceeded, AttemptReconciling, AttemptReconciled, AttemptExecuting, true},
+		{OperationAccepted, AttemptReconciling, AttemptReconciled, AttemptExecuting, true},
+		{OperationFailed, AttemptReconciling, AttemptReconciled, AttemptFailed, true},
+		{OperationRejected, AttemptReconciling, AttemptReconciled, AttemptFailed, true},
+		{OperationSucceeded, AttemptExecuting, "", "", false},
+		{OperationRejected, AttemptProvisioning, AttemptFail, AttemptFailed, true},
+		{OperationFailed, AttemptExecuting, AttemptFail, AttemptFailed, true},
+		{OperationRejected, AttemptAllocated, "", "", false},
+		{OperationRejected, AttemptFailed, "", "", false},
+	} {
+		event, target, ok := AttemptFollowsOperation(tc.operation, tc.attempt)
+		if event != tc.event || target != tc.target || ok != tc.ok {
+			t.Errorf("AttemptFollowsOperation(%s, %s) = %s, %s, %v", tc.operation, tc.attempt, event, target, ok)
+		}
+		if ok {
+			if !slices.Contains(attemptMachine.targets(tc.attempt, event), target) {
+				t.Errorf("%s --%s--> %s is not a legal transition", tc.attempt, event, target)
+			}
+		}
+	}
+}
+
+func TestTaskFollowsAttempt(t *testing.T) {
+	if event, ok := TaskFollowsAttempt(AttemptFailed, TaskRunning); !ok || event != TaskExecutionFailed {
+		t.Fatalf("failed attempt on running task = %s, %v", event, ok)
+	}
+	for _, task := range []TaskState{TaskQueued, TaskCancelling, TaskWaitingInput, TaskFailed} {
+		if _, ok := TaskFollowsAttempt(AttemptFailed, task); ok {
+			t.Errorf("failed attempt moves a %s task", task)
+		}
+	}
+	if _, ok := TaskFollowsAttempt(AttemptExecuting, TaskRunning); ok {
+		t.Fatal("an executing attempt moves its task")
+	}
+}

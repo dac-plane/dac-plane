@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TurnFinished",
+  "description": "Payload of a turn.finished entry. A completed turn is not a proposed result; only a failure changes lifecycle state here.",
+  "type": "object",
+  "required": ["session_ref", "turn_ref", "outcome", "ended_at"],
+  "additionalProperties": false,
+  "properties": {
+    "session_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" },
+    "turn_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" },
+    "outcome": { "enum": ["completed", "awaiting_input", "failed", "interrupted"] },
+    "failure": { "$ref": "../lifecycle/turn-end.schema.json#/properties/failure" },
+    "ended_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "outcome": { "const": "failed" } } },
+  "then": { "required": ["failure"] },
+  "else": { "not": { "required": ["failure"] } }
+}
