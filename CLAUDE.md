@@ -10,10 +10,11 @@ revisions and reviews—while agent runtimes and execution environments remain r
 integrations.
 
 **The product lifecycle is being implemented, contracts first.** The repository holds the reviewed
-architecture baseline, its ADRs, the Go process foundation (`cmd/`, `internal/`) and the first
-pure domain contracts: identity and scoped authority, the nine lifecycle records with their
-transitions and audit, and the provider adapter protocol, each mirrored by JSON Schema. There is no persistence, product database
-schema, worker or HTTP surface yet. M1 is tracked by epic #11, whose ordered issues are the implementation
+architecture baseline, its ADRs, the Go process foundation (`cmd/`, `internal/`), the pure domain
+contracts (identity and scoped authority, the nine lifecycle records with their transitions and
+audit, and the provider adapter protocol, each mirrored by JSON Schema), PostgreSQL persistence,
+the fenced dispatch worker, deterministic provider simulators and the transport-neutral command
+boundary for submission. There is no HTTP surface yet. M1 is tracked by epic #11, whose ordered issues are the implementation
 sequence. Do not start writing implementation code against a reading of the docs alone; work starts
 from one of those issues and a plan in `tasks/plan.md` against the baseline below. The earlier
 candidate research and TypeScript/PostgreSQL prototypes live under `architecture-explore/` as
@@ -38,7 +39,9 @@ docs/architecture/    the baseline: README, views (.drawio/.svg/.png), responsib
 docs/adr/             accepted architecture decisions, numbered sequentially
 cmd/dac-plane/        the control-plane process entry point
 internal/             application modules: bootstrap, config, ids, identity, lifecycle, contracts
-                      (provider adapter protocol), platform
+                      (provider adapter protocol), platform (postgres store, migrations), worker
+                      (dispatch loop), simulator (deterministic providers), application
+                      (command boundary)
 contracts/jsonschema/ language-neutral JSON Schema 2020-12 contracts, tested against the Go types
 tasks/plan.md         the plan for the issue currently in progress, rewritten per issue
 architecture-explore/ retained research, experiments and prototypes (read-only by default)
