@@ -371,6 +371,10 @@ func TestAttemptFollowsOperation(t *testing.T) {
 		{OperationFailed, AttemptReconciling, AttemptReconciled, AttemptFailed, true},
 		{OperationRejected, AttemptReconciling, AttemptReconciled, AttemptFailed, true},
 		{OperationSucceeded, AttemptExecuting, "", "", false},
+		{OperationRejected, AttemptProvisioning, AttemptFail, AttemptFailed, true},
+		{OperationFailed, AttemptExecuting, AttemptFail, AttemptFailed, true},
+		{OperationRejected, AttemptAllocated, "", "", false},
+		{OperationRejected, AttemptFailed, "", "", false},
 	} {
 		event, target, ok := AttemptFollowsOperation(tc.operation, tc.attempt)
 		if event != tc.event || target != tc.target || ok != tc.ok {

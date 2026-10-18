@@ -490,13 +490,14 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 			}
 			return err
 		}
+		// The Attempt follows in the same commit: a rejection fails it and
+		// its Task, and an unknown outcome stops it for reconciliation; it is
+		// never treated as no effect.
+		step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: now}
+		if err := step.FollowOperation(ctx, resolved); err != nil {
+			return err
+		}
 		if reply.Durability == lifecycle.SendUnknown {
-			// An unknown outcome stops the Attempt for reconciliation in the
-			// same commit; it is never treated as no effect.
-			step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: now}
-			if err := step.FollowOperation(ctx, resolved); err != nil {
-				return err
-			}
 			w.logger.Info("operation entered reconciliation", "operation", prepared.operation.ID.String())
 		}
 		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil {

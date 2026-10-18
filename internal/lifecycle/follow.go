@@ -12,17 +12,21 @@ var activeAttemptStates = []AttemptState{
 // implies, and false when it implies none. An uncertain operation sends a live
 // Attempt to reconciliation; a reconciled operation resolves a reconciling
 // Attempt: a provider that accepted or completed the work leaves it executing,
-// one that failed or rejected it fails it. Reconciliation never returns an
-// Attempt to a pre-dispatch state.
+// one that failed or rejected it fails it. A definite failure or rejection of
+// a live Attempt's operation fails it directly. Reconciliation never returns
+// an Attempt to a pre-dispatch state.
 func AttemptFollowsOperation(operation OperationState, attempt AttemptState) (AttemptEvent, AttemptState, bool) {
+	failed := operation == OperationFailed || operation == OperationRejected
 	switch {
 	case operation == OperationUncertain && slices.Contains(activeAttemptStates, attempt):
 		return AttemptOutcomeUnknown, AttemptReconciling, true
+	case failed && slices.Contains(activeAttemptStates, attempt):
+		return AttemptFail, AttemptFailed, true
 	case attempt != AttemptReconciling:
 		return "", "", false
 	case operation == OperationAccepted || operation == OperationSucceeded:
 		return AttemptReconciled, AttemptExecuting, true
-	case operation == OperationFailed || operation == OperationRejected:
+	case failed:
 		return AttemptReconciled, AttemptFailed, true
 	}
 	return "", "", false
