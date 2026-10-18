@@ -188,7 +188,7 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 		Demand: row.Demand, Deadline: body.Deadline,
 	}
 	if err := request.Validate(); err != nil {
-		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody)
+		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, false)
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, w.cfg.SendTimeout)
 	defer cancel()
@@ -240,6 +240,9 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	}
 	exhaust := func(claim store.OutboxClaim, reason string) (*preparedDispatch, error) {
 		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, reason, now); err != nil {
+			return nil, err
+		}
+		if err := w.abandonOperation(ctx, uow, tenant, body.Operation, claim.Epoch == 1, now); err != nil {
 			return nil, err
 		}
 		w.stats.Exhausts.Add(1)
@@ -456,10 +459,10 @@ func (w *Worker) recordShadow(ctx context.Context, uow *store.UnitOfWork, tenant
 // lease lapse reclaims it.
 func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, reply contracts.Reply, now time.Time) error {
 	if reply.Operation.String() != prepared.operation.ID.String() {
-		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply)
+		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply, true)
 	}
 	if err := reply.Validate(); err != nil {
-		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply)
+		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply, true)
 	}
 	uow, err := store.Begin(ctx, w.pool)
 	if err != nil {
@@ -539,6 +542,10 @@ func (w *Worker) retryPrepared(ctx context.Context, tenant ids.TenantID, row sto
 		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, string(code), now); err != nil {
 			return err
 		}
+		// The failed send may have reached the provider.
+		if err := w.abandonOperation(ctx, uow, tenant, prepared.operation.ID, false, now); err != nil {
+			return err
+		}
 	} else if err := store.ScheduleOutboxRetry(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now.Add(retryIn), string(code), now); err != nil {
 		return err
 	}
@@ -589,8 +596,9 @@ func (w *Worker) retryClaim(ctx context.Context, tenant ids.TenantID, row store.
 	return nil
 }
 
-// exhaustPrepared exhausts a claimed dispatch row and drops its lease.
-func (w *Worker) exhaustPrepared(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, now time.Time, reason string) error {
+// exhaustPrepared exhausts a claimed dispatch row and drops its lease. sent
+// reports whether this claim delivered a request.
+func (w *Worker) exhaustPrepared(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, now time.Time, reason string, sent bool) error {
 	uow, err := store.Begin(ctx, w.pool)
 	if err != nil {
 		return err
@@ -604,6 +612,9 @@ func (w *Worker) exhaustPrepared(ctx context.Context, tenant ids.TenantID, row s
 	if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, reason, now); err != nil {
 		return err
 	}
+	if err := w.abandonOperation(ctx, uow, tenant, prepared.operation.ID, !sent && prepared.claim.Epoch == 1, now); err != nil {
+		return err
+	}
 	if err := w.releaseLease(ctx, uow, tenant, prepared, now); err != nil {
 		return err
 	}
@@ -613,6 +624,42 @@ func (w *Worker) exhaustPrepared(ctx context.Context, tenant ids.TenantID, row s
 	committed = true
 	w.stats.Exhausts.Add(1)
 	return nil
+}
+
+// abandonOperation resolves the operation of a dispatch the worker gave up
+// on, in the exhausting transaction, so its Attempt and Task never stay live
+// with nothing in flight. neverSent holds only when this is the row's first
+// claim and no request left in it: the operation is rejected, which fails the
+// Attempt and the Task. Otherwise an earlier claim may have delivered it (a
+// transport failure, a crash before the reply was stored, a pending reply),
+// so the effect is unknown and the operation goes to reconciliation; it is
+// never treated as no effect. Only a dispatched operation is resolved: any
+// other state already says what happened to it.
+func (w *Worker) abandonOperation(ctx context.Context, uow *store.UnitOfWork, tenant ids.TenantID, id ids.OperationID, neverSent bool, now time.Time) error {
+	operation, err := store.GetOperation(ctx, uow, tenant, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if operation.State != lifecycle.OperationDispatched {
+		return nil
+	}
+	event, target := lifecycle.OperationSendUnknown, lifecycle.OperationUncertain
+	if neverSent {
+		event, target = lifecycle.OperationSendRejected, lifecycle.OperationRejected
+	}
+	tr, err := w.transition(operation.Version, now)
+	if err != nil {
+		return err
+	}
+	resolved, _, err := store.ApplyOperation(ctx, uow, tenant, operation.ID, event, target, tr)
+	if err != nil {
+		return err
+	}
+	step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: now}
+	return step.FollowOperation(ctx, resolved)
 }
 
 // ackClaim acknowledges a row whose claim is still held (cancel path).
