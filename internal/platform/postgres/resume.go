@@ -28,17 +28,25 @@ type OutboxRow struct {
 	NextTryAt time.Time
 	LastError string
 	CreatedAt time.Time
+	// Status and ExhaustedAt are read by GetOutboxRow and the pending
+	// readers; claim paths do not fill them.
+	Status      string
+	ExhaustedAt time.Time
 }
 
 // scanOutboxRow reads one outbox row in the column order of selectOutboxRow.
 func scanOutboxRow(rows pgx.Rows, row *OutboxRow) error {
 	var idText, recordText, recordIDText, eventText, demandText string
 	var attemptText, lastErrText *string
+	var exhaustedAt *time.Time
 	var payload []byte
 	if err := rows.Scan(&idText, &attemptText, &recordText, &recordIDText,
 		&eventText, &payload, &demandText, &row.Attempts, &row.NextTryAt,
-		&lastErrText, &row.CreatedAt); err != nil {
+		&lastErrText, &row.CreatedAt, &row.Status, &exhaustedAt); err != nil {
 		return err
+	}
+	if exhaustedAt != nil {
+		row.ExhaustedAt = *exhaustedAt
 	}
 	var parseErr error
 	if row.ID, parseErr = parseID[ids.Any](`outbox.outbox_id`, idText); parseErr != nil {
@@ -60,7 +68,28 @@ func scanOutboxRow(rows pgx.Rows, row *OutboxRow) error {
 
 // selectOutboxRow is the column list every outbox reader scans with
 // scanOutboxRow.
-const selectOutboxRow = `select outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload, demand, attempts, next_attempt_at, last_error, created_at from outbox`
+const selectOutboxRow = `select outbox_id::text, attempt_id::text, record_kind, record_id::text, event, payload, demand, attempts, next_attempt_at, last_error, created_at, status, exhausted_at from outbox`
+
+// GetOutboxRow loads one outbox row by id in any status, so callers can
+// report a dispatch's state without claiming it.
+func GetOutboxRow(ctx context.Context, q Querier, tenant ids.TenantID, id ids.AnyID) (OutboxRow, error) {
+	rows, err := q.Query(ctx, selectOutboxRow+` where tenant_id = $1 and outbox_id = $2`, tenant.String(), id.String())
+	if err != nil {
+		return OutboxRow{}, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return OutboxRow{}, err
+		}
+		return OutboxRow{}, ErrNotFound
+	}
+	var row OutboxRow
+	if err := scanOutboxRow(rows, &row); err != nil {
+		return OutboxRow{}, err
+	}
+	return row, rows.Err()
+}
 
 // OpenOutboxEntries returns pending outbox rows oldest first, bounded by
 // limit. Non-positive limits read everything pending.
