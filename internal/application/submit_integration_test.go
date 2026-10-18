@@ -187,10 +187,10 @@ func TestSubmitTaskDispatchesTurnThroughSelectedHarness(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("n-1"))
 	switch {
-	case s.Task.State != lifecycle.TaskQueued:
-		t.Fatalf("task = %s, want queued", s.Task.State)
-	case s.Attempt.State != lifecycle.AttemptAllocated:
-		t.Fatalf("attempt = %s, want allocated", s.Attempt.State)
+	case s.Task.State != lifecycle.TaskRunning:
+		t.Fatalf("task = %s, want running once dispatched", s.Task.State)
+	case s.Attempt.State != lifecycle.AttemptProvisioning:
+		t.Fatalf("attempt = %s, want provisioning once dispatched", s.Attempt.State)
 	case s.Budget.Reserved != 100 || s.Reservation.State != lifecycle.ReservationHeld || s.Reservation.Amount != 100:
 		t.Fatalf("budget %+v reservation %+v, want 100 held", s.Budget, s.Reservation)
 	case s.Operation.State != lifecycle.OperationDispatched:
@@ -428,6 +428,9 @@ func (f *fixture) governed(t *testing.T, nonce string) application.Submission {
 	if s.Dispatch != nil || s.Operation.State != lifecycle.OperationRecorded {
 		t.Fatalf("governed submission enqueued before a receipt: %+v", s.Dispatch)
 	}
+	if s.Task.State != lifecycle.TaskQueued || s.Attempt.State != lifecycle.AttemptAllocated {
+		t.Fatalf("governed submission before receipt = %s/%s, want queued/allocated", s.Task.State, s.Attempt.State)
+	}
 	if s.Reservation.State != lifecycle.ReservationHeld {
 		t.Fatalf("governed submission reservation = %s, want held", s.Reservation.State)
 	}
@@ -465,6 +468,9 @@ func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
 	}
 	if done.Dispatch == nil || done.Dispatch.Status != "pending" || done.Dispatch.Demand != contracts.DemandPerson {
 		t.Fatalf("dispatch after receipt = %+v, want pending with the submission's demand", done.Dispatch)
+	}
+	if done.Task.State != lifecycle.TaskRunning || done.Attempt.State != lifecycle.AttemptProvisioning {
+		t.Fatalf("after receipt = %s/%s, want running/provisioning", done.Task.State, done.Attempt.State)
 	}
 
 	again, err := application.Assert(f.ctx, f.pool, f.assertCommand("a-1", s, assertion))

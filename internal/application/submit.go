@@ -15,6 +15,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
 const commandSubmitTask = "submit_task"
@@ -146,6 +147,7 @@ func (c SubmitTask) validate() error {
 // budget unit and amount the dispatch loop charges.
 type dispatchSpec struct {
 	operation lifecycle.ProviderOperation
+	task      ids.TaskID
 	attempt   ids.AttemptID
 	demand    contracts.Demand
 	deadline  time.Time
@@ -315,7 +317,7 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 		}
 		result.Spend = spendID.String()
 	} else if err := enqueue(ctx, u, tenant, dispatchSpec{
-		operation: operation, attempt: attempt.ID, demand: cmd.Demand,
+		operation: operation, task: task.ID, attempt: attempt.ID, demand: cmd.Demand,
 		deadline: cmd.Deadline, unit: cmd.Unit, amount: cmd.Amount,
 	}); err != nil {
 		return nil, err
@@ -324,7 +326,7 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 }
 
 // enqueue moves the recorded operation to dispatched together with its
-// outbox row. The row names the operation as its record, which is how the
+// outbox row, and moves the Task and Attempt into their dispatched states. The row names the operation as its record, which is how the
 // dispatch loop finds what to send. A replay of an already-dispatched
 // operation writes nothing.
 func enqueue(ctx context.Context, u *unit, tenant ids.TenantID, d dispatchSpec) error {
@@ -338,7 +340,17 @@ func enqueue(ctx context.Context, u *unit, tenant ids.TenantID, d dispatchSpec) 
 	if err != nil {
 		return err
 	}
-	_, _, err = store.ApplyOperation(ctx, u.uow, tenant, d.operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
+	if _, _, err = store.ApplyOperation(ctx, u.uow, tenant, d.operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr); err != nil {
+		return err
+	}
+	// Once a dispatch may be sent, execution may be live: the Task runs and
+	// the Attempt leaves allocated, so a cancel waits for stop observations
+	// instead of completing at once.
+	step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
+	if _, err := step.Task(ctx, d.task, lifecycle.TaskDispatch); err != nil {
+		return err
+	}
+	_, _, _, err = step.Attempt(ctx, d.attempt, lifecycle.AttemptProvision, "")
 	return err
 }
 
