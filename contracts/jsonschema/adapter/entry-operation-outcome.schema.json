@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OperationOutcome",
+  "description": "Payload of an operation_outcome entry: the provider's settled outcome of the event's operation.",
+  "type": "object",
+  "required": ["state"],
+  "additionalProperties": false,
+  "properties": {
+    "state": { "enum": ["accepted", "succeeded", "failed", "rejected"] }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TurnStarted",
+  "description": "Payload of a turn.started entry: a turn started in a session bound to the event's Attempt.",
+  "type": "object",
+  "required": ["native_ref", "session_ref"],
+  "additionalProperties": false,
+  "properties": {
+    "native_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" },
+    "session_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RuntimeStarted",
+  "description": "Payload of a runtime.started entry: a runtime session started. Tenant, Attempt, provider and operation come from the bound event, never from the payload.",
+  "type": "object",
+  "required": ["native_ref"],
+  "additionalProperties": false,
+  "properties": {
+    "native_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" }
+  }
+}

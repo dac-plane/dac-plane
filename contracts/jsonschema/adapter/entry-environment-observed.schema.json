@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnvironmentObserved",
+  "description": "Payload of an environment.observed entry: the observed run state of an environment resource, ordered by the provider's sequence.",
+  "type": "object",
+  "required": ["resource_ref", "state", "sequence", "observed_at"],
+  "additionalProperties": false,
+  "properties": {
+    "resource_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" },
+    "state": { "enum": ["absent", "starting", "running", "hibernated", "unknown"] },
+    "sequence": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "observed_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}
