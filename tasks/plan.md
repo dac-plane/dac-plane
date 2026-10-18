@@ -60,7 +60,11 @@ contract gate (both merged). The issue's verification is
 - Pause/resume: `Control.Pause(op, boundary)` with `BeforeEffect`,
   `AfterEffect` and `BeforeFrame`; registration before the operation runs,
   `Reached()`/`Release()`, no sleeps. A call cancelled while paused leaves an
-  applied-but-unknown effect for the redelivery to dedupe.
+  applied-but-unknown effect for the redelivery to dedupe. Deliveries of one
+  operation are serialized per operation, so a redelivery racing a paused call
+  waits on that operation alone and then answers from the record or becomes
+  the applying attempt; unrelated sends and stream `Close` never block on a
+  paused call.
 - Streams are scripts: builders compute payload hashes; the suite drives real
   `BindEvent`/`Ingest` for duplicate, reordered, replay, tombstone, cleared,
   cursor-too-old, heartbeat and malformed frames. Simulators emit the events

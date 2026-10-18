@@ -60,6 +60,7 @@ type Runtime struct {
 	ledger   *Ledger
 	mu       sync.Mutex
 	finished map[ids.OperationID]contracts.Reply
+	inflight map[ids.OperationID]chan struct{}
 }
 
 // NewRuntime validates the config and the scenario and returns the simulator.
@@ -78,6 +79,7 @@ func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
 		scenario: scenario,
 		ledger:   newLedger(),
 		finished: map[ids.OperationID]contracts.Reply{},
+		inflight: map[ids.OperationID]chan struct{}{},
 	}, nil
 }
 
@@ -106,6 +108,12 @@ func (r *Runtime) Ledger() *Ledger {
 // applies the scripted effect; a redelivery of a finished operation reuses
 // the recorded reply, stamped with the new delivery, and applies nothing. An
 // operation with no effect answers every delivery from its script.
+//
+// Deliveries of one operation are serialized, so a redelivery that races an
+// in-flight attempt waits for that attempt only: it then answers from the
+// record, or becomes the attempt that applies when the first was abandoned
+// before its effect. Deliveries of other operations never block, and no lock
+// is held across a pause boundary.
 func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
 	if err := ctx.Err(); err != nil {
 		return contracts.Reply{}, err
@@ -124,12 +132,29 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	if step.Effect != "" && runtimeEffect[request.Method] != step.Effect {
 		return contracts.Reply{}, fmt.Errorf("%w: %s applies no %s", ErrInvalidScenario, request.Method, step.Effect)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if recorded, ok := r.finished[request.Operation]; ok {
-		recorded.Delivery = request.Delivery
-		return recorded, nil
+
+	for {
+		r.mu.Lock()
+		if recorded, ok := r.finished[request.Operation]; ok {
+			r.mu.Unlock()
+			recorded.Delivery = request.Delivery
+			return recorded, nil
+		}
+		inflight, ok := r.inflight[request.Operation]
+		if !ok {
+			r.inflight[request.Operation] = make(chan struct{})
+			r.mu.Unlock()
+			break
+		}
+		r.mu.Unlock()
+		select {
+		case <-inflight:
+		case <-ctx.Done():
+			return contracts.Reply{}, ctx.Err()
+		}
 	}
+	defer r.release(request.Operation)
+
 	reply, err := step.Reply.stamp(request.Operation, request.Delivery)
 	if err != nil {
 		return contracts.Reply{}, err
@@ -141,7 +166,9 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		r.ledger.recordEffect(Effect{
 			Role: contracts.RoleRuntime, Operation: request.Operation, Method: request.Method, Kind: step.Effect,
 		})
+		r.mu.Lock()
 		r.finished[request.Operation] = reply
+		r.mu.Unlock()
 		if err := r.config.Control.reach(ctx, request.Operation, AfterEffect); err != nil {
 			return contracts.Reply{}, err
 		}
@@ -150,6 +177,19 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		return contracts.Reply{}, step.SendError
 	}
 	return reply, nil
+}
+
+// release settles the operation's in-flight slot, waking deliveries that were
+// waiting for the attempt to finish.
+func (r *Runtime) release(operation ids.OperationID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inflight, ok := r.inflight[operation]
+	if !ok {
+		return
+	}
+	delete(r.inflight, operation)
+	close(inflight)
 }
 
 // Cancel records the cancellation intent. Cancellation is confirmed by

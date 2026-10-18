@@ -94,17 +94,26 @@ type scriptStream struct {
 	mu        sync.Mutex
 }
 
+// Next hands over the next scripted frame. The stream serves one consumer;
+// Close may run concurrently and takes effect at the next handover, and no
+// lock is held across the BeforeFrame pause.
 func (s *scriptStream) Next(ctx context.Context) (contracts.StreamFrame, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed || s.index >= len(s.frames) {
+		s.mu.Unlock()
 		return contracts.StreamFrame{}, io.EOF
 	}
+	s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return contracts.StreamFrame{}, err
 	}
 	if err := s.control.reach(ctx, s.operation, BeforeFrame); err != nil {
 		return contracts.StreamFrame{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return contracts.StreamFrame{}, io.EOF
 	}
 	frame := s.frames[s.index]
 	s.index++

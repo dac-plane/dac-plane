@@ -98,6 +98,47 @@ func TestControlPausesBeforeStreamFrame(t *testing.T) {
 	}
 }
 
+func TestStreamCloseWhilePausedDoesNotHang(t *testing.T) {
+	config := testConfig(t)
+	operation := mustID[ids.Operation](t)
+	sim := newRuntime(t, config, map[ids.OperationID]simulator.RuntimeOp{
+		operation: {Stream: &simulator.StreamScript{Frames: []contracts.StreamFrame{
+			simulator.ConnectedFrame(testNow),
+		}}},
+	})
+	cursor := contracts.Cursor{
+		Tenant: config.Tenant, Attempt: mustID[ids.Attempt](t), Operation: operation,
+		Stream: "runtime", Generation: 1,
+	}
+	stream, err := sim.Subscribe(context.Background(), cursor)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	pause := sim.Control().Pause(operation, simulator.BeforeFrame)
+	var nextErr error
+	next := make(chan struct{})
+	go func() {
+		defer close(next)
+		_, nextErr = stream.Next(context.Background())
+	}()
+	<-pause.Reached()
+
+	// Close returns while Next is still paused, and its effect is seen at the
+	// next handover: the closed stream ends with io.EOF.
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	pause.Release()
+	<-next
+	if !errors.Is(nextErr, io.EOF) {
+		t.Fatalf("paused Next() error after Close = %v, want io.EOF", nextErr)
+	}
+	if _, err := stream.Next(context.Background()); !errors.Is(err, io.EOF) {
+		t.Fatalf("Next() after Close = %v, want io.EOF", err)
+	}
+}
+
 func TestScriptedHistoryClassifiesThroughIngest(t *testing.T) {
 	config := testConfig(t)
 	operation := mustID[ids.Operation](t)

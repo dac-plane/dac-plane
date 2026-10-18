@@ -332,3 +332,144 @@ func TestLedgerRecordsDemandInArrivalOrder(t *testing.T) {
 		t.Errorf("second request = %+v, want the background operation", sent[1])
 	}
 }
+
+func TestRuntimeRedeliveryWhilePausedAnswersFromTheRecord(t *testing.T) {
+	config := testConfig(t)
+	operation := mustID[ids.Operation](t)
+	sim := newRuntime(t, config, map[ids.OperationID]simulator.RuntimeOp{
+		operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+	})
+	first := newRequest(t, config, operation, contracts.MethodStartTurn)
+
+	pause := sim.Control().Pause(operation, simulator.AfterEffect)
+	done := make(chan error, 1)
+	go func() {
+		_, err := sim.Send(context.Background(), first)
+		done <- err
+	}()
+	<-pause.Reached()
+
+	// The effect is applied and recorded before the pause, so a redelivery
+	// arriving while the first call is still paused answers from the record
+	// instead of waiting or applying a second effect.
+	second := first
+	second.Delivery = mustID[ids.Delivery](t)
+	reply, err := sim.Send(context.Background(), second)
+	if err != nil {
+		t.Fatalf("redelivered Send() error = %v", err)
+	}
+	if reply.Outcome != contracts.OutcomeOK || reply.Delivery != second.Delivery {
+		t.Fatalf("redelivered reply = %+v, want the recorded acceptance for the new delivery", reply)
+	}
+	select {
+	case <-done:
+		t.Fatal("first Send returned while still paused")
+	default:
+	}
+	if got := sim.Ledger().Effects(operation); got != 1 {
+		t.Fatalf("effects while the first call is paused = %d, want 1", got)
+	}
+
+	pause.Release()
+	if err := <-done; err != nil {
+		t.Fatalf("first Send() error = %v", err)
+	}
+	if got := sim.Ledger().Deliveries(operation); got != 2 {
+		t.Errorf("deliveries = %d, want 2", got)
+	}
+}
+
+func TestRuntimePausedOperationDoesNotBlockOthers(t *testing.T) {
+	config := testConfig(t)
+	paused := mustID[ids.Operation](t)
+	other := mustID[ids.Operation](t)
+	sim := newRuntime(t, config, map[ids.OperationID]simulator.RuntimeOp{
+		paused: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+		other:  {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+	})
+
+	pause := sim.Control().Pause(paused, simulator.BeforeEffect)
+	done := make(chan error, 1)
+	go func() {
+		_, err := sim.Send(context.Background(), newRequest(t, config, paused, contracts.MethodStartTurn))
+		done <- err
+	}()
+	<-pause.Reached()
+
+	reply, err := sim.Send(context.Background(), newRequest(t, config, other, contracts.MethodStartTurn))
+	if err != nil {
+		t.Fatalf("unrelated Send() error = %v", err)
+	}
+	if reply.Outcome != contracts.OutcomeOK {
+		t.Fatalf("unrelated reply = %+v, want accepted", reply)
+	}
+	select {
+	case <-done:
+		t.Fatal("paused Send returned before Release")
+	default:
+	}
+
+	pause.Release()
+	if err := <-done; err != nil {
+		t.Fatalf("paused Send() error = %v", err)
+	}
+	if got := sim.Ledger().Effects(other); got != 1 {
+		t.Errorf("unrelated effects = %d, want 1", got)
+	}
+	if got := sim.Ledger().Effects(paused); got != 1 {
+		t.Errorf("paused effects = %d, want 1", got)
+	}
+}
+
+func TestControlCancelledBeforeEffectLeavesNoEffect(t *testing.T) {
+	config := testConfig(t)
+	operation := mustID[ids.Operation](t)
+	sim := newRuntime(t, config, map[ids.OperationID]simulator.RuntimeOp{
+		operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+	})
+	request := newRequest(t, config, operation, contracts.MethodStartTurn)
+
+	pause := sim.Control().Pause(operation, simulator.BeforeEffect)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	abandoned := make(chan error, 1)
+	go func() {
+		_, err := sim.Send(ctx, request)
+		abandoned <- err
+	}()
+	<-pause.Reached()
+
+	// A redelivery racing the paused call waits for it; when the first call
+	// is abandoned before the effect, the redelivery becomes the attempt that
+	// applies the effect, exactly once.
+	redelivery := request
+	redelivery.Delivery = mustID[ids.Delivery](t)
+	redelivered := make(chan struct{})
+	var redeliveredReply contracts.Reply
+	var redeliveredErr error
+	go func() {
+		defer close(redelivered)
+		redeliveredReply, redeliveredErr = sim.Send(context.Background(), redelivery)
+	}()
+	cancel()
+
+	if err := <-abandoned; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Send() error after abandon = %v, want context.Canceled", err)
+	}
+	if got := sim.Ledger().Effects(operation); got != 0 {
+		t.Fatalf("effects after the abandoned call = %d, want 0", got)
+	}
+	<-redelivered
+	if redeliveredErr != nil {
+		t.Fatalf("redelivered Send() error = %v", redeliveredErr)
+	}
+	if redeliveredReply.Outcome != contracts.OutcomeOK {
+		t.Fatalf("redelivered reply = %+v, want accepted", redeliveredReply)
+	}
+	if got := sim.Ledger().Effects(operation); got != 1 {
+		t.Errorf("effects after redelivery = %d, want 1", got)
+	}
+	if got := sim.Ledger().Deliveries(operation); got != 2 {
+		t.Errorf("deliveries after redelivery = %d, want 2", got)
+	}
+}
