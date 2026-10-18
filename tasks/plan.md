@@ -1,375 +1,145 @@
-# Implementation plan: issue #23 authenticated submission and dispatch
+# Implementation plan: issue #24 event ingestion and attempt reconciliation
 
-Tracker: [GitHub issue #23](https://github.com/AssahBismarkabah/dac-plane/issues/23) (epic #11)
+Tracker: [GitHub issue #24](https://github.com/AssahBismarkabah/dac-plane/issues/24) (epic #11)
 
 ## Objective
 
-Implement the transport-neutral command boundary: an authenticated command that
-carries tenant, principal, idempotency key and expected version where
-applicable, submits one Task through Budget reservation, Attempt creation and
-provider-operation dispatch into the transactional outbox, atomically with its
-audit evidence. Depends on #15, #19, #20, #21 and #22 (all merged). The issue's
-verification is
-`go test -tags=integration ./internal/application/... -run 'Submit|Dispatch'`
-and the `-race` variant.
+Advance Attempts and Tasks from authenticated provider observations while preserving the
+replay, uncertainty and cancellation invariants: bind and authenticate every event before any
+mutation, ingest cursor-based streams idempotently, turn normalized entries into product
+records and transitions, move unknown outcomes into explicit reconciliation, and converge
+cancellation only after both runtime and environment stops are observed or reconciled.
+Attention, decisions and cancellation enter through the command boundary from #23.
 
-Acceptance criteria beyond the four base ones (from the live issue body):
+Verification (from the issue):
 
-- Reusing a client nonce with the same payload returns the original submission;
-  changing the payload is rejected.
-- Dispatch records person/background demand and the selected harness mode
-  without selecting a production provider.
-- Spend-governed submission cannot enqueue dispatch without both budget
-  reservation and a valid receipt.
-- Submission persists the identities needed to correlate later session, turn
-  and environment bindings.
+```sh
+go test -tags=integration ./internal/application/... -run 'Event|Attention|Decision|Cancel|Reconcile'
+go test -race -tags=integration ./internal/application/... -run 'Event|Cancel|Reconcile'
+```
+
+## What exists (verified on `main` at `955d7be`)
+
+- `contracts.BindEvent` / `contracts.Ingest` (#17): bind an event to the authenticated `Peer`
+  and a recorded `ProviderOperation`; advance a cursor, count duplicates, flag stale
+  generations and rehydration. Frozen by the #18 gate.
+- Store (#20/#21): `ApplyAttempt`, `ApplyTask`, `InsertAttention`/`ApplyAttention`/
+  `DecideAttention`, `InsertBinding`/`ListBindings`, `InsertTurnEnd`, `UpsertObservation`,
+  `UpsertCursor`/`GetCursor`, `ApplyOperation`; all with replay and refusal evidence.
+- Worker (#21): sends dispatch rows, delivers `attempt/request_cancel` rows as protocol
+  cancels (`dispatch.go:94`), marks lost replies `uncertain`, and reconciles uncertain
+  operations from `operation_outcome` entries on the `dispatch` stream (`reconcile.go`).
+- Application (#23): `Submit`/`Assert` leave the Task `queued`, the Attempt `allocated` and
+  the runtime operation `dispatched`.
+- **Gap:** nothing moves an Attempt or a Task after submission. No code applies
+  `AttemptOutcomeUnknown`, `AttemptReconciled`, `AttemptRequestCancel`, the stop
+  observations, or any Task event beyond `submit`. The entry vocabulary exists only in a
+  simulator test (`progress`, `attention`, `turn_end`, `operation_outcome`), and that test has
+  the provider send a full product `AttentionRequest`, which ownership rule 7 forbids.
 
 ## Sources
 
-- `docs/architecture/review-2026-10-15.md` §46: "Every mutating surface command
-  is authenticated, authorized, idempotent and version checked"; §47-48: a
-  state transition and its outbox entry commit atomically, delivery is at least
-  once and consumers dedupe; §74-75: spend challenges are replay protected and
-  produce durable receipts without replacing Budget reservation.
-- `docs/architecture/README.md` §99-124: the initial implementation boundary
-  (`submit task -> create and dispatch attempt -> start one runtime ...`).
-- `docs/adr/0002-initial-application-boundary.md`: one application with a
-  surface/auth module and transactional command/outbox persistence; internal
-  package boundaries prevent bypassing lifecycle commands.
-- `docs/adr/0003-provider-contract-semantics.md`: demand classes are scheduling
-  hints only; harness modes `off`/`shadow`/`live`; spend authorization is a
-  separate two-phase ceremony whose receipt reserves and consumes nothing;
-  #23-#26 must exercise contracts only through application boundaries (§177).
-- `docs/architecture/contract-gate-18.md`: the frozen budget/spend/execution
-  contract families this boundary composes.
-- Existing code the boundary drives, unchanged: `internal/platform/postgres`
-  (`Begin`/`UnitOfWork`, `InsertTask`/`ApplyTask`, `InsertAttempt`,
-  `InsertBudget`/`ReserveBudget`, `InsertOperation`/`ApplyOperation` with
-  `OutboxPayload`, `BeginSpend`/`InsertSpendChallenge`/`AssertSpendChallenge`/
-  `GetSpendReceipt`, `GetHarness`, `appendRefusal`), `internal/worker`
-  (`Tick`, `DispatchBody` producer contract, reservation identity derived from
-  the Attempt), `internal/simulator` (runtime port and spend `Spender`),
-  `internal/identity` (`AuthorizationContext`).
-- `architecture-explore/` is evidence only (Plane-Bot `clientNonce` command
-  vocabulary; SPEC §12 "Task + submitted event + dispatch command"). The
-  prototype's `idempotency_key(tenant_id, operation, key, request_hash,
-  response jsonb)` table is the shape precedent, not a requirement.
+- Baseline ownership rules 2, 3, 7: runtime sessions correlate to an Attempt; the product
+  stores environment correlation and observed state without becoming a compute controller;
+  provider events are observations until authenticated, deduplicated and accepted.
+- Review invariants: events bound to tenant, Attempt, operation and sequence before they
+  affect state; cursor acknowledgement is ingestion progress, not completion; cancellation is
+  intent until runtime and environment stops are observed or reconciled; unknown outcomes
+  enter an explicit uncertain state and are never retried as no effect.
+- ADR-0003: replayable observation stream (connected, rows, cleared, cursor-too-old,
+  heartbeat, tombstones, rehydration); execution bindings; typed turn failures; environment
+  observations `absent | starting | running | hibernated | unknown`.
+- Evidence (shape only): Plane-Bot transcript watch frames, `turn_failed {code, summary,
+  error_details}`, turn end `awaiting_user_response` (the needs-input transition), interrupt
+  acknowledging `had_active_run` (DEEP-DIVES-04 §1); historical SPEC §11 (stop reasons:
+  only a proposed result moves to verification; idle, token limit and user cancel are not
+  success) and §13 (persist the attention request before displaying it; deliver the decision
+  through the runtime; observe consumption).
 
-## Design: the command boundary
+## Decision A: a product-defined entry vocabulary (needs agreement)
 
-New package `internal/application`, transport-neutral, no HTTP:
+Providers report observations; the product builds every record from the **bound event's**
+identities (tenant, Attempt, provider, operation). A payload can never name or override them.
+New `internal/contracts/entries.go` plus `contracts/jsonschema/adapter/entry-*.schema.json`
+(guarded by both contract coverage tests and the vendor-name test):
 
-- `application.go` — the shared envelope and the idempotency machinery.
+| Entry kind | Payload (provider observation) | Product effect |
+|---|---|---|
+| `binding` | `kind` (runtime_session, runtime_turn, environment_resource), `native_ref`, `session_ref` for a turn | `lifecycle.Binding` from the event's ids; `CheckBinding` refuses a resource bound to another Attempt. A first `runtime_session` advances the Attempt `allocated -> provisioning -> starting -> executing` and the Task `queued -> running`. |
+| `turn_end` | `session_ref`, `turn_ref`, `outcome`, `failure` (typed code, summary, details digest), `ended_at` | `lifecycle.TurnEnd`, rejected unless its session is bound to this Attempt. `completed`: Attempt `finalize`, Task `propose_result` (verification and results are #26). `awaiting_input`: Attempt and Task `await_input`. `failed`: Attempt `fail`, Task `execution_failed`, failure code and details preserved. `interrupted` while cancellation is requested: the runtime stop. |
+| `attention` | `native_ref`, `kind`, `action_digest` for an approval, `expires_at` | The product creates the `AttentionRequest` (responders: the task owner; current policy generation; provider and operation from the event), then Attempt and Task `await_input`. |
+| `environment_observation` | `resource_ref`, `state`, `sequence`, `observed_at` | `EnvironmentObservation` (newer sequence supersedes; resource must be bound to this Attempt). `absent`/`hibernated` while cancellation is requested: the environment stop. |
+| `operation_outcome` | `state` | Unchanged worker semantics for uncertain operations; additionally resolves the Attempt from `reconciling`. |
+| `progress` | free JSON object | Acknowledged (cursor advances); no record, no transition. |
 
-  ```go
-  type Command struct {
-      Actor           identity.AuthorizationContext
-      Nonce           string // client idempotency key, 1..128 chars
-      ExpectedVersion uint64 // where applicable; 0 when the command creates
-  }
-  ```
+Unknown entry kinds advance the cursor and are recorded as refused evidence, never applied.
 
-  Errors: `ErrInvalidCommand` (boundary validation) and `ErrNoHarness` (no
-  qualified harness for the selected provider); domain refusals stay
-  `*lifecycle.TransitionError` and store errors pass through unchanged.
+## Decision B: ingestion is a provider-authenticated command
 
-- Every command runs one transaction:
-  1. Validate the envelope and structural inputs (ids, times, unit, demand,
-     amounts); domain rules stay in the domain.
-  2. Read the idempotency record by `(tenant, principal, command, nonce)`.
-     Found with an equal payload digest: load and return the original
-     submission. Found with a different digest: `ErrPayloadMismatch`.
-  3. Insert a placeholder record for the nonce inside the transaction. A
-     conflict means a concurrent duplicate already committed: roll back, re-read
-     and replay it. The `(tenant, principal, command, nonce)` key serializes
-     racers before any work exists.
-  4. Run the work: domain transitions via the store. A domain refusal rolls the
-     whole command back (nothing partial ever commits) and persists the refusal
-     audit alone through the new store helper `RecordRefusal`; retries of a
-     refused command deterministically re-refuse. Other errors roll back.
-  5. Fill the record's result facts and commit. Committed records are the
-     "original submission": ids, demand, deadline, unit, amount, provider and
-     the harness mode selected at submission.
-- Read surface for callers (and the acceptance tests, which may not touch the
-  store): `GetSubmission(ctx, pool, actor, nonce)` loads a recorded submission
-  plus the current state of its rows and its dispatch.
+`application.Ingest(ctx, pool, peer contracts.Peer, event contracts.Event) (Ingestion, error)`:
+the transport authenticates `peer`; the command loads the operation, runs `BindEvent`, loads or
+starts the cursor, runs `Ingest`, applies accepted entries, and commits records, transitions,
+audit (actor: the provider) and the new cursor in one transaction. Idempotency comes from the
+stream, not a client nonce: duplicates at or below the cursor are skipped, and every effect
+also has a natural key (binding native ref, turn end session/turn, attention native ref,
+observation sequence), so a rehydration replay from the start of a generation converges
+without repeating transitions. Cleared and cursor-too-old reset the cursor and report
+`Rehydrate`; missing history is never read as success.
 
-## Design: submit_task
+Production subscription transports stay out of scope; the worker's existing loop is the only
+subscriber, and tests drive `Ingest` with simulator frames.
 
-```go
-type SubmitTask struct {
-    Command
-    At       time.Time          // command time
-    Provider ids.ProviderID     // the selected harness (simulator in tests)
-    Demand   contracts.Demand   // person|background, "" defaults to background
-    Deadline time.Time          // bounds the dispatch; requires Deadline > At
-    Unit     lifecycle.Unit     // budget unit
-    Ceiling  uint64             // budget ceiling
-    Amount   uint64             // reservation for this attempt
-    Spend    bool               // spend-governed when true
-}
+## Decision C: unknown outcomes and cancellation
 
-func SubmitTask(ctx context.Context, pool *pgxpool.Pool, cmd SubmitTask) (Submission, error)
-```
+- An operation that becomes `uncertain` moves its Attempt to `reconciling`
+  (`outcome_unknown`), applied when the uncertainty is ingested or reconciled; a reconciled
+  outcome resolves the Attempt with `reconciled` to the observed state. `reconciling` never
+  returns to pre-dispatch states (machine rule from #14).
+- `CancelTask` command (principal, nonce, expected Task version): Task `cancel`, Attempt
+  `request_cancel`, and an `attempt/request_cancel` outbox row carrying a `DispatchBody` with
+  `CancelReason`, all in one transaction. The worker delivers the protocol cancel.
+- The Attempt terminates only after both stop observations (runtime: `turn_end` interrupted
+  or an `operation_outcome` after cancel; environment: `absent`/`hibernated`), or a
+  reconciliation; then the Task gets `stop_confirmed`.
 
-Work, in one transaction, in order:
+## Decision D: attention and decisions through the command boundary
 
-1. Load the harness qualification for `Provider`; refuse with `ErrNoHarness`
-   when it is absent or `off`. The submission selects a qualified harness;
-   later demotion is the dispatch loop's business.
-2. `InsertTask` draft, then `ApplyTask(TaskSubmit -> queued)` — the task machine,
-   audit and durable event commit with the rest.
-3. `InsertAttempt` number 1, `allocated`.
-4. `InsertBudget`, then `ReserveBudget` with the reservation identity derived
-   from the attempt (mirroring `internal/worker/dispatch.go`), before anything
-   dispatchable exists. A ceiling refusal fails the command here; no dispatch
-   row can precede a held reservation.
-5. `InsertOperation` against `Provider`, state `recorded`.
-6. Ungoverned: build the dispatch body
-   `{"operation","role":"runtime","method":"start_turn","deadline","unit","amount"}`
-   and `ApplyOperation(OperationDispatch -> dispatched)` with an
-   `OutboxPayload{ID, Attempt, Demand, Body}` — the canonical producer form the
-   #21 persistence tests fix. Spend-governed: `InsertSpendChallenge` bound to
-   tenant, principal, task, attempt, operation, amount, unit and a nonce
-   derived from the client nonce, expiring at `Deadline`, and **no outbox row
-   yet** — the submission cannot enqueue before a receipt exists.
+`DecideAttention` command (principal, nonce, request version, current policy generation):
+`DecideAttention` in the store, then an outbox row that delivers the decision to the runtime
+(`steer_turn` with the decision digest; the reply consumes the request), Task
+`input_resolved` and Attempt `resume` once consumption is observed. Approve-once also derives
+the allow-once grant from the request (#39's `AllowOnceGrant`); enforcing it is #25.
 
-`Submission` carries the loaded records (`Task`, `Attempt`, `Operation`,
-`Budget`, `Reservation`, `Challenge`, `Receipt`), the bound selection
-(`Provider`, `Mode`), `Demand`, `Deadline`, and `Dispatch` (outbox id, status,
-demand, attempts, last error, exhausted-at) once enqueued.
+## Delivery: two PRs against #24
 
-## Design: assert_spend (the governed second phase)
+- **PR A, ingestion and reconciliation:** entry vocabulary and schemas, `Ingest`, cursor
+  handling, bindings, turn ends, environment observations, Attempt/Task progression,
+  unknown-outcome reconciliation. Tests named `TestEvent*` and `TestReconcile*`.
+- **PR B, attention, decisions and cancellation:** `attention` entries, `DecideAttention`,
+  decision delivery and consumption, `CancelTask`, stop convergence. Tests named
+  `TestAttention*`, `TestDecision*` and `TestCancel*`.
 
-```go
-type AssertSpend struct {
-    Command                       // ExpectedVersion = the challenge's version
-    SubmissionNonce string        // the governed submission being completed
-    Assertion lifecycle.SpendAssertion // challenge id, terms, proof, asserted_at
-}
+## Acceptance tests (both PRs)
 
-func AssertSpend(ctx context.Context, pool *pgxpool.Pool, cmd AssertSpend) (Submission, error)
-```
-
-The spend ceremony is two-phase for real: the challenge binds ids that only
-exist after submission, so the principal's assertion can only arrive in a
-second authenticated command (the Plane-Bot begin/finish shape, exercised
-through the application boundary as ADR-0003 requires).
-
-Work, in one transaction:
-
-1. Load the submission record for `SubmissionNonce` (same tenant and
-   principal); refuse `ErrInvalidCommand` when it is not spend-governed, and
-   cross-check that the assertion's terms name that submission's operation.
-2. `AssertSpendChallenge` — mismatch, expiry, terminal state and version
-   conflicts refuse here with audit evidence and without a receipt.
-3. Verify the attempt's reservation is still held and matches the asserted
-   amount. Receipt and reservation are both required before enqueue.
-4. `ApplyOperation(OperationDispatch -> dispatched)` with the dispatch body and
-   an `OutboxPayload` carrying the **submission's** demand: the outbox row and
-   the receipt commit together. On the store's idempotent replay (operation
-   already dispatched) no outbox row is written and `Dispatch` stays empty.
-5. Record this command's own result. A replayed command with the same nonce and
-   payload returns the stored result; an assertion replayed against an
-   already-asserted challenge converges through the store's replay rules.
-
-## Design: persistence (migration 00003)
-
-`internal/platform/migrations/migrations/00003_command_record.sql`, additive:
-
-```sql
-CREATE TABLE command_record (
-  tenant_id      uuid NOT NULL REFERENCES tenant (id),
-  principal_id   uuid NOT NULL,
-  command        text NOT NULL CHECK (command <> ''),
-  nonce          text NOT NULL CHECK (nonce <> '' AND char_length(nonce) <= 128),
-  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
-  result         jsonb NOT NULL CHECK (jsonb_typeof(result) = 'object'),
-  created_at     timestamptz NOT NULL,
-  PRIMARY KEY (tenant_id, principal_id, command, nonce),
-  FOREIGN KEY (tenant_id, principal_id) REFERENCES principal (tenant_id, principal_id)
-);
-```
-
-The nonce is scoped to its tenant, principal and command kind, so no principal
-can replay or observe another's submission. `result` is inserted as a
-placeholder and filled before commit; no committed row is ever updated (no
-mutation path exists in code). No `command` CHECK list: new commands must not
-force a schema migration.
-
-Store additions, keeping every SQL statement and pg error mapping in
-`internal/platform/postgres`:
-
-- `commands.go`: `CommandRecord` plus `InsertCommandRecord` (conflict-safe),
-  `SetCommandResult`, `GetCommandRecord`.
-- `history.go` or a neighbor: exported `RecordRefusal(ctx, q, audit)` wrapping
-  the existing refusal-audit append, for refusals of multi-write commands that
-  must roll back.
-- `resume.go`/`outbox.go`: `GetOutboxRow(ctx, q, tenant, id)` plus `Status` and
-  `ExhaustedAt` on `OutboxRow` and in `selectOutboxRow`/`scanOutboxRow`, so the
-  boundary's dispatch view can report state without a second claim path.
-
-No changes to `internal/worker`, `internal/bootstrap`, the lifecycle machines,
-the identity contracts or the frozen schema.
-
-## Ordered tasks
-
-1. Rewrite this plan (done, committed separately).
-2. Migration `00003_command_record.sql` + a focused schema integration test
-   (PK scoping, FK, digest and nonce CHECKs) in
-   `internal/platform/migrations/schema_integration_test.go`.
-3. Store additions (`GetOutboxRow`/`OutboxRow` fields, `RecordRefusal`,
-   `commands.go`) with store-level coverage where the acceptance tests cannot
-   observe them (refusal-audit persistence).
-4. `internal/application` core: envelope, validation, idempotency flow,
-   `GetSubmission`, `SubmitTask`, `AssertSpend`; pure unit tests for envelope
-   validation and payload digest canonicalization (UTC times, defaulted demand,
-   command time excluded).
-5. Acceptance tests in `internal/application` (build-tagged integration), named
-   so the issue's `-run 'Submit|Dispatch'` selects all of them; every mutation
-   and observation goes through the command boundary, the worker `Tick`, or the
-   simulator ledger. Only tenant/principal/harness preconditions are seeded
-   with the store fixture pattern (there is no M1 command surface for
-   identities or qualifications), and no lifecycle record is written by a test.
-6. Full gate, PR `feat(application): implement authenticated submission and
-   dispatch`, review-bot findings verified against the code, squash-merge on
-   green.
-
-## Acceptance tests
-
-- `TestSubmitTaskDispatchesTurnThroughSelectedHarness`: live simulator harness,
-  person demand; assert task queued, attempt allocated, budget reserved,
-  reservation held, operation dispatched, dispatch pending with demand and the
-  bound mode, then `Tick` sends exactly one runtime `start_turn` request for
-  that operation, operation accepted, dispatch done.
-- `TestSubmitTaskReplayReturnsOriginalSubmission`: same nonce and payload
-  returns the same task/attempt/operation; a different nonce creates a distinct
-  submission; replay after dispatch returns the same ids.
-- `TestSubmitTaskChangedPayloadRejected`: same nonce, different amount is
-  `ErrPayloadMismatch` and the original is untouched.
-- `TestSubmitTaskRejectsInvalidCommands`: zero actor, empty/over-long nonce,
-  expected version set on a creating command, deadline not after command time,
-  zero amount, malformed unit, unknown demand, unknown provider (missing and
-  `off` qualification -> `ErrNoHarness`).
-- `TestSubmitTaskCeilingRefusalDoesNotDispatch`: amount over ceiling is a
-  `ceiling_reached` refusal; nothing is recorded (submission not found) and a
-  `Tick` sends nothing.
-- `TestSubmitTaskPersistsCorrelationIdentities`: the operation names the
-  attempt and the selected provider, and the submission view re-reads them —
-  the ids later session, turn and environment bindings must reference.
-- `TestDispatchShadowHarnessWithholdsSend`: shadow harness dispatches nothing,
-  consumes the row and leaves the operation undispatched.
-- `TestDispatchHarnessDemotionExhausts`: submission under a live harness, then
-  demotion to `off` before `Tick` exhausts the row with
-  `harness_not_live` and sends nothing.
-- `TestSubmitSpendGovernedAwaitsReceiptThenDispatches`: governed submission
-  records the pending challenge, no dispatch, reservation held; `Tick` sends
-  nothing; the simulator `Spender` asserts through `AssertSpend`; receipt and
-  dispatch row (with the submission's demand) commit together; `Tick` sends.
-- `TestSubmitSpendGovernedRejectsMismatchedAssertion`: drifted terms refuse
-  with `assertion_mismatch`, leave the challenge pending, write no receipt and
-  no dispatch.
-- `TestSubmitSpendGovernedRejectsExpiredAssertion`: an assertion at or past
-  expiry refuses with `request_expired`.
-- `TestSubmitSpendAssertsRejectStaleVersion`: a wrong expected version refuses
-  with `version_conflict` and changes nothing.
-
-## Verification
-
-```sh
-go test -tags=integration ./internal/application/... -run 'Submit|Dispatch'
-go test -tags=integration -race ./internal/application/... -run 'Submit|Dispatch'
-go test -tags=integration ./internal/platform/postgres/... ./internal/platform/migrations/...
-just test-contracts
-just ci
-```
+- Forged envelopes (another provider's peer, another tenant, an operation of another
+  Attempt) and observations whose session or resource is not bound to the Attempt are
+  refused before any mutation, with refusal evidence.
+- A duplicate rows frame, a duplicate tombstone and a full replay after `cleared` repeat no
+  transition and create no second record; the cursor only moves forward within a generation.
+- `cleared` and `cursor_too_old` report rehydration and change no lifecycle state; heartbeats
+  change nothing.
+- A failed turn preserves code, summary, details digest and provider operation.
+- A lost reply moves the Attempt to `reconciling`; an `operation_outcome` resolves it.
+- Cancellation: one stop observation leaves the Attempt in `cancellation_requested`; both
+  terminate it and confirm the Task stop; a late `turn_end completed` after cancel is
+  refused and recorded.
+- Attention: an `attention` entry creates the request and waits; a decision is delivered,
+  consumed, and resumes the work; a stale-version decision conflicts.
 
 ## Boundaries
 
-- No HTTP endpoints, no transport types, no wire schemas; commands are Go
-  values, the boundary stays transport-neutral.
-- No provider event processing, no reconciliation (#24), no attention/decision
-  commands, no cancellation commands.
-- No direct repository access from the acceptance tests for any lifecycle
-  fact; identity and harness qualification preconditions are fixture seeding.
-- No changes to the worker's dispatch semantics, the lifecycle machines, the
-  frozen `00001`/`00002` schema, `contracts/jsonschema` or the guard lists.
-- No baseline, diagram or accepted-ADR edits; `architecture-explore/` stays
-  read-only. No new ADR: ADR-0002 and ADR-0003 already fix this boundary.
-
-## Investigation check (2026-10-18)
-
-The plan above was re-verified against `main` at `3b64ea5` (after #22 merged):
-
-- Issue #23's live body matches the scope, out-of-scope list, acceptance criteria and
-  verification commands above.
-- Every existing store, worker and simulator function the design names exists with the
-  assumed signature (`Begin`, `InsertTask`, `ApplyTask`, `InsertAttempt`, `InsertBudget`,
-  `ReserveBudget(ReservationRequest, Transition)`, `InsertOperation`, `ApplyOperation`,
-  `OutboxPayload`, `InsertSpendChallenge`, `AssertSpendChallenge`, `GetSpendReceipt`,
-  `GetHarness`, `appendRefusal`, `OutboxRow`, `selectOutboxRow`, `scanOutboxRow`,
-  `worker.DispatchBody`, `Worker.Tick`, `simulator.Spender`). `GetOutboxRow`,
-  `RecordRefusal` and `commands.go` are new; migration number `00003` is free.
-- The producer form is forced, not chosen: the worker requires the outbox row's record id to
-  equal `DispatchBody.Operation` (`internal/worker/dispatch.go:57`), and the only provider
-  operation transition from `recorded` is `dispatch`, so the outbox row must ride
-  `ApplyOperation(dispatch)`. That is the form the #21 worker tests use.
-- Reservation identity agrees with the worker: `checkBudget` derives the reservation id from
-  the Attempt id and, when that reservation already exists, only checks the amount
-  (`dispatch.go:371-420`). Submission reserving first therefore makes the worker's gate a
-  replay, never a second hold.
-- Concurrent duplicates: PostgreSQL blocks an insert on a unique index while another
-  transaction holds the same key, and `ON CONFLICT DO NOTHING` then skips it once that commits
-  (PostgreSQL 18 `INSERT` docs, index uniqueness checks). The store's `insertReturning`
-  already uses this, so `InsertCommandRecord` follows it and needs no in-progress state.
-- Idempotency semantics follow the IETF `Idempotency-Key` draft
-  (draft-ietf-httpapi-idempotency-key-header): a request fingerprint (checksum of the
-  payload) is stored with the key, and reusing a key with a different payload is refused
-  (HTTP 422 there, `ErrPayloadMismatch` here). The draft requires the expiry rule to be
-  documented; see below.
-- Exploration evidence holds: Plane-Bot `clientNonce` (DEEP-DIVES-01, MASTER-RECORD),
-  historical SPEC "unique idempotency key per tenant and API operation" and
-  "Require Idempotency-Key", and the prototype's `idempotency_key` table in
-  `architecture-explore/services/product-tasks`.
-
-## Open alignment points
-
-- Spend-governed flow is two commands (submit opens the challenge and holds the
-  reservation without enqueueing; assert completes the receipt and enqueues in
-  the same transaction). This is the only reading that satisfies both the
-  receipt-before-enqueue rule and the challenge's id binding.
-- The selected harness mode is bound into the idempotency record and the
-  submission view; it is deliberately not copied into the dispatch body, since
-  the worker resolves the mode from the qualification at dispatch time and a
-  body copy could go stale.
-- A refused multi-write command persists its refusal audit through a separate
-  single-statement `RecordRefusal`; the transaction itself rolls back so no
-  partial submission ever commits.
-- Command records do not expire in M1: a nonce stays bound to its submission for the life of
-  the tenant data, which the IETF draft permits as long as it is documented. Expiry and pruning
-  belong to retention work after M1.
-- An outbox row the worker exhausts (for example after a harness demotion) leaves its
-  operation `dispatched` with no delivery, because the producer form marks the operation
-  dispatched at enqueue. That is existing #21 semantics, surfaced as an exhausted row; turning
-  it into an explicit Attempt outcome is reconciliation work for #24, not this issue.
-
-## Implementation notes
-
-Refinements made while implementing, each kept within the design above:
-
-- Go cannot name a type and a function alike, so the command types keep the plan's names
-  (`SubmitTask`, `AssertSpend`) and the entry points are `Submit` and `Assert`.
-- The dispatch row's outbox id is the operation id: one operation has exactly one dispatch,
-  so a retried enqueue reuses it, and `GetSubmission` finds the dispatch whether `Submit` or
-  `Assert` enqueued it without consulting the second command's record.
-- Authorization loads the principal inside the command transaction and requires the stored
-  principal (tenant, id, kind) to equal the authenticated one; otherwise `ErrUnauthorized`.
-- An assertion replayed after its dispatch was enqueued converges: `Assert` enqueues only
-  while the operation is still `recorded`.
-- `TestDispatchShadowHarnessWithholdsSend` asserts no send and a consumed row; the operation
-  remains `dispatched`, the producer-form consequence recorded under the alignment points.
-- Beyond the plan's list: `TestSubmitTaskConcurrentDuplicatesConverge` (racing duplicates
-  produce one task and one send), and two evidence tests outside the `Submit|Dispatch`
-  acceptance filter that read the store directly: refusal audit survives the rollback, and a
-  receipt without a held reservation cannot enqueue.
-
+- No artifacts, result revisions or reviews (#26); no governed-action enforcement (#25).
+- No production event transport; `Peer` comes from the caller as the transport's
+  authentication result.
+- The frozen #17 contracts and the 00001 to 00003 schema are not changed; entry payload
+  schemas are additive.
