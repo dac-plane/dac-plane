@@ -12,6 +12,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
 // reconcileStream is the per-operation stream the reconciler follows.
@@ -191,10 +192,16 @@ func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operatio
 		if err != nil {
 			return err
 		}
-		if _, _, err := store.ApplyOperation(ctx, uow, tenant, current.ID, lifecycle.OperationReconcile, outcome, tr); err != nil {
+		reconciled, _, err := store.ApplyOperation(ctx, uow, tenant, current.ID, lifecycle.OperationReconcile, outcome, tr)
+		if err != nil {
 			if errors.Is(err, store.ErrStaleVersion) {
 				return nil
 			}
+			return err
+		}
+		// The reconciled outcome resolves the Attempt the uncertainty stopped.
+		step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: tr.At}
+		if err := step.FollowOperation(ctx, reconciled); err != nil {
 			return err
 		}
 		if harness, err := store.GetHarness(ctx, uow, tenant, current.Provider); err == nil && harness.Mode == lifecycle.HarnessShadow {

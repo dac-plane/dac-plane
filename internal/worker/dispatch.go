@@ -10,6 +10,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
 // Static last_error reasons. The column carries typed failure codes or one
@@ -482,13 +483,20 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 		if err != nil {
 			return err
 		}
-		if _, _, err := store.ApplyOperation(ctx, uow, tenant, prepared.operation.ID, event, target, tr); err != nil {
+		resolved, _, err := store.ApplyOperation(ctx, uow, tenant, prepared.operation.ID, event, target, tr)
+		if err != nil {
 			if errors.Is(err, store.ErrStaleVersion) {
 				return w.releaseCommitted(ctx, uow, tenant, row, prepared, now, &committed)
 			}
 			return err
 		}
 		if reply.Durability == lifecycle.SendUnknown {
+			// An unknown outcome stops the Attempt for reconciliation in the
+			// same commit; it is never treated as no effect.
+			step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: now}
+			if err := step.FollowOperation(ctx, resolved); err != nil {
+				return err
+			}
 			w.logger.Info("operation entered reconciliation", "operation", prepared.operation.ID.String())
 		}
 		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil {
