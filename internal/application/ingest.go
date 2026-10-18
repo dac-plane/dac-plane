@@ -68,6 +68,18 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 	}
 	bound, failure := contracts.BindEvent(peer, event, operation)
 	if failure != nil {
+		if failure.Code == contracts.FailureMalformedFrame {
+			return Ingestion{}, failure
+		}
+		// The operation is in the peer's own tenant, so the refusal is
+		// recorded there against it; nothing the envelope claims is written.
+		if err := recordForgedEnvelope(ctx, uow, peer, event, operation, at); err != nil {
+			return Ingestion{}, err
+		}
+		if err := uow.Commit(ctx); err != nil {
+			return Ingestion{}, err
+		}
+		committed = true
 		return Ingestion{}, failure
 	}
 	cursor, err := store.LockCursor(ctx, uow, contracts.Cursor{
@@ -115,6 +127,30 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 	committed = true
 	return result, nil
 }
+
+// recordForgedEnvelope records refusal evidence for an envelope whose claimed
+// binding does not match the authenticated peer or the recorded operation.
+func recordForgedEnvelope(ctx context.Context, uow *store.UnitOfWork, peer contracts.Peer, event contracts.Event, operation lifecycle.ProviderOperation, at time.Time) error {
+	code := lifecycle.RejectWrongRecord
+	switch {
+	case event.Provider != peer.Provider:
+		code = lifecycle.RejectUnauthorizedActor
+	case event.Tenant != peer.Tenant:
+		code = lifecycle.RejectCrossTenant
+	}
+	auditID, err := ids.New[ids.Audit]()
+	if err != nil {
+		return err
+	}
+	refusal := &lifecycle.TransitionError{Code: code, Change: lifecycle.Change{
+		Tenant: peer.Tenant, Record: lifecycle.RecordOperation, RecordID: operation.ID.Untyped(),
+		Event: ingestEvent, From: string(operation.State), Version: operation.Version,
+	}}
+	return store.RecordRefusal(ctx, uow, refusal.Audit(auditID, lifecycle.Actor{Kind: lifecycle.ActorProvider, Provider: peer.Provider}, at))
+}
+
+// ingestEvent names a refused envelope in audit evidence.
+const ingestEvent = "ingest"
 
 type entryOutcome int
 
@@ -333,35 +369,26 @@ func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.E
 	return entryApplied, nil
 }
 
-// operationOutcome settles the event's operation from the provider's report:
-// an uncertain operation is reconciled, an accepted one completes; either way
-// the Attempt follows. Outcomes that no longer apply change nothing.
+// operationOutcome reconciles an uncertain operation to the provider's
+// reported state, the worker's reconciliation semantics, and the Attempt
+// follows. An outcome for an operation that is not uncertain changes nothing:
+// it is never a second route to completion.
 func (a entryApplier) operationOutcome(ctx context.Context, _ contracts.Entry, payload contracts.OperationOutcome) (entryOutcome, error) {
 	current, err := store.GetOperation(ctx, a.uow, a.event.Tenant, a.event.Operation)
 	if err != nil {
 		return 0, err
 	}
-	event, target := lifecycle.OperationEvent(""), payload.State
-	switch {
-	case current.State == lifecycle.OperationUncertain:
-		event = lifecycle.OperationReconcile
-	case current.State == lifecycle.OperationAccepted && payload.State == lifecycle.OperationSucceeded:
-		event, target = lifecycle.OperationSucceed, ""
-	case current.State == lifecycle.OperationAccepted && payload.State == lifecycle.OperationFailed:
-		event, target = lifecycle.OperationFail, ""
+	if current.State != lifecycle.OperationUncertain {
+		return entryProgress, nil
 	}
-	if event != "" {
-		if _, _, check := current.Apply(event, current.Version, target, a.step.At); check == nil {
-			auditID, err := ids.New[ids.Audit]()
-			if err != nil {
-				return 0, err
-			}
-			if current, _, err = store.ApplyOperation(ctx, a.uow, a.event.Tenant, current.ID, event, target, store.Transition{
-				ExpectedVersion: current.Version, At: a.step.At, Actor: a.step.Actor, AuditID: auditID,
-			}); err != nil {
-				return 0, err
-			}
-		}
+	auditID, err := ids.New[ids.Audit]()
+	if err != nil {
+		return 0, err
+	}
+	if current, _, err = store.ApplyOperation(ctx, a.uow, a.event.Tenant, current.ID, lifecycle.OperationReconcile, payload.State, store.Transition{
+		ExpectedVersion: current.Version, At: a.step.At, Actor: a.step.Actor, AuditID: auditID,
+	}); err != nil {
+		return 0, err
 	}
 	if err := a.step.FollowOperation(ctx, current); err != nil {
 		return 0, err
