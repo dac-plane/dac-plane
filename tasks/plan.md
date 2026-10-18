@@ -352,3 +352,24 @@ The plan above was re-verified against `main` at `3b64ea5` (after #22 merged):
   operation `dispatched` with no delivery, because the producer form marks the operation
   dispatched at enqueue. That is existing #21 semantics, surfaced as an exhausted row; turning
   it into an explicit Attempt outcome is reconciliation work for #24, not this issue.
+
+## Implementation notes
+
+Refinements made while implementing, each kept within the design above:
+
+- Go cannot name a type and a function alike, so the command types keep the plan's names
+  (`SubmitTask`, `AssertSpend`) and the entry points are `Submit` and `Assert`.
+- The dispatch row's outbox id is the operation id: one operation has exactly one dispatch,
+  so a retried enqueue reuses it, and `GetSubmission` finds the dispatch whether `Submit` or
+  `Assert` enqueued it without consulting the second command's record.
+- Authorization loads the principal inside the command transaction and requires the stored
+  principal (tenant, id, kind) to equal the authenticated one; otherwise `ErrUnauthorized`.
+- An assertion replayed after its dispatch was enqueued converges: `Assert` enqueues only
+  while the operation is still `recorded`.
+- `TestDispatchShadowHarnessWithholdsSend` asserts no send and a consumed row; the operation
+  remains `dispatched`, the producer-form consequence recorded under the alignment points.
+- Beyond the plan's list: `TestSubmitTaskConcurrentDuplicatesConverge` (racing duplicates
+  produce one task and one send), and two evidence tests outside the `Submit|Dispatch`
+  acceptance filter that read the store directly: refusal audit survives the rollback, and a
+  receipt without a held reservation cannot enqueue.
+
