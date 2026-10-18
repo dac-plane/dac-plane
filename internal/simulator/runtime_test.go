@@ -429,7 +429,7 @@ func TestControlCancelledBeforeEffectLeavesNoEffect(t *testing.T) {
 	})
 	request := newRequest(t, config, operation, contracts.MethodStartTurn)
 
-	pause := sim.Control().Pause(operation, simulator.BeforeEffect)
+	abandonPause := sim.Control().Pause(operation, simulator.BeforeEffect)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abandoned := make(chan error, 1)
@@ -437,13 +437,15 @@ func TestControlCancelledBeforeEffectLeavesNoEffect(t *testing.T) {
 		_, err := sim.Send(ctx, request)
 		abandoned <- err
 	}()
-	<-pause.Reached()
+	<-abandonPause.Reached()
 
-	// A redelivery racing the paused call waits for it; when the first call
-	// is abandoned before the effect, the redelivery becomes the attempt that
-	// applies the effect, exactly once.
+	// A redelivery racing the paused call waits for it; when the first call is
+	// abandoned before the effect, the redelivery becomes the attempt that
+	// applies it. Its own before-effect pause parks it, so the abandoned
+	// call's no-effect result is observed before the redelivery applies.
 	redelivery := request
 	redelivery.Delivery = mustID[ids.Delivery](t)
+	redeliveryPause := sim.Control().Pause(operation, simulator.BeforeEffect)
 	redelivered := make(chan struct{})
 	var redeliveredReply contracts.Reply
 	var redeliveredErr error
@@ -459,6 +461,8 @@ func TestControlCancelledBeforeEffectLeavesNoEffect(t *testing.T) {
 	if got := sim.Ledger().Effects(operation); got != 0 {
 		t.Fatalf("effects after the abandoned call = %d, want 0", got)
 	}
+	<-redeliveryPause.Reached()
+	redeliveryPause.Release()
 	<-redelivered
 	if redeliveredErr != nil {
 		t.Fatalf("redelivered Send() error = %v", redeliveredErr)
