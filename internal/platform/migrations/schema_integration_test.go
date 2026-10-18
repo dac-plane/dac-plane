@@ -348,3 +348,47 @@ func TestMigrationDispatchColumnsAndShadowTable(t *testing.T) {
 		t.Fatalf("shadow mutation error = %v, want the immutability refusal", err)
 	}
 }
+
+func TestMigrationCommandRecordScopesNoncesAndChecksShape(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	other := mustID[ids.Principal](t)
+	if _, err := db.ExecContext(ctx, `insert into principal (tenant_id, principal_id, kind) values ($1, $2, 'service')`, f.tenant, other); err != nil {
+		t.Fatalf("seed second principal: %v", err)
+	}
+	now := time.Now().UTC()
+	insert := func(principal, command, nonce, digest, result string) error {
+		_, err := db.ExecContext(ctx, `
+			insert into command_record (tenant_id, principal_id, command, nonce, request_digest, result, created_at)
+			values ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+			f.tenant, principal, command, nonce, digest, result, now)
+		return err
+	}
+	if err := insert(f.principal, "submit_task", "n-1", digest(), `{}`); err != nil {
+		t.Fatalf("insert command record: %v", err)
+	}
+	if err := insert(f.principal, "submit_task", "n-1", digest(), `{}`); err == nil {
+		t.Fatal("duplicate (tenant, principal, command, nonce) succeeded")
+	}
+	// The same nonce is independent per principal and per command kind.
+	if err := insert(other, "submit_task", "n-1", digest(), `{}`); err != nil {
+		t.Fatalf("same nonce for another principal: %v", err)
+	}
+	if err := insert(f.principal, "assert_spend", "n-1", digest(), `{}`); err != nil {
+		t.Fatalf("same nonce for another command: %v", err)
+	}
+	for name, args := range map[string][5]string{
+		"empty nonce":       {f.principal, "submit_task", "", digest(), `{}`},
+		"over-long nonce":   {f.principal, "submit_task", strings.Repeat("n", 129), digest(), `{}`},
+		"empty command":     {f.principal, "", "n-2", digest(), `{}`},
+		"malformed digest":  {f.principal, "submit_task", "n-3", "md5:abc", `{}`},
+		"non-object result": {f.principal, "submit_task", "n-4", digest(), `[]`},
+		"unknown principal": {mustID[ids.Principal](t), "submit_task", "n-5", digest(), `{}`},
+	} {
+		if err := insert(args[0], args[1], args[2], args[3], args[4]); err == nil {
+			t.Errorf("%s: insert succeeded", name)
+		}
+	}
+}
