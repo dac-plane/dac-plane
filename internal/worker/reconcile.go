@@ -223,7 +223,7 @@ func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operatio
 	}
 	// Someone else may have resolved the operation first; either way the
 	// entry is consumed, so the cursor advances in the same commit.
-	if _, err := store.UpsertCursor(ctx, uow, cursor); err != nil {
+	if _, err := store.AdvanceCursor(ctx, uow, cursor); err != nil {
 		return err
 	}
 	if err := uow.Commit(ctx); err != nil {
@@ -237,7 +237,8 @@ func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operatio
 }
 
 // persistCursor stores ingestion progress so the next tick resumes where
-// this one stopped, even mid-stream.
+// this one stopped, even mid-stream. It never moves the stream behind an
+// ingest that committed after this pass read its cursor.
 func (w *Worker) persistCursor(ctx context.Context, tenant ids.TenantID, cursor contracts.Cursor) error {
 	uow, err := store.Begin(ctx, w.pool)
 	if err != nil {
@@ -249,7 +250,7 @@ func (w *Worker) persistCursor(ctx context.Context, tenant ids.TenantID, cursor 
 			_ = uow.Rollback(ctx)
 		}
 	}()
-	if _, err := store.UpsertCursor(ctx, uow, cursor); err != nil {
+	if _, err := store.AdvanceCursor(ctx, uow, cursor); err != nil {
 		return err
 	}
 	if err := uow.Commit(ctx); err != nil {

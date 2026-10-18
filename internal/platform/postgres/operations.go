@@ -485,3 +485,19 @@ func LockCursor(ctx context.Context, u *UnitOfWork, start contracts.Cursor) (con
 	}
 	return GetCursor(ctx, u, start.Tenant, start.Operation, start.Stream)
 }
+
+// AdvanceCursor stores cursor only when it is ahead of the stream's stored
+// progress: a newer generation, or a later position in the same generation.
+// It takes the same lock as LockCursor, so a writer that read its cursor
+// before another ingest committed can never move the stream backwards. It
+// returns the stream's cursor after the write.
+func AdvanceCursor(ctx context.Context, u *UnitOfWork, cursor contracts.Cursor) (contracts.Cursor, error) {
+	stored, err := LockCursor(ctx, u, cursor)
+	if err != nil {
+		return contracts.Cursor{}, err
+	}
+	if cursor.Generation < stored.Generation || (cursor.Generation == stored.Generation && cursor.After <= stored.After) {
+		return stored, nil
+	}
+	return UpsertCursor(ctx, u, cursor)
+}
