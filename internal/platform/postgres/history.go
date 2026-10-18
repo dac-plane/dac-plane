@@ -7,6 +7,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -78,6 +79,18 @@ func appendHistory(ctx context.Context, q Querier, change lifecycle.Change, audi
 		return err
 	}
 	return nil
+}
+
+// RecordRefusal persists the audit evidence of a refused transition on its
+// own. Multi-write commands roll back entirely when a step is refused, which
+// also discards the refusal row the step wrote; they record the refusal
+// again through here, in its own statement, so the evidence survives while
+// nothing partial commits.
+func RecordRefusal(ctx context.Context, q Querier, audit lifecycle.AuditEvent) error {
+	if audit.Outcome != lifecycle.AuditRejected {
+		return errors.New("only refusals are recorded on their own")
+	}
+	return appendRefusal(ctx, q, audit)
 }
 
 // appendRefusal records refusal audit evidence without durable or outbox
