@@ -88,6 +88,16 @@ func newEnforcement(t *testing.T, config simulator.Config, operations map[ids.Op
 	return sim
 }
 
+// newArtifactStore returns a scripted artifact store or fails the test.
+func newArtifactStore(t *testing.T, config simulator.Config, operations map[ids.OperationID]simulator.ArtifactOp) *simulator.ArtifactStore {
+	t.Helper()
+	sim, err := simulator.NewArtifactStore(config, simulator.ArtifactScenario{Operations: operations})
+	if err != nil {
+		t.Fatalf("NewArtifactStore() error = %v", err)
+	}
+	return sim
+}
+
 // observation is one valid observation of an attempt's resource, by sequence.
 func observation(config simulator.Config, attempt ids.AttemptID, sequence uint64, state lifecycle.RunState) lifecycle.EnvironmentObservation {
 	return lifecycle.EnvironmentObservation{
