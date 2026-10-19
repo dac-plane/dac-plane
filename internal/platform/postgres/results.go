@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	"time"
 )
 
 // ResultProposal is immutable provider evidence with product-owned identities.
@@ -397,13 +398,11 @@ func CreateVerifiedRevision(ctx context.Context, u *UnitOfWork, p ResultProposal
 	if err != nil {
 		return revision, false, err
 	}
+	for _, v := range verification {
+		revision.Verifications = append(revision.Verifications, v.ID)
+	}
 	if _, _, err = InsertRevision(ctx, u, revision); err != nil {
 		return revision, false, err
-	}
-	for _, v := range verification {
-		if _, err = u.Exec(ctx, `insert into revision_verification(tenant_id,revision_id,verification_id) values($1,$2,$3)`, p.Tenant.String(), revision.ID.String(), v.ID.String()); err != nil {
-			return revision, false, err
-		}
 	}
 	return revision, true, nil
 }

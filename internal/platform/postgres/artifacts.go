@@ -219,6 +219,11 @@ func InsertRevision(ctx context.Context, u *UnitOfWork, revision lifecycle.Resul
 			return lifecycle.ResultRevision{}, false, err
 		}
 	}
+	for _, id := range revision.Verifications {
+		if _, err := u.Exec(ctx, `insert into revision_verification(tenant_id,revision_id,verification_id) values($1,$2,$3)`, revision.Tenant.String(), revision.ID.String(), id.String()); err != nil {
+			return lifecycle.ResultRevision{}, false, err
+		}
+	}
 	return revision, false, nil
 }
 
@@ -279,6 +284,26 @@ func GetRevision(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Rev
 	if err := rows.Err(); err != nil {
 		return lifecycle.ResultRevision{}, err
 	}
+	rows.Close()
+	verified, err := q.Query(ctx, `select verification_id::text from revision_verification where tenant_id=$1 and revision_id=$2 order by verification_id`, tenant.String(), id.String())
+	if err != nil {
+		return lifecycle.ResultRevision{}, err
+	}
+	defer verified.Close()
+	for verified.Next() {
+		var text string
+		if err = verified.Scan(&text); err != nil {
+			return lifecycle.ResultRevision{}, err
+		}
+		id, err := ids.Parse[ids.Verification](text)
+		if err != nil {
+			return lifecycle.ResultRevision{}, err
+		}
+		revision.Verifications = append(revision.Verifications, id)
+	}
+	if err = verified.Err(); err != nil {
+		return lifecycle.ResultRevision{}, err
+	}
 	if err := revision.Validate(); err != nil {
 		return lifecycle.ResultRevision{}, err
 	}
@@ -290,6 +315,18 @@ func revisionsEqual(a, b lifecycle.ResultRevision) bool {
 		a.Number != b.Number || a.Previous != b.Previous || !sameInstant(a.CreatedAt, b.CreatedAt) ||
 		len(a.Artifacts) != len(b.Artifacts) {
 		return false
+	}
+	if len(a.Verifications) != len(b.Verifications) {
+		return false
+	}
+	verification := make(map[ids.VerificationID]bool, len(a.Verifications))
+	for _, id := range a.Verifications {
+		verification[id] = true
+	}
+	for _, id := range b.Verifications {
+		if !verification[id] {
+			return false
+		}
 	}
 	// Artifact order is not significant: storage returns links ordered by id
 	// while callers preserve insertion order, so compare as a set.

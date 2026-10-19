@@ -1,15 +1,17 @@
 package contracts
 
 import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
-	"path/filepath"
-	"testing"
 )
 
-func TestArtifactProtocolContracts(t *testing.T) {
+func TestContractConformanceArtifactProtocol(t *testing.T) {
 	m := lifecycle.ArtifactManifest{Artifact: newID[ids.Artifact](t), Tenant: newID[ids.Tenant](t), Task: newID[ids.Task](t), Attempt: newID[ids.Attempt](t), Operation: newID[ids.Operation](t), Producer: newID[ids.Provider](t), Kind: lifecycle.ArtifactCodeChange, Digest: identity.DigestOf([]byte("patch")), Size: 5, MediaType: "text/plain", SourceRevision: "rev1", WriterEpoch: 1}
 	p := ResultProposed{SessionRef: "s", TurnRef: "t", SourceRevision: "rev1", Artifacts: []ArtifactDeclaration{{NativeRef: "patch", Kind: m.Kind, Digest: m.Digest, Size: m.Size, MediaType: m.MediaType}}}
 	for _, tc := range []struct {
@@ -41,5 +43,11 @@ func TestArtifactProtocolContracts(t *testing.T) {
 	}
 	if ClassifyEntry(EntryResultProposed) != EntryApply {
 		t.Fatal("proposal not applied")
+	}
+	for _, raw := range []string{`{}`, `{"present":false}`, `{"size":0}`, `{"present":null,"size":0}`, `{"present":false,"size":0,"digest":null}`} {
+		var stored ArtifactStored
+		if json.Unmarshal([]byte(raw), &stored) == nil {
+			t.Fatalf("missing or null observation accepted: %s", raw)
+		}
 	}
 }

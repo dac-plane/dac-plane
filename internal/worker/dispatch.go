@@ -49,6 +49,9 @@ func (w *Worker) transition(expectedVersion uint64, at time.Time) (store.Transit
 // to poison. Poison rows are exhausted with a static reason so they stay
 // inspectable and never spin.
 func (w *Worker) handleRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, now time.Time) error {
+	if row.Record == lifecycle.RecordArtifact && row.Event == "stage" {
+		return w.artifactRow(ctx, tenant, row)
+	}
 	if row.Record == lifecycle.RecordAttention {
 		if row.Event != string(lifecycle.AttentionDecide) {
 			return w.poison(ctx, tenant, row, now, reasonNoHandler)
@@ -287,6 +290,11 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			return exhaust(claim, reasonUnknownOperation)
 		}
 		return nil, err
+	}
+	if row.Record == lifecycle.RecordOperation {
+		if _, _, err = store.LockResultScope(ctx, uow, tenant, operation.Attempt); err != nil {
+			return nil, err
+		}
 	}
 	switch operation.State {
 	case lifecycle.OperationSucceeded, lifecycle.OperationFailed, lifecycle.OperationRejected:
@@ -538,6 +546,12 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 	}()
 	switch reply.Durability {
 	case lifecycle.SendAccepted, lifecycle.SendRejected, lifecycle.SendUnknown:
+		if err := store.LockDispatchResult(ctx, uow, tenant, row.ID); err != nil {
+			return err
+		}
+		if _, _, err := store.LockResultScope(ctx, uow, tenant, prepared.operation.Attempt); err != nil {
+			return err
+		}
 		event := reply.Durability.Event()
 		target := map[lifecycle.OperationEvent]lifecycle.OperationState{
 			lifecycle.OperationSendAccepted: lifecycle.OperationAccepted,
@@ -716,6 +730,9 @@ func (w *Worker) abandonOperation(ctx context.Context, uow *store.UnitOfWork, te
 	}
 	if operation.State != lifecycle.OperationDispatched {
 		return nil
+	}
+	if _, _, err = store.LockResultScope(ctx, uow, tenant, operation.Attempt); err != nil {
+		return err
 	}
 	event, target := lifecycle.OperationSendUnknown, lifecycle.OperationUncertain
 	if neverSent {

@@ -1,6 +1,8 @@
 package contracts
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -77,6 +79,34 @@ type ArtifactStored struct {
 	Present bool            `json:"present"`
 	Digest  identity.Digest `json:"digest,omitempty"`
 	Size    uint64          `json:"size"`
+}
+
+// UnmarshalJSON preserves required false/zero observations. Missing fields
+// cannot be confused with an explicitly observed absent, zero-byte object.
+func (s *ArtifactStored) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Present *bool           `json:"present"`
+		Digest  json.RawMessage `json:"digest"`
+		Size    *uint64         `json:"size"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&wire); err != nil {
+		return err
+	}
+	if wire.Present == nil || wire.Size == nil {
+		return ErrInvalid
+	}
+	*s = ArtifactStored{Present: *wire.Present, Size: *wire.Size}
+	if len(wire.Digest) > 0 {
+		if !s.Present {
+			return ErrInvalid
+		}
+		if err := json.Unmarshal(wire.Digest, &s.Digest); err != nil {
+			return err
+		}
+	}
+	return s.Validate()
 }
 
 func (s ArtifactStored) Validate() error {

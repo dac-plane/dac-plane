@@ -216,6 +216,9 @@ func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row s
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	if err := store.LockDispatchResult(ctx, uow, tenant, row.ID); err != nil {
+		return err
+	}
 	if reply.Durability == lifecycle.SendRejected {
 		// The steer cannot reach the native request: the wait supersedes as
 		// the only end reachable from a rejected delivery. Work stays as the
@@ -255,6 +258,9 @@ func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row s
 // longer allows — a wait closed concurrently, a delivery already marked —
 // applies nothing, which callers treat as the state having its story already.
 func (w *Worker) moveAttention(ctx context.Context, uow *store.UnitOfWork, tenant ids.TenantID, request lifecycle.AttentionRequest, event lifecycle.AttentionEvent, now time.Time) (lifecycle.AttentionRequest, bool, error) {
+	if _, _, err := store.LockResultScope(ctx, uow, tenant, request.Attempt); err != nil {
+		return request, false, err
+	}
 	current := request
 	for try := 0; try < 2; try++ {
 		tr, err := w.transition(current.Version, now)

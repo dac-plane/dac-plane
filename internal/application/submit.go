@@ -252,9 +252,6 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 		return nil, err
 	}
 
-	// Reserve before anything dispatchable exists. The reservation identity
-	// derives from the Attempt, as the dispatch loop's budget gate expects,
-	// so its later check finds this hold instead of taking a second one.
 	budgetID, err := ids.New[ids.Budget]()
 	if err != nil {
 		return nil, err
@@ -263,32 +260,49 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := store.InsertBudget(ctx, u.uow, budget); err != nil {
+	if _, _, err = store.InsertBudget(ctx, u.uow, budget); err != nil {
 		return nil, err
 	}
-	reservationID, err := ids.Parse[ids.Reservation](attempt.ID.String())
+	result, err := scheduleAttempt(ctx, u, task, attempt, budget, cmd, harness, commandSubmitTask)
 	if err != nil {
 		return nil, err
 	}
+	return json.Marshal(result)
+}
+
+// scheduleAttempt is shared by first submission and request_changes. It
+// records the reservation, operation, spend challenge and dispatch atomically;
+// callers supply the existing Task/Budget rather than creating another Task.
+func scheduleAttempt(ctx context.Context, u *unit, task lifecycle.Task, attempt lifecycle.Attempt, budget lifecycle.Budget, cmd SubmitTask, harness lifecycle.HarnessQualification, kind string) (submission, error) {
+	principal := cmd.Actor.Principal()
+	tenant := task.Tenant
+	var tr store.Transition
+	// Reserve before anything dispatchable exists. The reservation identity
+	// derives from the Attempt, as the dispatch loop's budget gate expects,
+	// so its later check finds this hold instead of taking a second one.
+	reservationID, err := ids.Parse[ids.Reservation](attempt.ID.String())
+	if err != nil {
+		return submission{}, err
+	}
 	if tr, err = u.transition(budget.Version, nil); err != nil {
-		return nil, err
+		return submission{}, err
 	}
 	if _, _, _, err := store.ReserveBudget(ctx, u.uow, store.ReservationRequest{
 		Tenant: tenant, Budget: budget.ID, Reservation: reservationID, Attempt: attempt.ID, Amount: cmd.Amount,
 	}, tr); err != nil {
-		return nil, err
+		return submission{}, err
 	}
 
 	operationID, err := ids.New[ids.Operation]()
 	if err != nil {
-		return nil, err
+		return submission{}, err
 	}
 	operation, err := lifecycle.NewProviderOperation(operationID, tenant, attempt.ID, cmd.Provider, cmd.At)
 	if err != nil {
-		return nil, err
+		return submission{}, err
 	}
 	if _, _, err := store.InsertOperation(ctx, u.uow, operation); err != nil {
-		return nil, err
+		return submission{}, err
 	}
 
 	result := submission{
@@ -302,27 +316,27 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 		// commits later, together with the receipt.
 		spendID, err := ids.New[ids.Spend]()
 		if err != nil {
-			return nil, err
+			return submission{}, err
 		}
 		challenge, err := lifecycle.BeginSpend(spendID, lifecycle.SpendTerms{
 			Tenant: tenant, Principal: principal.ID, Task: task.ID, Attempt: attempt.ID,
 			Operation: operation.ID, Amount: cmd.Amount, Unit: cmd.Unit,
-			Nonce: identity.DigestOf([]byte(commandSubmitTask + ":" + tenant.String() + ":" + principal.ID.String() + ":" + cmd.Nonce)),
+			Nonce: identity.DigestOf([]byte(kind + ":" + tenant.String() + ":" + principal.ID.String() + ":" + cmd.Nonce)),
 		}, cmd.Deadline, cmd.At)
 		if err != nil {
-			return nil, err
+			return submission{}, err
 		}
 		if _, _, err := store.InsertSpendChallenge(ctx, u.uow, challenge); err != nil {
-			return nil, err
+			return submission{}, err
 		}
 		result.Spend = spendID.String()
 	} else if err := enqueue(ctx, u, tenant, dispatchSpec{
 		operation: operation, task: task.ID, attempt: attempt.ID, demand: cmd.Demand,
 		deadline: cmd.Deadline, unit: cmd.Unit, amount: cmd.Amount,
 	}); err != nil {
-		return nil, err
+		return submission{}, err
 	}
-	return json.Marshal(result)
+	return result, nil
 }
 
 // enqueue moves the recorded operation to dispatched together with its

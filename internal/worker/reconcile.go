@@ -76,6 +76,11 @@ func (w *Worker) reconcileTenant(ctx context.Context, tenant ids.TenantID) error
 }
 
 func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation) error {
+	if yes, err := store.IsArtifactOperation(ctx, w.pool, tenant, operation.ID); err != nil {
+		return err
+	} else if yes {
+		return nil
+	}
 	if action, err := store.GetGovernedAction(ctx, w.pool, tenant, operation.ID); err == nil {
 		return w.reconcileGoverned(ctx, tenant, operation, action)
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -187,6 +192,9 @@ func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operatio
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	if _, _, err := store.LockResultScope(ctx, uow, tenant, operation.Attempt); err != nil {
+		return err
+	}
 	current, err := store.GetOperation(ctx, uow, tenant, operation.ID)
 	if err != nil {
 		return err

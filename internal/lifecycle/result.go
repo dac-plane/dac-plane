@@ -19,7 +19,10 @@ type ResultRevision struct {
 	Number    uint32           `json:"number"`
 	Previous  ids.RevisionID   `json:"previous_revision_id,omitzero"`
 	Artifacts []ids.ArtifactID `json:"artifact_ids"`
-	CreatedAt time.Time        `json:"created_at"`
+	// Verifications is absent only on legacy revisions. New application
+	// finalization supplies an immutable integrity record for every artifact.
+	Verifications []ids.VerificationID `json:"verification_ids,omitempty"`
+	CreatedAt     time.Time            `json:"created_at"`
 }
 
 // Validate reports whether the revision is complete and its lineage shape is
@@ -40,6 +43,16 @@ func (r ResultRevision) Validate() error {
 			return fmt.Errorf("%w: result revision artifacts must be set and distinct", ErrInvalid)
 		}
 		seen[artifact] = true
+	}
+	verified := map[ids.VerificationID]bool{}
+	if len(r.Verifications) > 0 && len(r.Verifications) != len(r.Artifacts) {
+		return fmt.Errorf("%w: verification must cover every artifact", ErrInvalid)
+	}
+	for _, id := range r.Verifications {
+		if id.IsZero() || verified[id] {
+			return fmt.Errorf("%w: verification IDs must be set and distinct", ErrInvalid)
+		}
+		verified[id] = true
 	}
 	return nil
 }

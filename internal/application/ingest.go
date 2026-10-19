@@ -84,6 +84,13 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 	}
 	// A governed action has its own receipt path. Its operation cannot serve
 	// as a runtime turn or resolve the runtime's independent uncertainty.
+	artifactOperation, err := store.IsArtifactOperation(ctx, uow, peer.Tenant, event.Operation)
+	if err != nil {
+		return Ingestion{}, err
+	}
+	if artifactOperation {
+		return Ingestion{}, &contracts.Failure{Code: contracts.FailureUnauthorized, Message: "artifact operations require their admission path"}
+	}
 	if _, err := store.GetGovernedAction(ctx, uow, peer.Tenant, event.Operation); err == nil {
 		if err = recordForgedEnvelope(ctx, uow, peer, event, operation, at); err != nil {
 			return Ingestion{}, err
@@ -94,6 +101,9 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 		committed = true
 		return Ingestion{}, &contracts.Failure{Code: contracts.FailureUnauthorized, Message: "governed action observations require their receipt path"}
 	} else if !errors.Is(err, store.ErrNotFound) {
+		return Ingestion{}, err
+	}
+	if _, _, err = store.LockResultScope(ctx, uow, peer.Tenant, event.Attempt); err != nil {
 		return Ingestion{}, err
 	}
 	cursor, err := store.LockCursor(ctx, uow, contracts.Cursor{
@@ -211,6 +221,8 @@ func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOu
 		outcome, err = applyDecoded(ctx, a, entry, a.decisionConsumed)
 	case contracts.EntryRuntimeStopped:
 		outcome, err = applyDecoded(ctx, a, entry, a.runtimeStopped)
+	case contracts.EntryResultProposed:
+		outcome, err = applyDecoded(ctx, a, entry, a.resultProposed)
 	}
 	return outcome, err
 }
@@ -353,7 +365,7 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 		}
 		return 0, err
 	} else if replayed {
-		return entryApplied, nil
+		return entryApplied, a.activateResult(ctx)
 	}
 	if payload.Outcome == lifecycle.TurnInterrupted {
 		// An interrupted turn reports the runtime's own end of work: the
@@ -368,7 +380,7 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 		return entryApplied, nil
 	}
 	if payload.Outcome != lifecycle.TurnFailed {
-		return entryApplied, nil
+		return entryApplied, a.activateResult(ctx)
 	}
 	attempt, applied, refusal, err := a.step.Attempt(ctx, a.event.Attempt, lifecycle.AttemptFail, "")
 	if err != nil {
