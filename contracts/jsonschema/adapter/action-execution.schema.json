@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"ActionExecution",
+  "type":"object",
+  "required":["request","grant_id","decision_id","source"],
+  "additionalProperties":false,
+  "properties":{
+    "request":{"$ref":"../identity/action-request.schema.json"},
+    "grant_id":{"$ref":"../identity/common.schema.json#/$defs/uuidv7"},
+    "decision_id":{"$ref":"../identity/common.schema.json#/$defs/uuidv7"},
+    "source":{"enum":["one_time_approval","standing_grant"]},
+    "precondition":{"$ref":"action-precondition.schema.json"}
+  }
+}

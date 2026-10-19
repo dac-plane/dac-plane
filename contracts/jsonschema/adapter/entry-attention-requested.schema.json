@@ -6,6 +6,7 @@
   "required": ["native_ref", "kind", "expires_at"],
   "additionalProperties": false,
   "properties": {
+    "scope": { "$ref": "../identity/common.schema.json#/$defs/scope" },
     "native_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" },
     "kind": { "enum": ["question", "action_approval", "authentication_handoff", "blocked_work"] },
     "action": { "$ref": "../identity/common.schema.json#/$defs/actionClass" },
@@ -14,5 +15,5 @@
   },
   "if": { "properties": { "kind": { "const": "action_approval" } } },
   "then": { "required": ["action", "action_digest"] },
-  "else": { "not": { "anyOf": [{ "required": ["action"] }, { "required": ["action_digest"] }] } }
+  "else": { "not": { "anyOf": [{ "required": ["action"] }, { "required": ["action_digest"] }, { "required": ["scope"] }] } }
 }

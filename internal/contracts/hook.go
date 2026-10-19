@@ -149,16 +149,17 @@ func (r HookResponse) Validate() error {
 type HookOutcome string
 
 const (
-	HookAllowed   HookOutcome = "allowed"
-	HookDenied    HookOutcome = "denied"
-	HookMissing   HookOutcome = "missing"
-	HookTimedOut  HookOutcome = "timed_out"
-	HookMalformed HookOutcome = "malformed"
+	HookAllowed     HookOutcome = "allowed"
+	HookDenied      HookOutcome = "denied"
+	HookMissing     HookOutcome = "missing"
+	HookTimedOut    HookOutcome = "timed_out"
+	HookMalformed   HookOutcome = "malformed"
+	HookUnavailable HookOutcome = "unavailable"
 )
 
 // HookOutcomes lists every HookOutcome.
 func HookOutcomes() []HookOutcome {
-	return []HookOutcome{HookAllowed, HookDenied, HookMissing, HookTimedOut, HookMalformed}
+	return []HookOutcome{HookAllowed, HookDenied, HookMissing, HookTimedOut, HookMalformed, HookUnavailable}
 }
 
 // HookEvidence is the safe audit record of a pre-action decision: digests of

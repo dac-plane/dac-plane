@@ -235,13 +235,13 @@ func InsertGrant(ctx context.Context, u *UnitOfWork, grant identity.AuthorityGra
 		return err
 	}
 	inserted, err := insertReturning(ctx, u, `
-		insert into authority_grant (tenant_id, grant_id, attempt_id, provider_id, action, mode, operation_id, input_digest, scope_class, scope_target, granted_by, policy_generation, issued_at, expires_at, revoked_at, retired_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		insert into authority_grant (tenant_id, grant_id, attempt_id, provider_id, action, mode, operation_id, input_digest, scope_class, scope_target, granted_by, policy_generation, issued_at, expires_at, revoked_at, retired_at, decision_id)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		grant.Tenant.String(), grant.ID.String(), grant.Attempt.String(), grant.Provider.String(),
 		string(grant.Action), string(grant.Mode), uuidOrNil(grant.Operation), textOrNil(string(grant.InputDigest)),
 		textOrNil(string(grant.Scope.Class)), textOrNil(grant.Scope.Target), grant.GrantedBy.String(),
 		int64(grant.PolicyGeneration), grant.IssuedAt, grant.ExpiresAt,
-		timeOrNil(grant.RevokedAt), timeOrNil(grant.RetiredAt),
+		timeOrNil(grant.RevokedAt), timeOrNil(grant.RetiredAt), uuidOrNil(grant.Decision),
 	)
 	if err != nil {
 		return err
@@ -265,7 +265,7 @@ func InsertGrant(ctx context.Context, u *UnitOfWork, grant identity.AuthorityGra
 // grantsEqualIssuance compares the issuance payload of two grants.
 // Revocation and retirement are post-issuance mutations, not payload.
 func grantsEqualIssuance(a, b identity.AuthorityGrant) bool {
-	return a.ID == b.ID && a.Tenant == b.Tenant && a.Attempt == b.Attempt && a.Provider == b.Provider &&
+	return a.Decision == b.Decision && a.ID == b.ID && a.Tenant == b.Tenant && a.Attempt == b.Attempt && a.Provider == b.Provider &&
 		a.Action == b.Action && a.Mode == b.Mode && a.Operation == b.Operation &&
 		a.InputDigest == b.InputDigest && a.Scope == b.Scope && a.GrantedBy == b.GrantedBy &&
 		a.PolicyGeneration == b.PolicyGeneration && sameInstant(a.IssuedAt, b.IssuedAt) && sameInstant(a.ExpiresAt, b.ExpiresAt)
@@ -329,6 +329,13 @@ func GetGrant(ctx context.Context, q Querier, tenant ids.TenantID, id ids.GrantI
 	}
 	if retired != nil {
 		grant.RetiredAt = *retired
+	}
+	var decision *string
+	if err := q.QueryRow(ctx, `select decision_id::text from authority_grant where tenant_id=$1 and grant_id=$2`, tenant.String(), id.String()).Scan(&decision); err != nil {
+		return grant, err
+	}
+	if grant.Decision, parseErr = parseOptionalID[ids.Decision]("authority_grant.decision_id", decision); parseErr != nil {
+		return grant, parseErr
 	}
 	if err := grant.Validate(); err != nil {
 		return identity.AuthorityGrant{}, err
@@ -394,13 +401,17 @@ func InsertUse(ctx context.Context, u *UnitOfWork, use identity.AuthorityUse) (i
 	if err := use.Validate(); err != nil {
 		return identity.AuthorityUse{}, false, err
 	}
+	scope, err := json.Marshal(use.Scope)
+	if err != nil {
+		return use, false, err
+	}
 	inserted, err := insertReturning(ctx, u, `
-		insert into authority_use (tenant_id, operation_id, attempt_id, provider_id, action, input_digest, grant_id, source, granted_by, outcome, reason, policy_generation, decided_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		insert into authority_use (tenant_id, operation_id, attempt_id, provider_id, action, input_digest, grant_id, source, granted_by, outcome, reason, policy_generation, decided_at, scope, decision_id)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)`,
 		use.Tenant.String(), use.Operation.String(), use.Attempt.String(), use.Provider.String(),
 		string(use.Action), string(use.InputDigest), uuidOrNil(use.Grant), textOrNil(string(use.Source)),
 		uuidOrNil(use.GrantedBy), string(use.Outcome), textOrNil(string(use.Reason)),
-		int64(use.PolicyGeneration), use.DecidedAt,
+		int64(use.PolicyGeneration), use.DecidedAt, string(scope), uuidOrNil(use.Decision),
 	)
 	if err != nil {
 		return identity.AuthorityUse{}, false, err
@@ -472,6 +483,19 @@ func GetUse(ctx context.Context, q Querier, tenant ids.TenantID, operation ids.O
 		use.Reason = identity.DenialReason(*reasonText)
 	}
 	use.PolicyGeneration = uint64(generation)
+	var scope []byte
+	var decision *string
+	if err := q.QueryRow(ctx, `select scope, decision_id::text from authority_use where tenant_id=$1 and operation_id=$2 and decided_at=$3 and action=$4`, tenant.String(), operation.String(), decidedAt.Truncate(time.Microsecond), string(action)).Scan(&scope, &decision); err != nil {
+		return use, err
+	}
+	if len(scope) > 0 {
+		if err := json.Unmarshal(scope, &use.Scope); err != nil {
+			return use, err
+		}
+	}
+	if use.Decision, parseErr = parseOptionalID[ids.Decision]("authority_use.decision_id", decision); parseErr != nil {
+		return use, parseErr
+	}
 	if err := use.Validate(); err != nil {
 		return identity.AuthorityUse{}, err
 	}
@@ -479,7 +503,7 @@ func GetUse(ctx context.Context, q Querier, tenant ids.TenantID, operation ids.O
 }
 
 func usesEqual(a, b identity.AuthorityUse) bool {
-	return a.Tenant == b.Tenant && a.Operation == b.Operation && a.Attempt == b.Attempt &&
+	return a.Scope == b.Scope && a.Decision == b.Decision && a.Tenant == b.Tenant && a.Operation == b.Operation && a.Attempt == b.Attempt &&
 		a.Provider == b.Provider && a.Action == b.Action && a.InputDigest == b.InputDigest &&
 		a.Grant == b.Grant && a.Source == b.Source && a.GrantedBy == b.GrantedBy &&
 		a.Outcome == b.Outcome && a.Reason == b.Reason &&

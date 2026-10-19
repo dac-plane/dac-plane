@@ -38,6 +38,7 @@ func approval(ref string, expires time.Time) contracts.AttentionRequested {
 	return contracts.AttentionRequested{
 		NativeRef: ref, Kind: lifecycle.AttentionActionApproval,
 		Action: "message.send", ActionDigest: identity.DigestOf([]byte("send this")), ExpiresAt: expires,
+		Scope: identity.Scope{Class: identity.ScopeSubject, Target: "recipient"},
 	}
 }
 
@@ -391,7 +392,7 @@ func TestDecisionApproveOnceIssuesAllowOnceGrant(t *testing.T) {
 	switch {
 	case grant.Mode != identity.GrantAllowOnce || grant.Action != identity.ActionClass("message.send"):
 		t.Fatalf("grant = %s/%s, want allow_once message.send", grant.Mode, grant.Action)
-	case grant.Attempt != s.Attempt.ID || grant.Provider != f.provider || grant.Operation != s.Operation.ID:
+	case grant.Attempt != s.Attempt.ID || grant.Provider != f.provider || grant.Operation != request.Operation || grant.Operation == s.Operation.ID:
 		t.Fatalf("grant = %+v, want the request's attempt, provider and operation", grant)
 	case grant.InputDigest != identity.DigestOf([]byte("send this")) || grant.GrantedBy != f.principal:
 		t.Fatalf("grant = %+v, want the observed digest and the approver", grant)

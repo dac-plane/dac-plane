@@ -9,6 +9,7 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "scope": { "$ref": "../identity/common.schema.json#/$defs/scope" },
     "attention_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
@@ -38,7 +39,8 @@
         "allOf": [
           { "not": { "required": ["provider_id"] } },
           { "not": { "required": ["operation_id"] } },
-          { "not": { "required": ["action_digest"] } }
+          { "not": { "required": ["action_digest"] } },
+          { "not": { "required": ["scope"] } }
         ]
       }
     },

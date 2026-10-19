@@ -207,6 +207,9 @@ func TestAuthorizeDenials(t *testing.T) {
 	}
 
 	for _, reason := range DenialReasons() {
+		if reason == DenialHookRejected {
+			continue
+		} // Covered by TestAuthorityHookDenial; not an authority predicate.
 		arrange, ok := cases[reason]
 		if !ok {
 			t.Errorf("no Authorize case for denial reason %s", reason)
@@ -229,6 +232,22 @@ func TestAuthorizeDenials(t *testing.T) {
 				t.Fatalf("AuthorityUse.Validate() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestAuthorityHookDenial(t *testing.T) {
+	f := newFixture(t)
+	use, err := DenyAfterHook(f.request, &f.allowOnce, f.policy, testNow)
+	if err != nil || use.Outcome != UseDenied || use.Reason != DenialHookRejected || !f.allowOnce.RetiredAt.IsZero() {
+		t.Fatalf("hook denial = %+v, %v", use, err)
+	}
+}
+
+func TestAuthorityOneTimeIssuanceHonorsScopedNever(t *testing.T) {
+	f := newFixture(t)
+	f.policy.Denies = []DenyPolicy{{Action: f.allowOnce.Action, Target: f.request.Scope.Target}}
+	if err := IssueGrantForScope(f.allowOnce, f.request.Scope, f.policy); err != DenialByPolicy {
+		t.Fatalf("scoped never issued one-time authority: %v", err)
 	}
 }
 

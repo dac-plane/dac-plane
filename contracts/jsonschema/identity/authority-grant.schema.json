@@ -9,6 +9,7 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "decision_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "grant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "attempt_id": { "$ref": "common.schema.json#/$defs/uuidv7" },

@@ -11,7 +11,7 @@
     "attention_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "request_version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
     "principal_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-    "kind": { "enum": ["approve_once", "deny", "answer"] },
+    "kind": { "enum": ["approve_once", "approve_standing", "deny", "answer"] },
     "answer_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
     "decided_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
   },

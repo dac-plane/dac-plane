@@ -76,6 +76,11 @@ func (w *Worker) reconcileTenant(ctx context.Context, tenant ids.TenantID) error
 }
 
 func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation) error {
+	if action, err := store.GetGovernedAction(ctx, w.pool, tenant, operation.ID); err == nil {
+		return w.reconcileGoverned(ctx, tenant, operation, action)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
 	port, ok := w.ports[operation.Provider]
 	if !ok {
 		w.stats.SkippedNoPort.Add(1)

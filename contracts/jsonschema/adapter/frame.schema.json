@@ -65,7 +65,7 @@
           "enum": [
             "start_turn", "steer_turn", "interrupt", "export_artifacts",
             "provision", "stop", "observe",
-            "pre_action", "post_action", "action_failed",
+            "pre_action", "post_action", "action_failed", "execute_action",
             "authorize_upload", "stat_object", "commit_manifest"
           ]
         },
@@ -84,7 +84,7 @@
         },
         {
           "if": { "properties": { "role": { "const": "enforcement" } } },
-          "then": { "properties": { "method": { "enum": ["pre_action", "post_action", "action_failed"] } } }
+          "then": { "properties": { "method": { "enum": ["pre_action", "post_action", "action_failed", "execute_action"] } } }
         },
         {
           "if": { "properties": { "role": { "const": "artifact_store" } } },

@@ -169,6 +169,7 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"attempt stop flag not boolean", "cancelling attempt", func(d map[string]any) { d["runtime_stopped"] = "yes" }},
 		{"approval without operation", "pending approval", func(d map[string]any) { delete(d, "operation_id") }},
 		{"approval without digest", "pending approval", func(d map[string]any) { delete(d, "action_digest") }},
+		{"approval malformed scope", "pending approval", func(d map[string]any) { d["scope"] = map[string]any{"class": "unbounded"} }},
 		{"approval without provider", "pending approval", func(d map[string]any) { delete(d, "provider_id") }},
 		{"question with provider", "pending question", func(d map[string]any) { d["provider_id"] = otherID }},
 		{"attention without policy generation", "pending approval", func(d map[string]any) { delete(d, "policy_generation") }},

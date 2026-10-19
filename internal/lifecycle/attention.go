@@ -124,6 +124,7 @@ var attentionMachine = newMachine(AttentionStates(), AttentionEvents(),
 // the tenant policy the request was raised under: a policy change invalidates
 // any decision on it, so the person re-evaluates under the new policy.
 type AttentionRequest struct {
+	Scope            identity.Scope    `json:"scope,omitzero"`
 	ID               ids.AttentionID   `json:"attention_id"`
 	Tenant           ids.TenantID      `json:"tenant_id"`
 	Task             ids.TaskID        `json:"task_id"`
@@ -153,6 +154,14 @@ func NewAttentionRequest(request AttentionRequest, at time.Time) (AttentionReque
 
 // Validate reports whether the record is complete and consistent.
 func (r AttentionRequest) Validate() error {
+	if r.Scope != (identity.Scope{}) {
+		if r.Kind != AttentionActionApproval {
+			return fmt.Errorf("%w: only action approvals have scope", ErrInvalid)
+		}
+		if err := r.Scope.Validate(); err != nil {
+			return err
+		}
+	}
 	if r.ID.IsZero() || r.Tenant.IsZero() || r.Task.IsZero() || r.Attempt.IsZero() || r.Version == 0 || r.PolicyGeneration == 0 {
 		return fmt.Errorf("%w: attention request requires identifiers, a positive version and a policy generation", ErrInvalid)
 	}
@@ -218,21 +227,22 @@ func (r AttentionRequest) apply(change Change, event AttentionEvent, expectedVer
 type DecisionKind string
 
 const (
-	DecisionApproveOnce DecisionKind = "approve_once"
-	DecisionDeny        DecisionKind = "deny"
-	DecisionAnswer      DecisionKind = "answer"
+	DecisionApproveOnce     DecisionKind = "approve_once"
+	DecisionApproveStanding DecisionKind = "approve_standing"
+	DecisionDeny            DecisionKind = "deny"
+	DecisionAnswer          DecisionKind = "answer"
 )
 
 // DecisionKinds lists every DecisionKind.
 func DecisionKinds() []DecisionKind {
-	return []DecisionKind{DecisionApproveOnce, DecisionDeny, DecisionAnswer}
+	return []DecisionKind{DecisionApproveOnce, DecisionApproveStanding, DecisionDeny, DecisionAnswer}
 }
 
 // allowedFor reports whether a decision kind answers a request kind. Only an
 // action approval can be approved; any request can be denied.
 func (k DecisionKind) allowedFor(kind AttentionKind) bool {
 	switch k {
-	case DecisionApproveOnce:
+	case DecisionApproveOnce, DecisionApproveStanding:
 		return kind == AttentionActionApproval
 	case DecisionAnswer:
 		return kind != AttentionActionApproval
@@ -317,11 +327,24 @@ func (r AttentionRequest) AllowOnceGrant(decision Decision, id ids.GrantID, acti
 		return identity.AuthorityGrant{}, fmt.Errorf("%w: only a recorded approval of an action approval confers authority", ErrInvalid)
 	}
 	grant := identity.AuthorityGrant{
-		ID: id, Tenant: r.Tenant, Attempt: r.Attempt, Provider: r.Provider, Action: action,
+		Decision: decision.ID,
+		ID:       id, Tenant: r.Tenant, Attempt: r.Attempt, Provider: r.Provider, Action: action,
 		Mode: identity.GrantAllowOnce, Operation: r.Operation, InputDigest: r.ActionDigest,
 		GrantedBy: decision.Principal, PolicyGeneration: r.PolicyGeneration,
 		IssuedAt: decision.DecidedAt, ExpiresAt: expiresAt,
 	}
+	return grant, grant.Validate()
+}
+
+// StandingGrant derives renewable-use authority for the approval's exact scope.
+func (r AttentionRequest) StandingGrant(decision Decision, id ids.GrantID, action identity.ActionClass, expiresAt time.Time) (identity.AuthorityGrant, error) {
+	if r.Kind != AttentionActionApproval || decision.Kind != DecisionApproveStanding || decision.ID != r.Decision || !slices.Contains(decidedStates, r.State) {
+		return identity.AuthorityGrant{}, fmt.Errorf("%w: standing authority requires a recorded standing approval", ErrInvalid)
+	}
+	grant := identity.AuthorityGrant{ID: id, Tenant: r.Tenant, Attempt: r.Attempt, Provider: r.Provider,
+		Action: action, Mode: identity.GrantStanding, Scope: r.Scope, Decision: decision.ID,
+		GrantedBy: decision.Principal, PolicyGeneration: r.PolicyGeneration,
+		IssuedAt: decision.DecidedAt, ExpiresAt: expiresAt}
 	return grant, grant.Validate()
 }
 

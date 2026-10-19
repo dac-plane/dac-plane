@@ -6,6 +6,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -398,6 +399,15 @@ func GetAttention(ctx context.Context, q Querier, tenant ids.TenantID, id ids.At
 	}
 	request.Kind = lifecycle.AttentionKind(kind)
 	request.State = lifecycle.AttentionState(state)
+	var scope []byte
+	if err := q.QueryRow(ctx, `select scope from attention_request where tenant_id=$1 and attention_id=$2`, tenant.String(), id.String()).Scan(&scope); err != nil {
+		return request, err
+	}
+	if len(scope) > 0 {
+		if err := json.Unmarshal(scope, &request.Scope); err != nil {
+			return request, err
+		}
+	}
 	if err := request.Validate(); err != nil {
 		return lifecycle.AttentionRequest{}, err
 	}
@@ -422,6 +432,15 @@ func InsertAttention(ctx context.Context, u *UnitOfWork, request lifecycle.Atten
 		return lifecycle.AttentionRequest{}, false, err
 	}
 	if inserted {
+		if request.Scope != (identity.Scope{}) {
+			scope, err := json.Marshal(request.Scope)
+			if err != nil {
+				return request, false, err
+			}
+			if _, err := u.Exec(ctx, `update attention_request set scope=$3::jsonb where tenant_id=$1 and attention_id=$2`, request.Tenant.String(), request.ID.String(), string(scope)); err != nil {
+				return request, false, err
+			}
+		}
 		return request, false, nil
 	}
 	stored, loadErr := GetAttention(ctx, u, request.Tenant, request.ID)
@@ -431,7 +450,7 @@ func InsertAttention(ctx context.Context, u *UnitOfWork, request lifecycle.Atten
 	if loadErr != nil {
 		return lifecycle.AttentionRequest{}, false, loadErr
 	}
-	if stored.Task != request.Task || stored.Attempt != request.Attempt || stored.Kind != request.Kind ||
+	if stored.Scope != request.Scope || stored.Task != request.Task || stored.Attempt != request.Attempt || stored.Kind != request.Kind ||
 		stored.Provider != request.Provider || stored.Operation != request.Operation ||
 		stored.ActionDigest != request.ActionDigest || stored.PolicyGeneration != request.PolicyGeneration ||
 		stored.State != request.State || stored.Version != request.Version || stored.Decision != request.Decision ||

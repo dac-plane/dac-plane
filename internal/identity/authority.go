@@ -255,6 +255,7 @@ func (p Policy) denies(action ActionClass, scope Scope) bool {
 // standing grants. A standing grant lasts until expiry, revocation or a policy
 // generation change, and requires the effective permission to be always.
 type AuthorityGrant struct {
+	Decision         ids.DecisionID  `json:"decision_id,omitzero"`
 	ID               ids.GrantID     `json:"grant_id"`
 	Tenant           ids.TenantID    `json:"tenant_id"`
 	Attempt          ids.AttemptID   `json:"attempt_id"`
@@ -335,6 +336,21 @@ func IssueGrant(g AuthorityGrant, policy Policy) error {
 	return nil
 }
 
+// IssueGrantForScope checks the exact action scope, including targeted never
+// rules for a one-time grant whose own record binds operation and digest.
+func IssueGrantForScope(g AuthorityGrant, scope Scope, policy Policy) error {
+	if err := scope.Validate(); err != nil {
+		return err
+	}
+	if err := IssueGrant(g, policy); err != nil {
+		return err
+	}
+	if policy.denies(g.Action, scope) {
+		return DenialByPolicy
+	}
+	return nil
+}
+
 // DenialReason is why authority was refused. It is also an error so issuance
 // refusals can be matched with errors.Is.
 type DenialReason string
@@ -355,6 +371,7 @@ const (
 	DenialStaleGeneration DenialReason = "stale_generation"
 	DenialAboveCeiling    DenialReason = "above_ceiling"
 	DenialByPolicy        DenialReason = "denied_by_policy"
+	DenialHookRejected    DenialReason = "hook_rejected"
 )
 
 // DenialReasons lists every valid DenialReason.
@@ -363,7 +380,7 @@ func DenialReasons() []DenialReason {
 		DenialNoGrant, DenialCrossTenant, DenialWrongAttempt, DenialWrongAudience,
 		DenialWrongAction, DenialWrongOperation, DenialInputMismatch, DenialScopeMismatch,
 		DenialRevoked, DenialRetired, DenialNotYetValid, DenialExpired,
-		DenialStaleGeneration, DenialAboveCeiling, DenialByPolicy,
+		DenialStaleGeneration, DenialAboveCeiling, DenialByPolicy, DenialHookRejected,
 	}
 }
 
@@ -388,6 +405,8 @@ func UseOutcomes() []UseOutcome {
 // which is its stable identity. Denials are recorded too, with the grant that
 // was presented when there was one.
 type AuthorityUse struct {
+	Scope            Scope           `json:"scope"`
+	Decision         ids.DecisionID  `json:"decision_id,omitzero"`
 	Tenant           ids.TenantID    `json:"tenant_id"`
 	Attempt          ids.AttemptID   `json:"attempt_id"`
 	Provider         ids.ProviderID  `json:"provider_id"`
@@ -405,6 +424,11 @@ type AuthorityUse struct {
 
 // Validate reports whether the record is consistent with its outcome.
 func (u AuthorityUse) Validate() error {
+	if u.Scope != (Scope{}) {
+		if err := u.Scope.Validate(); err != nil {
+			return err
+		}
+	}
 	if u.Tenant.IsZero() || u.Attempt.IsZero() || u.Provider.IsZero() || u.Operation.IsZero() {
 		return fmt.Errorf("%w: authority use requires tenant, attempt, provider and operation", ErrInvalid)
 	}
@@ -462,6 +486,7 @@ func Authorize(req ActionRequest, grant *AuthorityGrant, policy Policy, now time
 	}
 
 	use := AuthorityUse{
+		Scope:            req.Scope,
 		Tenant:           req.Tenant,
 		Attempt:          req.Attempt,
 		Provider:         req.Provider,
@@ -472,6 +497,7 @@ func Authorize(req ActionRequest, grant *AuthorityGrant, policy Policy, now time
 		DecidedAt:        now,
 	}
 	if grant != nil {
+		use.Decision = grant.Decision
 		use.Grant = grant.ID
 		use.Source = grant.Mode.Source()
 		use.GrantedBy = grant.GrantedBy
@@ -490,6 +516,17 @@ func Authorize(req ActionRequest, grant *AuthorityGrant, policy Policy, now time
 	retired := *grant
 	retired.RetiredAt = now
 	return use, &retired, nil
+}
+
+// DenyAfterHook records a failed interception without consuming authority.
+func DenyAfterHook(req ActionRequest, grant *AuthorityGrant, policy Policy, now time.Time) (AuthorityUse, error) {
+	use, _, err := Authorize(req, grant, policy, now)
+	if err != nil {
+		return use, err
+	}
+	use.Outcome = UseDenied
+	use.Reason = DenialHookRejected
+	return use, nil
 }
 
 // denialReason returns the first failed predicate, or "" when authority holds.

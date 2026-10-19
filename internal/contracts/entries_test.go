@@ -137,6 +137,7 @@ func TestContractConformanceEntryPayloads(t *testing.T) {
 		{"requested question carries an action", "requested question", func(d map[string]any) { d["action"] = "fs.write" }},
 		{"requested bad action class", "requested approval", func(d map[string]any) { d["action"] = "FS.Write" }},
 		{"requested bad digest", "requested approval", func(d map[string]any) { d["action_digest"] = "md5:zz" }},
+		{"requested question carries scope", "requested question", func(d map[string]any) { d["scope"] = map[string]any{"class": "global"} }},
 		{"consumed empty native ref", "consumed", func(d map[string]any) { d["native_ref"] = "" }},
 		{"consumed smuggles an attention", "consumed", func(d map[string]any) { d["attention_id"] = "x" }},
 		{"stopped without active-run flag", "stopped", func(d map[string]any) { delete(d, "had_active_run") }},

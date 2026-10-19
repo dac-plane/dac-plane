@@ -172,6 +172,7 @@ func (o OperationOutcome) Validate() error {
 // handoff or blocked work. The request never names product identities; the
 // ingestion boundary resolves them from the bound event.
 type AttentionRequested struct {
+	Scope        identity.Scope          `json:"scope,omitzero"`
 	NativeRef    string                  `json:"native_ref"`
 	Kind         lifecycle.AttentionKind `json:"kind"`
 	Action       identity.ActionClass    `json:"action,omitempty"`
@@ -186,6 +187,11 @@ func (a AttentionRequested) Validate() error {
 		return fmt.Errorf("%w: attention.requested requires a bounded native reference, a known kind and an expiry", ErrInvalid)
 	}
 	if a.Kind == lifecycle.AttentionActionApproval {
+		if a.Scope != (identity.Scope{}) {
+			if err := a.Scope.Validate(); err != nil {
+				return err
+			}
+		}
 		if a.Action == "" || a.ActionDigest == "" {
 			return fmt.Errorf("%w: attention.requested approval requires an action and its digest", ErrInvalid)
 		}
@@ -197,7 +203,7 @@ func (a AttentionRequested) Validate() error {
 		}
 		return nil
 	}
-	if a.Action != "" || a.ActionDigest != "" {
+	if a.Action != "" || a.ActionDigest != "" || a.Scope != (identity.Scope{}) {
 		return fmt.Errorf("%w: only an action approval may carry an action", ErrInvalid)
 	}
 	return nil

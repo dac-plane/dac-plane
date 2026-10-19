@@ -9,6 +9,8 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "decision_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "scope": { "$ref": "common.schema.json#/$defs/scope" },
     "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "attempt_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
     "provider_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
@@ -23,7 +25,7 @@
       "enum": [
         "no_grant", "cross_tenant", "wrong_attempt", "wrong_audience", "wrong_action",
         "wrong_operation", "input_mismatch", "scope_mismatch", "revoked", "retired",
-        "not_yet_valid", "expired", "stale_generation", "above_ceiling", "denied_by_policy"
+        "not_yet_valid", "expired", "stale_generation", "above_ceiling", "denied_by_policy", "hook_rejected"
       ]
     },
     "policy_generation": { "$ref": "common.schema.json#/$defs/generation" },
