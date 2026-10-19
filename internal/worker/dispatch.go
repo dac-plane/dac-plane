@@ -62,6 +62,9 @@ func (w *Worker) handleRow(ctx context.Context, tenant ids.TenantID, row store.O
 	if body.CancelReason != "" {
 		return w.cancelRow(ctx, tenant, row, body, now)
 	}
+	if row.Record == lifecycle.RecordAuthorityUse {
+		return w.governedRow(ctx, tenant, row, body, now)
+	}
 	if row.Record != lifecycle.RecordOperation {
 		return w.poison(ctx, tenant, row, now, reasonNoHandler)
 	}
@@ -252,7 +255,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, reason, now); err != nil {
 			return nil, err
 		}
-		if err := w.abandonOperation(ctx, uow, tenant, body.Operation, claim.Epoch == 1, now); err != nil {
+		if err := w.abandonDispatch(ctx, uow, tenant, row, body.Operation, claim.Epoch == 1, now); err != nil {
 			return nil, err
 		}
 		w.stats.Exhausts.Add(1)
@@ -298,6 +301,31 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	default:
 		return exhaust(claim, reasonUnknownState)
 	}
+	if row.Record == lifecycle.RecordAuthorityUse && operation.State != lifecycle.OperationRecorded {
+		// A previous claim committed the send marker. Its effect is unknown
+		// after a crash; a replacement worker must never issue the action again.
+		event := lifecycle.OperationSendUnknown
+		if operation.State == lifecycle.OperationAccepted {
+			event = lifecycle.OperationOutcomeUnknown
+		}
+		tr, err := w.transition(operation.Version, now)
+		if err != nil {
+			return nil, err
+		}
+		if _, _, err = store.ApplyOperation(ctx, uow, tenant, operation.ID, event, "", tr); err != nil {
+			return nil, err
+		}
+		return ack(claim)
+	}
+	if row.Record == lifecycle.RecordAuthorityUse {
+		reason, err := store.CheckGovernedDispatch(ctx, uow, tenant, operation.ID, now)
+		if err != nil {
+			return nil, err
+		}
+		if reason != "" {
+			return exhaust(claim, string(reason))
+		}
+	}
 	attempt, err := store.GetAttempt(ctx, uow, tenant, operation.Attempt)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -310,6 +338,9 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		// particular, a transport-failed start must not become eligible again
 		// after the only interrupt has already been acknowledged.
 		return exhaust(claim, reasonAttemptCancelling)
+	}
+	if row.Record == lifecycle.RecordAuthorityUse && attempt.State != lifecycle.AttemptExecuting && attempt.State != lifecycle.AttemptWaitingInput {
+		return exhaust(claim, "attempt_not_active")
 	}
 	if now.After(body.Deadline) {
 		return exhaust(claim, reasonDeadlineExceeded)

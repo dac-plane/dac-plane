@@ -222,13 +222,13 @@ func GetAttemptByTask(ctx context.Context, q Querier, tenant ids.TenantID, task 
 	return GetAttempt(ctx, q, tenant, id)
 }
 
-// GetOperationByAttempt loads the attempt's provider operation, the newest
-// row first. One Attempt dispatches one operation; an attempt that never
-// dispatched has none.
+// GetOperationByAttempt loads the newest runtime operation for the attempt,
+// excluding governed actions. An attempt that never dispatched has none.
 func GetOperationByAttempt(ctx context.Context, q Querier, tenant ids.TenantID, attempt ids.AttemptID) (lifecycle.ProviderOperation, error) {
 	row := q.QueryRow(ctx, `
-		select operation_id::text from provider_operation
+		select operation_id::text from provider_operation p
 		where tenant_id = $1 and attempt_id = $2
+		and not exists (select 1 from governed_action g where g.tenant_id=p.tenant_id and g.operation_id=p.operation_id)
 		order by created_at desc, version desc limit 1`,
 		tenant.String(), attempt.String(),
 	)

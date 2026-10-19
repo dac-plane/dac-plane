@@ -82,6 +82,20 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 		committed = true
 		return Ingestion{}, failure
 	}
+	// A governed action has its own receipt path. Its operation cannot serve
+	// as a runtime turn or resolve the runtime's independent uncertainty.
+	if _, err := store.GetGovernedAction(ctx, uow, peer.Tenant, event.Operation); err == nil {
+		if err = recordForgedEnvelope(ctx, uow, peer, event, operation, at); err != nil {
+			return Ingestion{}, err
+		}
+		if err = uow.Commit(ctx); err != nil {
+			return Ingestion{}, err
+		}
+		committed = true
+		return Ingestion{}, &contracts.Failure{Code: contracts.FailureUnauthorized, Message: "governed action observations require their receipt path"}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return Ingestion{}, err
+	}
 	cursor, err := store.LockCursor(ctx, uow, contracts.Cursor{
 		Tenant: event.Tenant, Attempt: event.Attempt, Operation: event.Operation,
 		Stream: event.Stream, Generation: event.Generation,
@@ -470,7 +484,12 @@ func (a entryApplier) attentionRequested(ctx context.Context, entry contracts.En
 		ExpiresAt:  payload.ExpiresAt.UTC().Truncate(time.Microsecond),
 	}
 	if payload.Kind == lifecycle.AttentionActionApproval {
-		request.Provider, request.Operation = a.event.Provider, a.event.Operation
+		request.Operation, err = ids.New[ids.Operation]()
+		if err != nil {
+			return 0, err
+		}
+		request.Provider = a.event.Provider
+		request.Scope = payload.Scope
 		request.ActionDigest = payload.ActionDigest
 	}
 	if !request.ExpiresAt.After(a.step.At) {

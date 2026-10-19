@@ -15,7 +15,7 @@
       "enum": [
         "task", "attempt", "attention_request", "provider_operation", "harness_qualification",
         "migration_pass", "maintenance_claim", "budget", "reservation", "spend_challenge",
-        "artifact"
+        "artifact", "authority_use", "authority_grant"
       ]
     },
     "record_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },

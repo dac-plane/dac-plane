@@ -102,6 +102,14 @@ func (r *Resource) Ledger() *Ledger {
 type Ticket struct {
 	resource     *Resource
 	precondition contracts.ActionPrecondition
+	output       identity.Digest
+}
+
+// Abort frees a reserved resource when execution stops before its effect.
+func (t *Ticket) Abort() {
+	t.resource.mu.Lock()
+	defer t.resource.mu.Unlock()
+	delete(t.resource.open, t.precondition.Operation)
 }
 
 // Finish applies the action's effect exactly once and closes the ticket.
@@ -113,11 +121,23 @@ func (t *Ticket) Finish() error {
 		return fmt.Errorf("%w: ticket for %s is not open", ErrInvalidScenario, t.precondition.Operation)
 	}
 	delete(resource.open, t.precondition.Operation)
+	if failure := contracts.CheckPrecondition(t.precondition, resource.name, resource.token); failure != nil {
+		return failure
+	}
 	resource.token = resource.rotate()
+	t.output = resource.token
 	resource.ledger.recordEffect(Effect{
 		Operation: t.precondition.Operation,
 		Kind:      ResourceAction,
 		Detail:    resource.name,
 	})
 	return nil
+}
+
+// OutputDigest is the state produced by this ticket, captured atomically
+// with its effect rather than a later observation of the shared resource.
+func (t *Ticket) OutputDigest() identity.Digest {
+	t.resource.mu.Lock()
+	defer t.resource.mu.Unlock()
+	return t.output
 }

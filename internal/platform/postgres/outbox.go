@@ -30,7 +30,7 @@ type OutboxClaim struct {
 // lifecycle.RecordAttempt, lifecycle.AttemptRequestCancel and
 // lifecycle.RecordAttention with lifecycle.AttentionDecide; SQL spells them
 // out because placeholders cannot carry identifiers.
-const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel') or (record_kind = 'attention_request' and event = 'decide'))`
+const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel') or (record_kind = 'attention_request' and event = 'decide') or (record_kind='authority_use' and event='authorize'))`
 
 // ClaimOutboxRow takes the oldest due, unexhausted, dispatchable row for
 // owner. The SELECT skips rows locked by a live worker; the UPDATE moves the

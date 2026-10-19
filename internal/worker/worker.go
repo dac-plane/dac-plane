@@ -89,17 +89,18 @@ type Stats struct {
 // no registered port keep their rows pending; the worker never invents
 // operations, budgets or authority.
 type Worker struct {
-	pool   *pgxpool.Pool
-	logger *slog.Logger
-	ports  map[ids.ProviderID]contracts.Port
-	owner  string
-	cfg    Config
-	stats  Stats
+	pool        *pgxpool.Pool
+	logger      *slog.Logger
+	ports       map[ids.ProviderID]contracts.Port
+	enforcement map[ids.ProviderID]contracts.Port
+	owner       string
+	cfg         Config
+	stats       Stats
 }
 
 // New builds a worker. ports maps provider identities to their ports and
 // may be empty; owner identifies this worker in claim leases.
-func New(pool *pgxpool.Pool, logger *slog.Logger, ports map[ids.ProviderID]contracts.Port, cfg Config, owner string) (*Worker, error) {
+func New(pool *pgxpool.Pool, logger *slog.Logger, ports map[ids.ProviderID]contracts.Port, cfg Config, owner string, options ...func(*Worker)) (*Worker, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("worker requires a pool: %w", errInvalidConfig)
 	}
@@ -116,7 +117,11 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, ports map[ids.ProviderID]contr
 	for provider, port := range ports {
 		registry[provider] = port
 	}
-	return &Worker{pool: pool, logger: logger, ports: registry, owner: owner, cfg: cfg}, nil
+	w := &Worker{pool: pool, logger: logger, ports: registry, owner: owner, cfg: cfg}
+	for _, option := range options {
+		option(w)
+	}
+	return w, nil
 }
 
 // SystemActor attributes worker-driven transitions to the control plane.

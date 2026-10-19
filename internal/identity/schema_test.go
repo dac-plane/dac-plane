@@ -129,6 +129,7 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 			delete(d, "granted_by")
 		}},
 		{"use missing digest", "allowed use", func(d map[string]any) { delete(d, "input_digest") }},
+		{"use malformed scope", "allowed use", func(d map[string]any) { d["scope"] = map[string]any{"class": "unbounded"} }},
 		{"denied use without reason", "denied use", func(d map[string]any) { delete(d, "reason") }},
 		{"denied use unknown reason", "denied use", func(d map[string]any) { d["reason"] = "nope" }},
 		{"use grant without source", "denied grant use", func(d map[string]any) { delete(d, "source") }},

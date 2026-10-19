@@ -152,12 +152,10 @@ func (w *Worker) prepareDecision(ctx context.Context, tenant ids.TenantID, row s
 	if !applied {
 		return ack(claim)
 	}
-	// The steer names the request's own operation when it has one — an
-	// approval names the exact operation its action belongs to — and the
-	// attempt's live operation otherwise; contracts.Request requires one
-	// either way.
-	operationID := attention.Operation
-	if operationID.IsZero() {
+	// Steer the parent runtime, never the distinct action operation named
+	// by an approval request.
+	operationID := ids.OperationID{}
+	{
 		latest, err := store.GetOperationByAttempt(ctx, uow, tenant, attention.Attempt)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {

@@ -1,5 +1,5 @@
 // Package application The decision command records a responder's answer to an attention request
-// under the frozen Decide rules, issues an approval's one-time grant from the
+// under the frozen Decide rules, issues an approval's scoped grant from the
 // correlation row's action class, and enqueues the decision's delivery to the
 // runtime — all in one transaction the idempotency ledger replays.
 package application
@@ -118,6 +118,9 @@ func Decide(ctx context.Context, pool *pgxpool.Pool, cmd DecideAttention) (Decis
 // worker needs to steer the runtime without re-deriving anything, and what
 // the runtime surfaces at the native request.
 type decisionDelivery struct {
+	Operation    string               `json:"operation,omitempty"`
+	GrantID      string               `json:"grant_id,omitempty"`
+	Scope        identity.Scope       `json:"scope,omitzero"`
 	DecisionID   string               `json:"decision_id"`
 	Attention    string               `json:"attention"`
 	Attempt      string               `json:"attempt"`
@@ -148,7 +151,7 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	policy, err := store.GetPolicy(ctx, u.uow, tenant)
+	policy, err := store.GetPolicyForUpdate(ctx, u.uow, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -200,8 +203,8 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 	view.DecisionID = recorded.ID.String()
 	view.Kind = string(recorded.Kind)
 	view.State = string(decided.State)
-	if cmd.Kind == lifecycle.DecisionApproveOnce && !replayed {
-		// An approval confers one-time authority derived from the request
+	if (cmd.Kind == lifecycle.DecisionApproveOnce || cmd.Kind == lifecycle.DecisionApproveStanding) && !replayed {
+		// An approval confers authority derived from the request
 		// and the correlation row, never chosen by the responder; the grant
 		// expires exactly at the request's expiry.
 		grantID, err := ids.New[ids.Grant]()
@@ -209,16 +212,39 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 			return nil, err
 		}
 		grant, err := decided.AllowOnceGrant(recorded, grantID, correlation.ActionClass, request.ExpiresAt)
+		if cmd.Kind == lifecycle.DecisionApproveStanding {
+			grant, err = decided.StandingGrant(recorded, grantID, correlation.ActionClass, request.ExpiresAt)
+		}
 		if err != nil {
 			return nil, err
 		}
-		if err := identity.IssueGrant(grant, policy); err != nil {
-			return nil, err
+		if err := identity.IssueGrantForScope(grant, request.Scope, policy); err != nil {
+			return nil, errors.Join(err, &lifecycle.TransitionError{Code: lifecycle.RejectDecisionNotAllowed, Change: lifecycle.Change{Tenant: tenant, Record: lifecycle.RecordAttention, RecordID: request.ID.Untyped(), Event: "decide", From: string(request.State), Version: request.Version}})
 		}
 		if err := store.InsertGrant(ctx, u.uow, grant); err != nil {
 			return nil, err
 		}
+		grantTr, err := u.transition(1, nil)
+		if err != nil {
+			return nil, err
+		}
+		if err := store.RecordAuthorityChange(ctx, u.uow, grant, "issue", grantTr); err != nil {
+			return nil, err
+		}
 		view.GrantID = grant.ID.String()
+	}
+	// Approval delivery carries the child action identity and its authority;
+	// the runtime-turn operation still routes the native steer request.
+	if request.Kind == lifecycle.AttentionActionApproval {
+		body, err = json.Marshal(decisionDelivery{DecisionID: recorded.ID.String(), Attention: request.ID.String(),
+			Attempt: request.Attempt.String(), NativeRef: correlation.NativeRef, Kind: string(recorded.Kind),
+			Action: correlation.ActionClass, ExpiresAt: request.ExpiresAt, Operation: request.Operation.String(), GrantID: view.GrantID, Scope: request.Scope})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := u.uow.Exec(ctx, `update outbox set payload = $3::jsonb where tenant_id = $1 and outbox_id = $2`, tenant.String(), recorded.ID.String(), string(body)); err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(view)
 }

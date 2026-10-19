@@ -1,0 +1,12 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"EnforcementReceipt",
+  "type":"object",
+  "required":["execution","output_digest","completed_at"],
+  "additionalProperties":false,
+  "properties":{
+    "execution":{"$ref":"action-execution.schema.json"},
+    "output_digest":{"$ref":"../identity/common.schema.json#/$defs/digest"},
+    "completed_at":{"$ref":"../identity/common.schema.json#/$defs/timestamp"}
+  }
+}

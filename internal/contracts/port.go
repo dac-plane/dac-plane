@@ -30,9 +30,10 @@ const (
 	MethodStop      Method = "stop"
 	MethodObserve   Method = "observe"
 
-	MethodPreAction    Method = "pre_action"
-	MethodPostAction   Method = "post_action"
-	MethodActionFailed Method = "action_failed"
+	MethodPreAction     Method = "pre_action"
+	MethodExecuteAction Method = "execute_action"
+	MethodPostAction    Method = "post_action"
+	MethodActionFailed  Method = "action_failed"
 
 	MethodAuthorizeUpload Method = "authorize_upload"
 	MethodStatObject      Method = "stat_object"
@@ -48,7 +49,7 @@ func Methods(role Role) []Method {
 	case RoleEnvironment:
 		return []Method{MethodProvision, MethodStop, MethodObserve}
 	case RoleEnforcement:
-		return []Method{MethodPreAction, MethodPostAction, MethodActionFailed}
+		return []Method{MethodPreAction, MethodPostAction, MethodActionFailed, MethodExecuteAction}
 	case RoleArtifactStore:
 		return []Method{MethodAuthorizeUpload, MethodStatObject, MethodCommitManifest}
 	}
