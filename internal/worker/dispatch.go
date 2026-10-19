@@ -205,7 +205,7 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil {
 		return w.retryPrepared(ctx, tenant, row, prepared, now, reasonTransportFailed)
 	}
-	return w.resolveSend(ctx, tenant, row, prepared, reply, now)
+	return w.resolveSend(ctx, tenant, row, prepared, delivery, reply, now)
 }
 
 // preparedDispatch is a claimed row that passed the checklist, with the
@@ -466,8 +466,8 @@ func (w *Worker) recordShadow(ctx context.Context, uow *store.UnitOfWork, tenant
 // operation terminal and ack the row; unknown parks the operation in
 // uncertain for the reconciler; pending leaves the row processing so the
 // lease lapse reclaims it.
-func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, reply contracts.Reply, now time.Time) error {
-	if reply.Operation.String() != prepared.operation.ID.String() {
+func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, delivery ids.DeliveryID, reply contracts.Reply, now time.Time) error {
+	if reply.Operation != prepared.operation.ID || reply.Delivery != delivery {
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply, true)
 	}
 	if err := reply.Validate(); err != nil {

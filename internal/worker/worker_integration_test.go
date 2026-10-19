@@ -114,9 +114,13 @@ func mustID[K any](t *testing.T) ids.ID[K] {
 }
 
 func testWorker(t *testing.T, f *fixture, cfg worker.Config) *worker.Worker {
+	return testWorkerWithPort(t, f, cfg, f.loopback)
+}
+
+func testWorkerWithPort(t *testing.T, f *fixture, cfg worker.Config, port contracts.Port) *worker.Worker {
 	t.Helper()
 	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		map[ids.ProviderID]contracts.Port{f.provider: f.loopback}, cfg, "test-worker")
+		map[ids.ProviderID]contracts.Port{f.provider: port}, cfg, "test-worker")
 	if err != nil {
 		t.Fatalf("worker.New() error = %v", err)
 	}

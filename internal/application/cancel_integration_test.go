@@ -94,6 +94,74 @@ func TestCancelQueuedTaskCancelsAndReleases(t *testing.T) {
 	}
 }
 
+func TestCancelRequiresTaskOwner(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.governed(t, "n-1")
+	other := mustID[ids.Principal](t)
+	f.seed(t, func(uow *store.UnitOfWork) error {
+		return store.InsertPrincipal(f.ctx, uow, identity.Principal{
+			Tenant: f.tenant, ID: other, Kind: identity.PrincipalHuman,
+		})
+	})
+	auth, err := identity.NewAuthorizationContext(identity.Principal{
+		Tenant: f.tenant, ID: other, Kind: identity.PrincipalHuman,
+	})
+	if err != nil {
+		t.Fatalf("NewAuthorizationContext() error = %v", err)
+	}
+	cmd := f.cancelCommand("c-other", s.Task.ID, s.Task.Version)
+	cmd.Actor = auth
+	if _, err := application.Cancel(f.ctx, f.pool, cmd); err != nil {
+		requireRefusal(t, err, lifecycle.RejectUnauthorizedActor)
+	} else {
+		t.Fatal("Cancel() by another principal succeeded")
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskQueued || attempt != lifecycle.AttemptAllocated {
+		t.Fatalf("states = %s/%s, want unchanged queued/allocated", task, attempt)
+	}
+}
+
+func TestCancelReadyForReviewKeepsCompletedAttempt(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, _ := f.executing(t, "n-1")
+	f.seed(t, func(uow *store.UnitOfWork) error {
+		step := progress.Step{UOW: uow, Tenant: f.tenant, Actor: lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: f.principal}, At: f.at}
+		if _, _, _, err := step.Attempt(f.ctx, s.Attempt.ID, lifecycle.AttemptFinalize, ""); err != nil {
+			return err
+		}
+		if _, _, _, err := step.Attempt(f.ctx, s.Attempt.ID, lifecycle.AttemptComplete, ""); err != nil {
+			return err
+		}
+		for _, event := range []lifecycle.TaskEvent{lifecycle.TaskProposeResult, lifecycle.TaskVerificationPassed} {
+			task, err := store.GetTask(f.ctx, uow, f.tenant, s.Task.ID)
+			if err != nil {
+				return err
+			}
+			auditID, err := ids.New[ids.Audit]()
+			if err != nil {
+				return err
+			}
+			if _, _, err := store.ApplyTask(f.ctx, uow, f.tenant, task.ID, event, "", store.Transition{
+				ExpectedVersion: task.Version, At: f.at, Actor: step.Actor, AuditID: auditID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	task, err := store.GetTask(f.ctx, f.pool, f.tenant, s.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	view, err := application.Cancel(f.ctx, f.pool, f.cancelCommand("c-review", task.ID, task.Version))
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if view.State != string(lifecycle.TaskCancelled) || view.AttemptState != string(lifecycle.AttemptCompleted) {
+		t.Fatalf("view = %+v, want cancelled/completed", view)
+	}
+}
+
 func TestCancelDispatchedTaskWaitsForStops(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	f.seedSendPolicy(t)
@@ -197,7 +265,18 @@ func TestEventRuntimeStopCompletesCancellation(t *testing.T) {
 		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
 			ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at,
 		}))))
-	f.cancel(t, s, "c-1")
+	task, err := store.GetTask(f.ctx, f.pool, f.tenant, s.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	cmd := f.cancelCommand("c-1", s.Task.ID, task.Version)
+	initial, err := application.Cancel(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if initial.State != string(lifecycle.TaskCancelling) || initial.AttemptState != string(lifecycle.AttemptCancellationRequested) {
+		t.Fatalf("initial view = %+v, want cancelling/cancellation_requested", initial)
+	}
 	// The runtime stops first this time; the order does not matter.
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
 		row(3, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
@@ -218,9 +297,49 @@ func TestEventRuntimeStopCompletesCancellation(t *testing.T) {
 	if got := f.reservation(t, s); got.State != lifecycle.ReservationReleased {
 		t.Fatalf("reservation = %s, want released", got.State)
 	}
+	replay, err := application.Cancel(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatalf("replayed Cancel() error = %v", err)
+	}
+	if replay.State != initial.State || replay.AttemptState != initial.AttemptState {
+		t.Fatalf("replay = %+v, want original result %+v", replay, initial)
+	}
 }
 
-func TestNormalCompletionClosesCancellingTask(t *testing.T) {
+func TestEventStaleEnvironmentStopCannotConvergeCancellation(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 10, ObservedAt: f.at,
+		}))))
+	f.cancel(t, s, "c-1")
+	stale := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(3, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "box-1", State: lifecycle.RunAbsent, Sequence: 9, ObservedAt: f.at,
+		}))))
+	if stale.Progress != 1 || stale.Applied != 0 {
+		t.Fatalf("stale stop = %+v, want progress only", stale)
+	}
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(4, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		t.Fatalf("runtime stop = %+v, want applied", got)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
+		t.Fatalf("states = %s/%s, want cancellation still pending", task, attempt)
+	}
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(5, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "box-1", State: lifecycle.RunAbsent, Sequence: 11, ObservedAt: f.at,
+		})))); got.Applied != 1 {
+		t.Fatalf("current stop = %+v, want applied", got)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, attempt)
+	}
+}
+
+func TestNormalCompletionDoesNotConfirmCancellation(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, _ := f.executing(t, "n-1")
 	actor := lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: f.principal}
@@ -238,8 +357,8 @@ func TestNormalCompletionClosesCancellingTask(t *testing.T) {
 			store.Transition{ExpectedVersion: task.Version, At: f.at, Actor: actor, AuditID: auditID})
 		return err
 	})
-	// ...and the attempt then completes normally: the follow confirms the
-	// stop and the hold releases in the completion's own commit.
+	// ...and the attempt then completes normally. Completion releases the
+	// budget hold, but it cannot stand in for runtime and environment stops.
 	f.seed(t, func(uow *store.UnitOfWork) error {
 		step := progress.Step{UOW: uow, Tenant: f.tenant, Actor: actor, At: f.at}
 		if _, _, _, err := step.Attempt(f.ctx, s.Attempt.ID, lifecycle.AttemptFinalize, ""); err != nil {
@@ -250,8 +369,8 @@ func TestNormalCompletionClosesCancellingTask(t *testing.T) {
 		}
 		return nil
 	})
-	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptCompleted {
-		t.Fatalf("states = %s/%s, want cancelled/completed", task, attempt)
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCompleted {
+		t.Fatalf("states = %s/%s, want cancelling/completed", task, attempt)
 	}
 	if got := f.reservation(t, s); got.State != lifecycle.ReservationReleased {
 		t.Fatalf("reservation = %s, want released", got.State)

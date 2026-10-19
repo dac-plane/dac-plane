@@ -53,7 +53,7 @@ func (w *Worker) decisionRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil {
 		return w.retryDecision(ctx, tenant, row, prepared, now, contracts.FailureTransportUnavailable)
 	}
-	return w.resolveDecision(ctx, tenant, row, prepared, reply, now)
+	return w.resolveDecision(ctx, tenant, row, prepared, delivery, reply, now)
 }
 
 // preparedDecision is a claimed delivery row past its checklist: the request
@@ -193,8 +193,8 @@ func (w *Worker) prepareDecision(ctx context.Context, tenant ids.TenantID, row s
 // and exhausts the row; an unknown reply retries like a transport loss —
 // it may have landed, so delivery is never assumed — and pending leaves the
 // row processing for the lease lapse.
-func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDecision, reply contracts.Reply, now time.Time) error {
-	if reply.Operation.String() != prepared.operation.ID.String() {
+func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDecision, delivery ids.DeliveryID, reply contracts.Reply, now time.Time) error {
+	if reply.Operation != prepared.operation.ID || reply.Delivery != delivery {
 		return w.exhaustDecision(ctx, tenant, row, prepared, now, reasonMalformedReply)
 	}
 	if err := reply.Validate(); err != nil {

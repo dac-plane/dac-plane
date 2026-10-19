@@ -86,35 +86,18 @@ func Cancel(ctx context.Context, pool *pgxpool.Pool, cmd CancelTask) (CancelView
 	if err != nil {
 		return CancelView{}, err
 	}
-	if _, err := execute(ctx, pool, cmd.Command, commandCancelTask, digest, cmd.At, func(u *unit) (json.RawMessage, error) {
+	result, err := execute(ctx, pool, cmd.Command, commandCancelTask, digest, cmd.At, func(u *unit) (json.RawMessage, error) {
 		return cancel(ctx, u, cmd)
-	}); err != nil {
-		return CancelView{}, err
-	}
-	return loadCancelView(ctx, pool, cmd)
-}
-
-// loadCancelView reads the task and its attempt as they stand now, the way a
-// submission view does; the ledger has already decided the command ran.
-func loadCancelView(ctx context.Context, pool *pgxpool.Pool, cmd CancelTask) (CancelView, error) {
-	uow, err := store.Begin(ctx, pool)
+	})
 	if err != nil {
 		return CancelView{}, err
 	}
-	defer func() { _ = uow.Rollback(ctx) }() // reads only
-	tenant := cmd.Actor.Principal().Tenant
-	task, err := store.GetTask(ctx, uow, tenant, cmd.Task)
-	if err != nil {
-		return CancelView{}, err
+	var view CancelView
+	if err := json.Unmarshal(result, &view); err != nil {
+		return CancelView{}, fmt.Errorf("cancel record: %w", err)
 	}
-	attempt, err := store.GetAttemptByTask(ctx, uow, tenant, task.ID)
-	if err != nil {
-		return CancelView{}, err
-	}
-	return CancelView{
-		Nonce: cmd.Nonce, TaskID: task.ID.String(), State: string(task.State),
-		AttemptID: attempt.ID.String(), AttemptState: string(attempt.State), Reason: cancelReason,
-	}, nil
+	view.Nonce = cmd.Nonce
+	return view, nil
 }
 
 // cancel moves the task into cancellation and, when work may be live, records
@@ -132,6 +115,16 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if task.Owner != cmd.Actor.Principal().ID {
+		tr, err := u.transition(task.Version, nil)
+		if err != nil {
+			return nil, err
+		}
+		return nil, &lifecycle.TransitionError{Code: lifecycle.RejectUnauthorizedActor, Change: lifecycle.Change{
+			Tenant: tenant, Record: lifecycle.RecordTask, RecordID: task.ID.Untyped(),
+			Event: string(lifecycle.TaskCancel), From: string(task.State), Version: tr.ExpectedVersion,
+		}}
 	}
 	attempt, err := store.GetAttemptByTask(ctx, u.uow, tenant, task.ID)
 	if err != nil {
@@ -155,22 +148,40 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 		}
 		return nil, err
 	}
-	view := CancelView{TaskID: task.ID.String(), State: string(cancelled.State), Reason: cancelReason}
+	view := CancelView{
+		TaskID: task.ID.String(), State: string(cancelled.State),
+		AttemptID: attempt.ID.String(), Reason: cancelReason,
+	}
 
 	if cancelled.State == lifecycle.TaskCancelled {
-		// Nothing was started, so cancelling needs no stop observations: the
-		// attempt's request_cancel lands it in terminated directly and the
-		// progress step releases its unused reservation in this commit. No
-		// wait or grant can be open on an attempt that never awaited.
-		step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
-		next, _, refusal, err := step.Attempt(ctx, attempt.ID, lifecycle.AttemptRequestCancel, "")
-		if refusal != nil {
-			return nil, refusal
+		switch {
+		case attempt.State == lifecycle.AttemptAllocated:
+			// Nothing was started, so cancelling needs no stop observations:
+			// request_cancel terminates the allocated Attempt and releases its
+			// reservation in this commit.
+			step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
+			next, _, refusal, err := step.Attempt(ctx, attempt.ID, lifecycle.AttemptRequestCancel, "")
+			if refusal != nil {
+				return nil, refusal
+			}
+			if err != nil {
+				return nil, err
+			}
+			view.AttemptState = string(next.State)
+		case slices.Contains(lifecycle.AttemptTerminalStates(), attempt.State):
+			// Review-time cancellation changes the Task disposition only. Its
+			// Attempt already ended and must not be rewritten as terminated;
+			// any unused authority from its earlier work is still revoked.
+			if err := cancelOpenAttention(ctx, u, tenant, attempt.ID); err != nil {
+				return nil, err
+			}
+			if err := revokeOpenGrants(ctx, u, tenant, attempt.ID); err != nil {
+				return nil, err
+			}
+			view.AttemptState = string(attempt.State)
+		default:
+			return nil, fmt.Errorf("%w: direct task cancellation requires an allocated or terminal attempt", ErrInvalidCommand)
 		}
-		if err != nil {
-			return nil, err
-		}
-		view.AttemptState = string(next.State)
 		return json.Marshal(view)
 	}
 

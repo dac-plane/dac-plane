@@ -45,10 +45,11 @@ func AttemptTerminalStates() []AttemptState {
 
 // TaskFollowsAttempt returns the Task transition an Attempt's state implies,
 // and false when it implies none: a failed Attempt fails the running Task,
-// and a terminal Attempt confirms the stop of a cancelling Task — cancellation
-// is an intent until the Attempt's work ended, whichever way it ended.
+// and only a terminated Attempt confirms the stop of a cancelling Task.
+// Completed or failed work does not prove that both its runtime and
+// environment stopped.
 func TaskFollowsAttempt(attempt AttemptState, task TaskState) (TaskEvent, bool) {
-	if slices.Contains(attemptTerminalStates, attempt) && task == TaskCancelling {
+	if attempt == AttemptTerminated && task == TaskCancelling {
 		return TaskStopConfirmed, true
 	}
 	if attempt == AttemptFailed && task == TaskRunning {

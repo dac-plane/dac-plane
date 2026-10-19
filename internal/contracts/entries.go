@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -219,6 +220,25 @@ func (d DecisionConsumed) Validate() error {
 // mirroring the interrupt acknowledgement: whether a run was actually active.
 type RuntimeStopped struct {
 	HadActiveRun bool `json:"had_active_run"`
+}
+
+// UnmarshalJSON preserves the distinction between a reported false value and
+// an omitted required field. A plain bool would decode both as false and make
+// the Go boundary weaker than the JSON Schema contract.
+func (r *RuntimeStopped) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		HadActiveRun *bool `json:"had_active_run"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	if wire.HadActiveRun == nil {
+		return fmt.Errorf("%w: runtime.stopped requires had_active_run", ErrInvalid)
+	}
+	r.HadActiveRun = *wire.HadActiveRun
+	return nil
 }
 
 // Validate reports whether the observation is a well-formed stop.

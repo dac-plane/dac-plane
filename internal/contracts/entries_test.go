@@ -67,6 +67,9 @@ func TestDecodeEntryRejectsSmuggledFieldsAndBadPayloads(t *testing.T) {
 	if _, err := DecodeEntry[RuntimeStarted](entryFor(t, EntryRuntimeStarted, RuntimeStarted{NativeRef: "s-1"})); err != nil {
 		t.Fatalf("valid runtime.started: %v", err)
 	}
+	if stopped, err := DecodeEntry[RuntimeStopped](entryFor(t, EntryRuntimeStopped, RuntimeStopped{HadActiveRun: false})); err != nil || stopped.HadActiveRun {
+		t.Fatalf("valid runtime.stopped false = %+v, %v", stopped, err)
+	}
 	smuggled := entryFor(t, EntryRuntimeStarted, map[string]any{"native_ref": "s-1", "attempt_id": "another"})
 	omitted := Entry{Sequence: 1, UpdatedSequence: 1, Kind: EntryRuntimeStarted, PayloadHash: identity.DigestOf([]byte("x")), PayloadOmitted: true}
 	huge := entryFor(t, EntryRuntimeStarted, RuntimeStarted{NativeRef: strings.Repeat("s", 10)})
@@ -136,6 +139,7 @@ func TestContractConformanceEntryPayloads(t *testing.T) {
 		{"requested bad digest", "requested approval", func(d map[string]any) { d["action_digest"] = "md5:zz" }},
 		{"consumed empty native ref", "consumed", func(d map[string]any) { d["native_ref"] = "" }},
 		{"consumed smuggles an attention", "consumed", func(d map[string]any) { d["attention_id"] = "x" }},
+		{"stopped without active-run flag", "stopped", func(d map[string]any) { delete(d, "had_active_run") }},
 		{"stopped smuggles a stop proof", "stopped", func(d map[string]any) { d["confirmed"] = true }},
 	} {
 		base := fixtures[tc.base]

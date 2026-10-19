@@ -394,6 +394,9 @@ func TestPersistenceObservationsAndEvidence(t *testing.T) {
 	if _, _, err := store.UpsertObservation(ctx, uow, observed); err != nil {
 		t.Fatalf("UpsertObservation() error = %v", err)
 	}
+	if stored, replayed, err := store.UpsertObservation(ctx, uow, observed); err != nil || !replayed || stored.Sequence != observed.Sequence {
+		t.Fatalf("replayed UpsertObservation() = %v, %v, %v", stored, replayed, err)
+	}
 	stale := observed
 	stale.Sequence = 2
 	stale.State = lifecycle.RunStarting

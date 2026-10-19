@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -395,15 +394,20 @@ func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.E
 	if !ok {
 		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
 	}
-	if _, _, err := store.UpsertObservation(ctx, a.uow, lifecycle.EnvironmentObservation{
+	observation, replayed, err := store.UpsertObservation(ctx, a.uow, lifecycle.EnvironmentObservation{
 		Tenant: a.event.Tenant, Attempt: a.event.Attempt, Provider: a.event.Provider,
 		ResourceRef: payload.ResourceRef, State: payload.State, Sequence: payload.Sequence,
 		ObservedAt: payload.ObservedAt.UTC().Truncate(time.Microsecond),
-	}); err != nil {
+	})
+	if err != nil {
 		return 0, err
 	}
-	switch payload.State {
-	case lifecycle.RunAbsent, lifecycle.RunHibernated:
+	if replayed {
+		// A stale or repeated observation advances ingestion only. It cannot
+		// prove a stop contradicted by the newer state already stored.
+		return entryProgress, nil
+	}
+	if observation.Stopped() {
 		attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
 		if err != nil {
 			return 0, err
@@ -568,7 +572,7 @@ func (a entryApplier) runtimeStopped(ctx context.Context, entry contracts.Entry,
 	if err != nil {
 		return 0, err
 	}
-	if slices.Contains(lifecycle.AttemptTerminalStates(), attempt.State) {
+	if attempt.State == lifecycle.AttemptTerminated {
 		task, err := store.GetTask(ctx, a.uow, a.event.Tenant, attempt.Task)
 		if err != nil {
 			return 0, err

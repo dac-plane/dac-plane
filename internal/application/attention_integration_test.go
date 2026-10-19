@@ -435,6 +435,52 @@ func TestDecisionConsumedBeforeDeliveryRefused(t *testing.T) {
 	}
 }
 
+func TestDecisionConsumedWhileDispatchingProvesDelivery(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
+	request := f.attention(t, s)
+	f.decide(t, f.decideCommand("d-1", request, lifecycle.DecisionDeny))
+
+	// The send has started, but its reply has not committed yet. The bound
+	// runtime's consumption observation is stronger evidence than that reply:
+	// it proves the exact native request received the decision.
+	f.seed(t, func(uow *store.UnitOfWork) error {
+		current, err := store.GetAttention(f.ctx, uow, f.tenant, request.ID)
+		if err != nil {
+			return err
+		}
+		auditID, err := ids.New[ids.Audit]()
+		if err != nil {
+			return err
+		}
+		_, _, err = store.ApplyAttention(f.ctx, uow, f.tenant, request.ID, lifecycle.AttentionDispatch, store.Transition{
+			ExpectedVersion: current.Version, At: f.at, Actor: lifecycle.Actor{Kind: lifecycle.ActorProvider, Provider: f.provider}, AuditID: auditID,
+		})
+		return err
+	})
+	event := f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(3, contracts.EntryDecisionConsumed, contracts.DecisionConsumed{NativeRef: "q-1"})))
+	if got := f.ingestNow(t, event); got.Applied != 1 || got.Refused != 0 {
+		t.Fatalf("consumption = %+v, want applied", got)
+	}
+	if consumed := f.attention(t, s); consumed.State != lifecycle.AttentionConsumed {
+		t.Fatalf("request = %s, want consumed", consumed.State)
+	}
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptExecuting {
+		t.Fatalf("states = %s/%s, want running/executing", task, attempt)
+	}
+	// Replaying the identical entry advances nothing, and the pending worker
+	// row acks without steering a decision that was already consumed.
+	if got := f.ingestNow(t, event); got.Duplicates == 0 || got.Applied != 0 {
+		t.Fatalf("replay = %+v, want a duplicate", got)
+	}
+	steered := f.deliver(t, s)
+	if sent := steered.Ledger().Sent(); len(sent) != 0 {
+		t.Fatalf("Sent() = %d requests, want no duplicate steer", len(sent))
+	}
+}
+
 func TestDecisionConcurrentDuplicatesConverge(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")

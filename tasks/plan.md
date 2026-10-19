@@ -101,12 +101,14 @@ identities from the bound event — the payload never names tenant, attempt, pro
 | Entry kind | Payload | Effect |
 |---|---|---|
 | `attention.requested` | `native_ref`, `kind` (question / action_approval / authentication_handoff / blocked_work), for approvals `action` class + `action_digest`, `expires_at` | Product `AttentionRequest` created from the bound event: kind from the payload, digest copied for approvals, responders = the task owner principal, policy generation read from the tenant policy, `expires_at` must lie ahead of the event time. Writes the correlation row (Decision B), then Attempt `await_input` (from `executing`) and Task `await_input` (from `running`). A request whose state machine refuses the await transition or whose kind/payload combination fails validation is refused with evidence. A second unconsumed request on the Attempt (pending, decided, dispatching or delivered) is refused with evidence — one blocking request per attempt. |
-| `decision.consumed` | `native_ref` of the request | Resolves the attention through the correlation row (the row must be bound to this event's tenant, provider and attempt, else refused). Attention `consume`; Task `input_resolved` (from `waiting_input`); Attempt `resume` (from `waiting_input`). Not-yet-delivered, superseded, cancelled or consumed requests refuse with evidence and are recorded — so a consumed observation replaying before its delivery reply converges on a later rehydration. |
-| `runtime.stopped` | `had_active_run` | The runtime stop observation (Plane-Bot interrupt shape): Attempt `runtime_stopped` while `cancellation_requested`; an Attempt that already reached a terminal state while its Task stayed `cancelling` confirms the Task stop. |
+| `decision.consumed` | `native_ref` of the request | Resolves the attention through the correlation row (the row must be bound to this event's tenant, provider and attempt, else refused). Attention `consume`; Task `input_resolved` (from `waiting_input`); Attempt `resume` (from `waiting_input`). A `dispatching` request may consume directly because the authenticated observation can race ahead of the send reply and proves delivery to the exact native request. Decided-but-never-dispatched, superseded, cancelled or consumed requests refuse with evidence. |
+| `runtime.stopped` | required `had_active_run` | The runtime stop observation (Plane-Bot interrupt shape): Attempt `runtime_stopped` while `cancellation_requested`; only an already `terminated` Attempt can confirm a Task still left `cancelling`. Completed or failed work does not prove the environment stopped. |
 
 `environment.observed` (existing kind) gains stop convergence: after binding and upserting the observation,
 an attempt in `cancellation_requested` observing `absent` or `hibernated` applies Attempt
-`environment_stopped`. Stop success applies Task `stop_confirmed` and releases the reservation (Decision D).
+`environment_stopped`. Only an accepted latest observation can prove that stop; a stale or repeated resource
+sequence is ingestion progress only. Stop success applies Task `stop_confirmed` and releases the reservation
+(Decision D).
 
 New payload types (`AttentionRequested`, `DecisionConsumed`, `RuntimeStopped`) get their
 `adapter/entry-*.schema.json` files and the schema-conformance, enum and coverage guards — the same pattern
@@ -173,6 +175,9 @@ Worker delivery (`decisionRow`, claimed through an extended `dispatchableRows` p
     through the surface; the machine's `delivered -> cancel` path keeps it unreachable-minus-nothing).
     Never resume work by a silent assumption ("an answer is not proof that the runtime resumed").
 
+Every reply must match both the stable operation and the current delivery identity. A delayed reply from an
+earlier delivery is malformed and cannot acknowledge or resolve the current claim.
+
 No expire driver ships in this PR; the request expiry only binds the decide ceremony (the frozen expiry
 ceilings). Consumption follows only from the ingested `decision.consumed` entry.
 
@@ -183,10 +188,12 @@ command-driven reason `user_stop` (resolution 2: the only cancel-mapping member 
 `StopReason` union), and `at`. Fingerprint over `{task, reason, expected_version}`. One transaction:
 
 - Load the Task in the caller's tenant; unknown reads as absent (cross-tenant invariant).
-- **Task `queued`** (governed pre-receipt, or back to queued from a review): `TaskCancel -> cancelled`,
-  Attempt `request_cancel -> terminated`, reservation `ReleaseBudget` — all one commit. No attention to
-  cancel and no grants to revoke are possible here (Decision A's await_input only applies from an executing
-  Attempt; grants require an approval to be issued after a request on the same Attempt).
+- Require the calling principal to own the Task. Another tenant principal reads as absent; another principal
+  in the same tenant receives an unauthorized-actor refusal before any lifecycle mutation.
+- **Task `queued`** (governed pre-receipt, or back to queued from a review): `TaskCancel -> cancelled`.
+  An allocated Attempt applies `request_cancel -> terminated` and releases its reservation in the same commit.
+  A terminal Attempt from earlier reviewed work stays terminal; cancellation revokes any unused grants rather
+  than rewriting completed or failed history.
 - **Task `running` or `waiting_input`** (live dispatch or live native wait): `TaskCancel -> cancelling`;
   Attempt `request_cancel -> cancellation_requested`; enqueue the cancel outbox row
   (`attempt`/`request_cancel`, body `{operation: attempt's current dispatched operation via
@@ -201,8 +208,9 @@ command-driven reason `user_stop` (resolution 2: the only cancel-mapping member 
 
 Convergence (the follow rules; the frozen machines decide order, the boundary only applies and audits):
 
-- New follow rule in `lifecycle.TaskFollowsAttempt`: Attempt terminal (completed, failed, terminated) AND
-  Task `cancelling` -> `stop_confirmed`. Existing rules stay: failed + running -> `execution_failed`;
+- New follow rule in `lifecycle.TaskFollowsAttempt`: Attempt `terminated` AND Task `cancelling` ->
+  `stop_confirmed`. Completed or failed Attempts do not prove environment shutdown. Existing rules stay:
+  failed + running -> `execution_failed`;
   uncertain + live -> `reconciling`; nothing else changes, so `TestReconciliationNeverReturnsToDispatch`
   and `TestCancellationOnlyEndsTerminated` keep holding.
 - Release is not cancellation-coupled: #15's acceptance criterion — "Unused reservation is released exactly
@@ -259,14 +267,17 @@ In `internal/application` unless delivery requires the worker fixture; names mat
   row on replay); `TestDecisionStaleVersionConflicts`; `TestDecisionWrongResponderForbidden`;
   `TestDecisionReplayReturnsRecordedDecision`; `TestDecisionStalePolicyForbidden`.
 - **Delivery**: `TestDeliveryRedeliversAfterCrashBetweenDecideAndSend` (row survives restart and re-claims;
-  SPEC §32); `TestDeliveryRejectedSteerSupersedesRequest`; consumed-before-delivered refused and replayed
-  later; duplicate arrow-worker delivery does not double-send (one steer per decision in `Sent()`).
+  SPEC §32); `TestDeliveryRejectedSteerSupersedesRequest`; decided-before-dispatch consumption is refused,
+  while dispatching consumption proves delivery even when it races ahead of the reply; a reply for another
+  delivery is rejected; duplicate arrow-worker delivery does not double-send (one steer per decision in
+  `Sent()`).
 - **Cancellation**: `TestCancelQueuedTaskCancelsAndReleases`; `TestCancelDispatchedTaskWaitsForStops`
   (cancelling + `cancellation_requested` + cancel row + attention cancelled + grants revoked;
   `TestWorkerCancelIndependentOfStop` keeps asserting the protocol cancel at the worker layer);
-  `TestEventEnvironmentStopConvergesCancellation`; `TestEventRuntimeStopCompletesCancellation` (both stops
-  -> terminated -> Task `stop_confirmed` -> reservation released once); `TestNormalCompletionClosesCancellingTask`
-  (the race variant: attempt completes while cancelling); `TestEventFailedTurnAfterCancelRefuses`
+  owner-only authorization and ready-for-review direct cancellation; `TestEventEnvironmentStopConvergesCancellation`;
+  `TestEventRuntimeStopCompletesCancellation` (both stops -> terminated -> Task `stop_confirmed` -> reservation
+  released once, with nonce replay returning the original command result); stale environment observations
+  cannot prove a stop; `TestNormalCompletionDoesNotConfirmCancellation`; `TestEventFailedTurnAfterCancelRefuses`
   (late observation refused and recorded); `TestAbandonReconcilesNeverSentCancel` (asserts the released
   reservation alongside the termination).
 - **Reservation release**: `TestReservationReleasesAtAttemptTerminal` (a failed turn and a

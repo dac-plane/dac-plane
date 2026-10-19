@@ -22,6 +22,19 @@ type decidedAttention struct {
 	row       store.OutboxRow
 }
 
+type mismatchedDeliveryPort struct {
+	*worker.LoopbackPort
+	delivery ids.DeliveryID
+}
+
+func (p *mismatchedDeliveryPort) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.LoopbackPort.Send(ctx, request)
+	if err == nil {
+		reply.Delivery = p.delivery
+	}
+	return reply, err
+}
+
 // arrangeDecidedAttention records one question and answers it through the
 // application boundary, leaving the durable decision delivery for the worker.
 func (f *fixture) arrangeDecidedAttention(t *testing.T, ctx context.Context, at time.Time) decidedAttention {
@@ -172,6 +185,26 @@ func TestDeliveryRejectedSteerSupersedesRequest(t *testing.T) {
 	}
 	if got := f.readyCount(t, ctx, now.Add(time.Hour)); got != 0 {
 		t.Fatalf("OutboxReadyDispatch() = %d rows, want the delivery exhausted", got)
+	}
+}
+
+func TestDeliveryRejectsReplyForAnotherDelivery(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	decided := f.arrangeDecidedAttention(t, ctx, now)
+	port := &mismatchedDeliveryPort{LoopbackPort: f.loopback, delivery: mustID[ids.Delivery](t)}
+	w := testWorkerWithPort(t, f, worker.DefaultConfig(), port)
+
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("Tick() error = %v", err)
+	}
+	request, err := store.GetAttention(ctx, f.pool, f.tenant, decided.request.ID)
+	if err != nil || request.State != lifecycle.AttentionDispatching {
+		t.Fatalf("GetAttention() = %+v, %v; want dispatching after malformed reply", request, err)
+	}
+	row, err := store.GetOutboxRow(ctx, f.pool, f.tenant, decided.row.ID)
+	if err != nil || row.ExhaustedAt.IsZero() || row.LastError != "malformed_reply" {
+		t.Fatalf("GetOutboxRow() = %+v, %v; want malformed reply exhaustion", row, err)
 	}
 }
 

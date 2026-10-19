@@ -108,6 +108,9 @@ var attentionMachine = newMachine(AttentionStates(), AttentionEvents(),
 		AttentionDispatching: unconsumed(map[AttentionEvent][]AttentionState{
 			AttentionRedeliver: {AttentionDispatching},
 			AttentionDeliver:   {AttentionDelivered},
+			// An authenticated consumption observation may race ahead of the
+			// send reply; consuming the exact native request proves delivery.
+			AttentionConsume: {AttentionConsumed},
 		}),
 		AttentionDelivered: unconsumed(map[AttentionEvent][]AttentionState{
 			AttentionConsume: {AttentionConsumed},

@@ -397,12 +397,14 @@ func TestTaskFollowsAttempt(t *testing.T) {
 			t.Errorf("failed attempt moves a %s task", task)
 		}
 	}
-	// Cancellation is intent until the Attempt's work ended: whichever way the
-	// Attempt turned terminal, it confirms the cancelling Task's stop.
-	for _, terminal := range AttemptTerminalStates() {
-		event, ok := TaskFollowsAttempt(terminal, TaskCancelling)
-		if !ok || event != TaskStopConfirmed {
-			t.Errorf("terminal %s on a cancelling task = %s, %v", terminal, event, ok)
+	// Cancellation is intent until both stops are observed or reconciled,
+	// which is represented by the terminated Attempt state alone.
+	if event, ok := TaskFollowsAttempt(AttemptTerminated, TaskCancelling); !ok || event != TaskStopConfirmed {
+		t.Errorf("terminated attempt on a cancelling task = %s, %v", event, ok)
+	}
+	for _, terminal := range []AttemptState{AttemptCompleted, AttemptFailed} {
+		if _, ok := TaskFollowsAttempt(terminal, TaskCancelling); ok {
+			t.Errorf("terminal %s confirms cancellation without both stop proofs", terminal)
 		}
 	}
 	if _, ok := TaskFollowsAttempt(AttemptExecuting, TaskCancelling); ok {

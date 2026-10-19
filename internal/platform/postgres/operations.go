@@ -316,7 +316,7 @@ func UpsertObservation(ctx context.Context, u *UnitOfWork, observation lifecycle
 	if err := observation.Validate(); err != nil {
 		return lifecycle.EnvironmentObservation{}, false, err
 	}
-	_, err := u.Exec(ctx, `
+	tag, err := u.Exec(ctx, `
 		insert into environment_observation (tenant_id, attempt_id, provider_id, resource_ref, state, sequence, observed_at)
 		values ($1, $2, $3, $4, $5, $6, $7)
 		on conflict (tenant_id, provider_id, resource_ref) do update set
@@ -333,7 +333,9 @@ func UpsertObservation(ctx context.Context, u *UnitOfWork, observation lifecycle
 	if loadErr != nil {
 		return lifecycle.EnvironmentObservation{}, false, loadErr
 	}
-	return stored, stored.Sequence != observation.Sequence || stored.State != observation.State, nil
+	// An insert or a strictly newer update affects one row. A zero-row
+	// conflict is an exact replay or an out-of-order observation.
+	return stored, tag.RowsAffected() == 0, nil
 }
 
 // GetObservation loads the latest observation of a resource.
