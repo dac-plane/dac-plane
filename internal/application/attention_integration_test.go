@@ -163,6 +163,82 @@ func TestAttentionRequestedSecondBlockingRefused(t *testing.T) {
 	}
 }
 
+func TestAttentionRequestedNativeReferenceRaceHasOneReachableWait(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	first, firstRuntime := f.live(t, "n-1")
+	second, secondRuntime := f.live(t, "n-2")
+	f.ingestNow(t, f.event(firstRuntime, first, 1, simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-1"}),
+	)))
+	f.ingestNow(t, f.event(secondRuntime, second, 1, simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-2"}),
+	)))
+
+	events := []contracts.Event{
+		f.event(firstRuntime, first, 1, simulator.RowsFrame(false,
+			row(2, contracts.EntryAttentionRequested, question("q-shared", f.at.Add(time.Hour))))),
+		f.event(secondRuntime, second, 1, simulator.RowsFrame(false,
+			row(2, contracts.EntryAttentionRequested, question("q-shared", f.at.Add(time.Hour))))),
+	}
+	type outcome struct {
+		result application.Ingestion
+		err    error
+	}
+	start := make(chan struct{})
+	outcomes := make(chan outcome, len(events))
+	var wg sync.WaitGroup
+	for _, event := range events {
+		wg.Add(1)
+		go func(event contracts.Event) {
+			defer wg.Done()
+			<-start
+			result, err := application.Ingest(f.ctx, f.pool, f.peer(), event, f.at)
+			outcomes <- outcome{result: result, err: err}
+		}(event)
+	}
+	close(start)
+	wg.Wait()
+	close(outcomes)
+
+	applied, refused := 0, 0
+	for got := range outcomes {
+		if got.err != nil {
+			t.Fatalf("Ingest() error = %v", got.err)
+		}
+		applied += got.result.Applied
+		refused += got.result.Refused
+	}
+	if applied != 1 || refused != 1 {
+		t.Fatalf("concurrent ingestion = %d applied, %d refused; want one of each", applied, refused)
+	}
+	if n := f.count(t, "attention_request", "true"); n != 1 {
+		t.Fatalf("requests = %d, want only the correlated request", n)
+	}
+	native, err := store.GetAttentionNative(f.ctx, f.pool, f.tenant, f.provider, "q-shared")
+	if err != nil {
+		t.Fatalf("GetAttentionNative() error = %v", err)
+	}
+	request, err := store.GetAttention(f.ctx, f.pool, f.tenant, native.Attention)
+	if err != nil {
+		t.Fatalf("GetAttention() error = %v", err)
+	}
+	states := map[ids.AttemptID]lifecycle.AttemptState{}
+	for _, submission := range []application.Submission{first, second} {
+		_, state := f.states(t, submission)
+		states[submission.Attempt.ID] = state
+	}
+	if states[request.Attempt] != lifecycle.AttemptWaitingInput {
+		t.Fatalf("correlated attempt state = %s, want waiting_input", states[request.Attempt])
+	}
+	other := first.Attempt.ID
+	if other == request.Attempt {
+		other = second.Attempt.ID
+	}
+	if states[other] != lifecycle.AttemptExecuting {
+		t.Fatalf("losing attempt state = %s, want executing", states[other])
+	}
+}
+
 func TestAttentionRequestedKindPayloads(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")

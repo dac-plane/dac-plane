@@ -29,6 +29,17 @@ type AttentionNative struct {
 	CreatedAt   time.Time
 }
 
+// LockAttentionNative serializes creation of one provider-native attention
+// reference for the lifetime of the current transaction. The natural-key
+// lookup and all lifecycle changes that follow it must run while this lock is
+// held, otherwise two different Attempts can both enter a wait before the
+// unique constraint chooses which request owns the reference.
+func LockAttentionNative(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, provider ids.ProviderID, nativeRef string) error {
+	key := tenant.String() + ":" + provider.String() + ":" + nativeRef
+	_, err := u.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, key)
+	return err
+}
+
 // InsertAttentionNative persists the correlation with replay comparison on
 // its natural key: a native reference raised twice resolves the same binding,
 // and a native reference bound to another attention surfaces as a mismatch,

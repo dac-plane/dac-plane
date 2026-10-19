@@ -442,6 +442,12 @@ func (a entryApplier) attentionRequested(ctx context.Context, entry contracts.En
 	if len(open) > 0 {
 		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
 	}
+	// Claim the provider-native key before checking it or changing either
+	// lifecycle. The transaction-scoped lock prevents two Attempts from both
+	// entering a wait before the unique correlation key chooses one winner.
+	if err := store.LockAttentionNative(ctx, a.uow, a.event.Tenant, a.event.Provider, payload.NativeRef); err != nil {
+		return 0, err
+	}
 	// A native reference the provider already raised resolves to its first
 	// request; it is provenance, never a rebind.
 	if _, err := store.GetAttentionNative(ctx, a.uow, a.event.Tenant, a.event.Provider, payload.NativeRef); err == nil {

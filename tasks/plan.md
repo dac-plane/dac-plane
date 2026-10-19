@@ -100,7 +100,7 @@ identities from the bound event — the payload never names tenant, attempt, pro
 
 | Entry kind | Payload | Effect |
 |---|---|---|
-| `attention.requested` | `native_ref`, `kind` (question / action_approval / authentication_handoff / blocked_work), for approvals `action` class + `action_digest`, `expires_at` | Product `AttentionRequest` created from the bound event: kind from the payload, digest copied for approvals, responders = the task owner principal, policy generation read from the tenant policy, `expires_at` must lie ahead of the event time. Writes the correlation row (Decision B), then Attempt `await_input` (from `executing`) and Task `await_input` (from `running`). A request whose state machine refuses the await transition or whose kind/payload combination fails validation is refused with evidence. A second unconsumed request on the Attempt (pending, decided, dispatching or delivered) is refused with evidence — one blocking request per attempt. |
+| `attention.requested` | `native_ref`, `kind` (question / action_approval / authentication_handoff / blocked_work), for approvals `action` class + `action_digest`, `expires_at` | Product `AttentionRequest` created from the bound event: kind from the payload, digest copied for approvals, responders = the task owner principal, policy generation read from the tenant policy, `expires_at` must lie ahead of the event time. Transactionally claims the provider-native key before changing either lifecycle, then writes the request and correlation with Attempt `await_input` (from `executing`) and Task `await_input` (from `running`). A request whose state machine refuses the await transition or whose kind/payload combination fails validation is refused with evidence. A second unconsumed request on the Attempt (pending, decided, dispatching or delivered) is refused with evidence — one blocking request per attempt. |
 | `decision.consumed` | `native_ref` of the request | Resolves the attention through the correlation row (the row must be bound to this event's tenant, provider and attempt, else refused). Attention `consume`; Task `input_resolved` (from `waiting_input`); Attempt `resume` (from `waiting_input`). A `dispatching` request may consume directly because the authenticated observation can race ahead of the send reply and proves delivery to the exact native request. Decided-but-never-dispatched, superseded, cancelled or consumed requests refuse with evidence. |
 | `runtime.stopped` | required `had_active_run` | The runtime stop observation (Plane-Bot interrupt shape): Attempt `runtime_stopped` while `cancellation_requested`; only an already `terminated` Attempt can confirm a Task still left `cancelling`. Completed or failed work does not prove the environment stopped. |
 
@@ -123,7 +123,8 @@ as PR A's five.
   plus `UNIQUE (tenant_id, attention_id)` — an attention has at most one native mapping; `action_class`
   stays nullable (questions carry none), and a NULL on an approval is refused at decide time, after the row
   exists.
-- Store helpers: `InsertAttentionNative` (natural-key replay, mirroring `InsertBinding`),
+- Store helpers: `LockAttentionNative` (transaction-scoped serialization of one provider-native key before
+  lifecycle mutation), `InsertAttentionNative` (natural-key replay, mirroring `InsertBinding`),
   `GetAttentionNative` (by tenant + provider + native ref — a plain read: the correlation row is
   write-once provenance and never mutated), `ListOpenAttentionByAttempt` (states pending, decided,
   dispatching, delivered); `ListGrantsByAttempt` (open grants: revoked_at and retired_at null) for
@@ -202,6 +203,9 @@ command-driven reason `user_stop` (resolution 2: the only cancel-mapping member 
   attention `cancel` on every unconsumed open request of the Attempt ("cancelling invalidates pending
   authorizations and native waits"); grant `RevokeGrant` on every open grant of the Attempt ("unused
   grants are revoked").
+- The dispatch checklist reads the Attempt after claiming any `start_turn` row. If cancellation is already
+  committed, it exhausts that start instead of sending or retrying it; an earlier transport failure leaves
+  the operation uncertain, but cannot cause work to start after the cancellation interrupt.
 - **Task already `cancelling`**: a same-nonce replay returns the stored result through the idempotency
   ledger; a different nonce runs the work and refuses on the version CAS (the Task already left `queued`/
   `running`/`waiting_input`), recording the refusal audit.
@@ -258,7 +262,9 @@ In `internal/application` unless delivery requires the worker fixture; names mat
 `-run 'Event|Attention|Decision|Cancel|Reconcile'` in both packages.
 
 - **Attention requests**: `TestAttentionRequestedCreatesRequestAndWaits` (pending request + correlation row,
-  Attempt/Task `await_input`); `TestAttentionRequestedSecondBlockingRefused`; kind payloads: an approval
+  Attempt/Task `await_input`); `TestAttentionRequestedSecondBlockingRefused`;
+  `TestAttentionRequestedNativeReferenceRaceHasOneReachableWait` (one correlation, one wait, no orphan);
+  kind payloads: an approval
   requires class + digest; a non-approval carrying one is refused; `TestAttentionRequestedExpiredRefused`
   (`expires_at` behind the event time).
 - **Decisions**: `TestDecisionDenyRecordsAndDelivers` (decision row, delivery row, steer accepted, request
@@ -279,7 +285,8 @@ In `internal/application` unless delivery requires the worker fixture; names mat
   released once, with nonce replay returning the original command result); stale environment observations
   cannot prove a stop; `TestNormalCompletionDoesNotConfirmCancellation`; `TestEventFailedTurnAfterCancelRefuses`
   (late observation refused and recorded); `TestAbandonReconcilesNeverSentCancel` (asserts the released
-  reservation alongside the termination).
+  reservation alongside the termination); `TestWorkerDoesNotRetryStartAfterCancellation` (a backed-off
+  start is exhausted after the interrupt and never reaches the provider again).
 - **Reservation release**: `TestReservationReleasesAtAttemptTerminal` (a failed turn and a
   never-sent give-up both release exactly once; a duplicate release replays as already-released; late
   usage after release records overshoot per #15 — the completed path's production arrives with #26).

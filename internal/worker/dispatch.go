@@ -32,6 +32,7 @@ const (
 	reasonRetryBudgetSpent  = "retry_budget_exhausted"
 	reasonNoOperation       = "no_operation"
 	reasonDecisionRejected  = "decision_rejected"
+	reasonAttemptCancelling = "attempt_cancelling"
 )
 
 func (w *Worker) transition(expectedVersion uint64, at time.Time) (store.Transition, error) {
@@ -296,6 +297,19 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		// behind a dispatched-never-sent operation.
 	default:
 		return exhaust(claim, reasonUnknownState)
+	}
+	attempt, err := store.GetAttempt(ctx, uow, tenant, operation.Attempt)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return exhaust(claim, reasonUnknownAttempt)
+		}
+		return nil, err
+	}
+	if attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptTerminated {
+		// Cancellation supersedes every outstanding start delivery. In
+		// particular, a transport-failed start must not become eligible again
+		// after the only interrupt has already been acknowledged.
+		return exhaust(claim, reasonAttemptCancelling)
 	}
 	if now.After(body.Deadline) {
 		return exhaust(claim, reasonDeadlineExceeded)
