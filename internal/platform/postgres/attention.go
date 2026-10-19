@@ -229,6 +229,7 @@ func GetOperationByAttempt(ctx context.Context, q Querier, tenant ids.TenantID, 
 		select operation_id::text from provider_operation p
 		where tenant_id = $1 and attempt_id = $2
 		and not exists (select 1 from governed_action g where g.tenant_id=p.tenant_id and g.operation_id=p.operation_id)
+		and not exists (select 1 from artifact_stage_operation s where s.tenant_id=p.tenant_id and s.operation_id=p.operation_id)
 		order by created_at desc, version desc limit 1`,
 		tenant.String(), attempt.String(),
 	)

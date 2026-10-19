@@ -30,7 +30,18 @@ type OutboxClaim struct {
 // lifecycle.RecordAttempt, lifecycle.AttemptRequestCancel and
 // lifecycle.RecordAttention with lifecycle.AttentionDecide; SQL spells them
 // out because placeholders cannot carry identifiers.
-const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel') or (record_kind = 'attention_request' and event = 'decide') or (record_kind='authority_use' and event='authorize'))`
+const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel') or (record_kind = 'attention_request' and event = 'decide') or (record_kind='authority_use' and event='authorize') or (record_kind='artifact' and event='stage'))`
+
+// LockDispatchResult keeps resolution in the same Outbox -> Attempt -> Task
+// lock order as claim preparation. Mutation predicates still fence epochs.
+func LockDispatchResult(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AnyID) error {
+	return lockRow(ctx, u, "outbox", "outbox_id", tenant.String(), id.String())
+}
+
+// RenewArtifactClaim renews only a still-live, exactly owned claim.
+func RenewArtifactClaim(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AnyID, epoch int64, ttl time.Duration, now time.Time) error {
+	return execVersionedUpdate(ctx, u, `update outbox set lease_expires_at=$5,updated_at=$4 where tenant_id=$1 and outbox_id=$2 and status='processing' and lease_epoch=$3 and lease_expires_at>$4`, tenant.String(), id.String(), epoch, now, now.Add(ttl))
+}
 
 // ClaimOutboxRow takes the oldest due, unexhausted, dispatchable row for
 // owner. The SELECT skips rows locked by a live worker; the UPDATE moves the
