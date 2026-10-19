@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verification_id",
+    "manifest",
+    "store_id",
+    "observed_digest",
+    "observed_size",
+    "object_version",
+    "verified_at"
+  ],
+  "properties": {
+    "verification_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "manifest": {
+      "$ref": "artifact-manifest.schema.json"
+    },
+    "store_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "observed_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "observed_size": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "object_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

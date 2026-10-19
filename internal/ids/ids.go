@@ -16,25 +16,27 @@ var ErrInvalid = errors.New("invalid identifier")
 
 // Kind markers. They exist only to make ID types distinct.
 type (
-	Tenant      struct{}
-	Principal   struct{}
-	Attempt     struct{}
-	Provider    struct{}
-	Operation   struct{}
-	Grant       struct{}
-	Task        struct{}
-	Attention   struct{}
-	Decision    struct{}
-	Audit       struct{}
-	Migration   struct{}
-	Claim       struct{}
-	Budget      struct{}
-	Reservation struct{}
-	Spend       struct{}
-	Artifact    struct{}
-	Revision    struct{}
-	Review      struct{}
-	Delivery    struct{}
+	Tenant       struct{}
+	Principal    struct{}
+	Attempt      struct{}
+	Provider     struct{}
+	Operation    struct{}
+	Grant        struct{}
+	Task         struct{}
+	Attention    struct{}
+	Decision     struct{}
+	Audit        struct{}
+	Migration    struct{}
+	Claim        struct{}
+	Budget       struct{}
+	Reservation  struct{}
+	Spend        struct{}
+	Artifact     struct{}
+	Revision     struct{}
+	Review       struct{}
+	Delivery     struct{}
+	Proposal     struct{}
+	Verification struct{}
 	// Any marks an identifier whose record kind is carried alongside it, such
 	// as the subject of an audit event.
 	Any struct{}
@@ -42,26 +44,28 @@ type (
 
 // Typed identifiers for product records.
 type (
-	TenantID      = ID[Tenant]
-	PrincipalID   = ID[Principal]
-	AttemptID     = ID[Attempt]
-	ProviderID    = ID[Provider]
-	OperationID   = ID[Operation]
-	GrantID       = ID[Grant]
-	TaskID        = ID[Task]
-	AttentionID   = ID[Attention]
-	DecisionID    = ID[Decision]
-	AuditID       = ID[Audit]
-	MigrationID   = ID[Migration]
-	ClaimID       = ID[Claim]
-	BudgetID      = ID[Budget]
-	ReservationID = ID[Reservation]
-	SpendID       = ID[Spend]
-	ArtifactID    = ID[Artifact]
-	RevisionID    = ID[Revision]
-	ReviewID      = ID[Review]
-	DeliveryID    = ID[Delivery]
-	AnyID         = ID[Any]
+	TenantID       = ID[Tenant]
+	PrincipalID    = ID[Principal]
+	AttemptID      = ID[Attempt]
+	ProviderID     = ID[Provider]
+	OperationID    = ID[Operation]
+	GrantID        = ID[Grant]
+	TaskID         = ID[Task]
+	AttentionID    = ID[Attention]
+	DecisionID     = ID[Decision]
+	AuditID        = ID[Audit]
+	MigrationID    = ID[Migration]
+	ClaimID        = ID[Claim]
+	BudgetID       = ID[Budget]
+	ReservationID  = ID[Reservation]
+	SpendID        = ID[Spend]
+	ArtifactID     = ID[Artifact]
+	RevisionID     = ID[Revision]
+	ReviewID       = ID[Review]
+	DeliveryID     = ID[Delivery]
+	ProposalID     = ID[Proposal]
+	VerificationID = ID[Verification]
+	AnyID          = ID[Any]
 )
 
 // ID is an opaque UUIDv7 identifier of kind K. The zero value is invalid.

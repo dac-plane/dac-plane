@@ -52,13 +52,19 @@ func (m ArtifactManifest) Validate() error {
 		m.Operation.IsZero() || m.Producer.IsZero() || m.WriterEpoch == 0 {
 		return fmt.Errorf("%w: manifest requires identifiers and a positive writer epoch", ErrInvalid)
 	}
-	if !slices.Contains(ArtifactKinds(), m.Kind) {
+	return ValidateArtifactMetadata(m.Kind, m.Digest, m.Size, m.MediaType, m.SourceRevision)
+}
+
+// ValidateArtifactMetadata applies the same evidence rules to declarations
+// and product-allocated manifests without inventing placeholder identities.
+func ValidateArtifactMetadata(kind ArtifactKind, digest identity.Digest, size uint64, mediaType, sourceRevision string) error {
+	if !slices.Contains(ArtifactKinds(), kind) {
 		return fmt.Errorf("%w: unknown artifact kind", ErrInvalid)
 	}
-	if m.Size > MaxAmount || !mediaTypePattern.MatchString(m.MediaType) || len(m.SourceRevision) > maxNativeRefLength {
+	if size > MaxAmount || !mediaTypePattern.MatchString(mediaType) || len(sourceRevision) > maxNativeRefLength {
 		return fmt.Errorf("%w: manifest size, media type or source revision out of bounds", ErrInvalid)
 	}
-	return validDigest(m.Digest)
+	return validDigest(digest)
 }
 
 // StoredObject is the artifact store's own observation of the uploaded bytes.

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest",
+    "native_ref"
+  ],
+  "properties": {
+    "manifest": {
+      "$ref": "../lifecycle/artifact-manifest.schema.json"
+    },
+    "native_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "upload": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  }
+}

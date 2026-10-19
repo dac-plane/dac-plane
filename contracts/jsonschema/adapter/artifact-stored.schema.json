@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "present",
+    "size"
+  ],
+  "properties": {
+    "present": {
+      "type": "boolean"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "present": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "digest"
+        ]
+      },
+      "else": {
+        "properties": {
+          "size": {
+            "const": 0
+          }
+        },
+        "not": {
+          "required": [
+            "digest"
+          ]
+        }
+      }
+    }
+  ]
+}
