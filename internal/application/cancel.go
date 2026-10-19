@@ -222,6 +222,25 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 		}
 		return nil, err
 	}
+	// A latest stored absent or hibernated observation remains valid stop
+	// evidence even when it arrived before the cancellation command. Record
+	// it now so the provider need not invent a new resource sequence merely
+	// to repeat an unchanged environment state.
+	environmentStopped, err := store.EnvironmentStopped(ctx, u.uow, tenant, attempt.ID)
+	if err != nil {
+		return nil, err
+	}
+	if environmentStopped {
+		step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
+		next, applied, refusal, err := step.Attempt(ctx, attempt.ID, lifecycle.AttemptEnvironmentStopped, "")
+		if err != nil {
+			return nil, err
+		}
+		if !applied && refusal != nil {
+			return nil, refusal
+		}
+		requested = next
+	}
 	view.AttemptState = string(requested.State)
 
 	// Cancelling invalidates the open native waits and the unused grants.

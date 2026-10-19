@@ -202,7 +202,9 @@ command-driven reason `user_stop` (resolution 2: the only cancel-mapping member 
   cancel_reason}` — refusing when no operation exists, since that is a ledger-level producer error);
   attention `cancel` on every unconsumed open request of the Attempt ("cancelling invalidates pending
   authorizations and native waits"); grant `RevokeGrant` on every open grant of the Attempt ("unused
-  grants are revoked").
+  grants are revoked"). A latest stored `absent` or `hibernated` observation for every bound environment
+  resource is applied as existing environment-stop evidence in the same commit; cancellation does not
+  require the provider to invent a new sequence for an unchanged stopped environment.
 - The dispatch checklist reads the Attempt after claiming any `start_turn` row. If cancellation is already
   committed, it exhausts that start instead of sending or retrying it; an earlier transport failure leaves
   the operation uncertain, but cannot cause work to start after the cancellation interrupt.
@@ -283,7 +285,8 @@ In `internal/application` unless delivery requires the worker fixture; names mat
   owner-only authorization and ready-for-review direct cancellation; `TestEventEnvironmentStopConvergesCancellation`;
   `TestEventRuntimeStopCompletesCancellation` (both stops -> terminated -> Task `stop_confirmed` -> reservation
   released once, with nonce replay returning the original command result); stale environment observations
-  cannot prove a stop; `TestNormalCompletionDoesNotConfirmCancellation`; `TestEventFailedTurnAfterCancelRefuses`
+  cannot prove a stop; a latest environment stop observed before cancellation is reused;
+  `TestTerminalAttemptAloneDoesNotProveCancellationStops`; `TestEventFailedTurnAfterCancelRefuses`
   (late observation refused and recorded); `TestAbandonReconcilesNeverSentCancel` (asserts the released
   reservation alongside the termination); `TestWorkerDoesNotRetryStartAfterCancellation` (a backed-off
   start is exhausted after the interrupt and never reaches the provider again).

@@ -339,11 +339,14 @@ func TestEventStaleEnvironmentStopCannotConvergeCancellation(t *testing.T) {
 	}
 }
 
-func TestNormalCompletionDoesNotConfirmCancellation(t *testing.T) {
+func TestTerminalAttemptAloneDoesNotProveCancellationStops(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, _ := f.executing(t, "n-1")
 	actor := lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: f.principal}
-	// The cancel's task move commits while the attempt is still executing...
+	// Construct an invariant-only split that CancelTask cannot produce: its
+	// Task and Attempt cancellation transitions commit atomically. Even in
+	// this artificial state, normal completion must not be mistaken for proof
+	// that both the runtime and environment stopped.
 	f.seed(t, func(uow *store.UnitOfWork) error {
 		task, err := store.GetTask(f.ctx, uow, f.tenant, s.Task.ID)
 		if err != nil {
@@ -377,6 +380,37 @@ func TestNormalCompletionDoesNotConfirmCancellation(t *testing.T) {
 	}
 	if n := f.count(t, "durable_event", "record_kind = 'budget' and event = 'release'"); n != 1 {
 		t.Fatalf("releases = %d, want exactly one", n)
+	}
+}
+
+func TestCancelUsesPreviouslyObservedEnvironmentStop(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "box-1", State: lifecycle.RunHibernated, Sequence: 1, ObservedAt: f.at,
+		})))); got.Applied != 1 {
+		t.Fatalf("pre-cancel environment stop = %+v, want applied observation", got)
+	}
+
+	view := f.cancel(t, s, "c-1")
+	if view.State != string(lifecycle.TaskCancelling) || view.AttemptState != string(lifecycle.AttemptCancellationRequested) {
+		t.Fatalf("cancel view = %+v, want cancellation pending only the runtime stop", view)
+	}
+	attempt, err := store.GetAttempt(f.ctx, f.pool, f.tenant, s.Attempt.ID)
+	if err != nil {
+		t.Fatalf("GetAttempt() error = %v", err)
+	}
+	if !attempt.EnvironmentStopped || attempt.RuntimeStopped {
+		t.Fatalf("stop evidence = runtime:%t environment:%t, want only environment", attempt.RuntimeStopped, attempt.EnvironmentStopped)
+	}
+
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(3, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		t.Fatalf("runtime stop = %+v, want applied", got)
+	}
+	if task, attemptState := f.states(t, s); task != lifecycle.TaskCancelled || attemptState != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, attemptState)
 	}
 }
 

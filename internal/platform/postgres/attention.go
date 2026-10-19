@@ -262,6 +262,28 @@ func HasEnvironmentBinding(ctx context.Context, q Querier, tenant ids.TenantID, 
 	return found, err
 }
 
+// EnvironmentStopped reports whether every environment resource bound to the
+// Attempt has a latest stored observation that is definitely stopped. No
+// binding is not stop evidence: a start may still be in flight.
+func EnvironmentStopped(ctx context.Context, q Querier, tenant ids.TenantID, attempt ids.AttemptID) (bool, error) {
+	var stopped bool
+	err := q.QueryRow(ctx, `
+		select count(*) > 0
+		   and count(*) = count(o.resource_ref)
+		   and coalesce(bool_and(o.state = any($3)), false)
+		from binding b
+		left join environment_observation o
+		  on o.tenant_id = b.tenant_id
+		 and o.attempt_id = b.attempt_id
+		 and o.provider_id = b.provider_id
+		 and o.resource_ref = b.native_ref
+		where b.tenant_id = $1 and b.attempt_id = $2 and b.kind = $4`,
+		tenant.String(), attempt.String(), stringsAny([]lifecycle.RunState{lifecycle.RunAbsent, lifecycle.RunHibernated}),
+		string(lifecycle.ResourceEnvironmentResource),
+	).Scan(&stopped)
+	return stopped, err
+}
+
 // stringsAny adapts typed state strings to a postgres any() argument.
 func stringsAny[S ~string](states []S) []any {
 	out := make([]any, len(states))
