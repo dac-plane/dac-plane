@@ -318,12 +318,20 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return ack(claim)
 	}
 	if row.Record == lifecycle.RecordAuthorityUse {
-		reason, err := store.CheckGovernedDispatch(ctx, uow, tenant, operation.ID, now)
+		reason, err := store.CheckGovernedDispatch(ctx, uow, tenant, operation.ID)
 		if err != nil {
 			return nil, err
 		}
+		checkedAt := time.Now().UTC()
+		claimExpired := !checkedAt.Before(now.Add(w.cfg.ClaimTTL))
+		now = checkedAt
 		if reason != "" {
 			return exhaust(claim, string(reason))
+		}
+		// Authorization may have waited on a row lock. The remaining gates
+		// and attempt lease must use current time as well.
+		if claimExpired {
+			return release(claim)
 		}
 	}
 	attempt, err := store.GetAttempt(ctx, uow, tenant, operation.Attempt)

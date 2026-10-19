@@ -59,7 +59,7 @@ func GetPolicyForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID)
 
 // CheckGovernedDispatch fences queued actions against policy changes and
 // revocation before their send marker. Retirement is never reversed in storage.
-func CheckGovernedDispatch(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, operation ids.OperationID, at time.Time) (identity.DenialReason, error) {
+func CheckGovernedDispatch(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, operation ids.OperationID) (identity.DenialReason, error) {
 	a, err := GetGovernedAction(ctx, u, tenant, operation)
 	if err != nil {
 		return "", err
@@ -75,10 +75,17 @@ func CheckGovernedDispatch(ctx context.Context, u *UnitOfWork, tenant ids.Tenant
 	if err != nil {
 		return "", err
 	}
+	// The send marker takes this lock too. Acquire it before the final time
+	// check so a blocked operation write cannot outlive valid authority.
+	if err := lockRow(ctx, u, "provider_operation", "operation_id", tenant.String(), operation.String()); err != nil {
+		return "", err
+	}
 	if g.Mode == identity.GrantAllowOnce && g.Operation == operation && a.Use.Outcome == identity.UseAllowed {
 		g.RetiredAt = time.Time{}
 	}
-	use, _, err := identity.Authorize(a.Execution.Request, &g, policy, at)
+	// Lock acquisition can outlast a grant. Evaluate time only after all
+	// authorization locks are held, never against the batch or claim time.
+	use, _, err := identity.Authorize(a.Execution.Request, &g, policy, time.Now().UTC())
 	return use.Reason, err
 }
 

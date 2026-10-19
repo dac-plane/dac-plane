@@ -148,6 +148,10 @@ func (w *Worker) abandonDispatch(ctx context.Context, u *store.UnitOfWork, tenan
 		return err
 	}
 	if op.State == lifecycle.OperationRecorded {
+		// Governed operations persist the send marker only after every gate
+		// passes. A yielded claim changes the epoch, not this proof that no
+		// request was sent.
+		neverSent = true
 		tr, err := w.transition(op.Version, at)
 		if err != nil {
 			return err

@@ -193,7 +193,7 @@ func (w *Worker) tickTenant(ctx context.Context, tenant ids.TenantID) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := w.handleRow(ctx, tenant, row, now); err != nil {
+		if err := w.handleRow(ctx, tenant, row, time.Now().UTC()); err != nil {
 			return err
 		}
 	}

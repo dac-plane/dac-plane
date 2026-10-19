@@ -44,6 +44,21 @@ ALTER TABLE durable_event ADD CONSTRAINT durable_event_record_kind_check CHECK (
 ALTER TABLE outbox ADD CONSTRAINT outbox_record_kind_check CHECK (record_kind IN ('task','attempt','attention_request','provider_operation','harness_qualification','migration_pass','maintenance_claim','budget','reservation','spend_challenge','artifact','authority_use','authority_grant'));
 
 -- +goose Down
+-- Prevent writes between the compatibility check and the destructive DDL.
+LOCK TABLE attention_request, authority_grant, authority_use, governed_action, enforcement_receipt IN ACCESS EXCLUSIVE MODE;
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF EXISTS (SELECT 1 FROM attention_request WHERE scope IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM authority_grant WHERE decision_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM authority_use WHERE scope IS NOT NULL OR decision_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM governed_action)
+    OR EXISTS (SELECT 1 FROM enforcement_receipt) THEN
+  RAISE EXCEPTION 'cannot downgrade governed actions while version 5 scope or evidence exists';
+ END IF;
+END;
+$$;
+-- +goose StatementEnd
 DROP TABLE enforcement_receipt;
 DROP TABLE governed_action;
 ALTER TABLE attention_request DROP COLUMN scope;

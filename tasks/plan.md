@@ -85,7 +85,7 @@ is not acceptance evidence. Verification results are reported only after observe
 
 ## Completed verification
 
-Implementation and review fixes are complete. `just test-contracts`, focused governed-action
+The initial implementation passed `just test-contracts`, focused governed-action
 integration tests (normal and race-enabled), and the full `just ci` suite passed. The final
 CI-equivalent run used `SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" just ci` on macOS;
 the race-enabled integration packages passed, including application (223.530s), worker
@@ -96,3 +96,36 @@ The acceptance suite additionally verifies exact-byte JSON digests and grant iss
 retirement and revocation evidence. A temporary mutation that inverted hook refusal made
 the denial acceptance test fail; the original gate was restored and the final suite passed.
 No production provider, network transport, or deployed environment was exercised.
+
+## Architecture-review corrections
+
+The review reproduced three worker gaps and added permanent regressions in
+`internal/application/governed_recovery_integration_test.go`:
+
+1. Sample authorization time after policy/Attempt/grant/send-marker locks, and refresh each
+   dispatch row's clock. Cover expiry during a slow preceding send and while waiting for
+   policy or operation locks; yield claims that expired during those waits.
+2. Treat a governed operation still in `recorded` as provably never sent, regardless of
+   the outbox claim epoch. Cover lease contention followed by revocation: reject without
+   effect or futile receipt polling, while preserving uncertainty for actual send markers.
+3. Explicitly reopen receipt replay after a generation reset or cursor-too-old response.
+   Preserve monotonic durable progress, bound reset loops, retain reset progress if replay
+   is unavailable, and never execute the action again to recover a receipt.
+4. Refuse downgrade before destructive DDL when version 5 scope, Decision provenance
+   or action/receipt evidence exists. Hold table locks across the check and DDL. Cover
+   a pending scoped approval: schema version and scope survive refusal, and approval
+   still succeeds. Empty-database down/up remains supported.
+
+The new regression cases failed before these corrections and passed afterward. The final
+full-suite results for the correction commit are recorded in PR #56 after verification.
+
+## Remaining M1 freeze gate
+
+This issue demonstrates pre-action authorization and receipt/denial enforcement. It does not
+claim complete hook-lifecycle integration. Before #30 freezes ADR-0003 parity, add durable,
+stage-specific post-action/failure-hook delivery and safe evidence for typed outcome,
+duration and usage; route hook messages/context safely rather than silently dropping them.
+Prove one stable action identity works across pre-action, execution and post/failure stages,
+and that a lost post-hook reply never repeats the governed effect. This remains an explicit
+M1 completion requirement, not production-provider qualification and not a reason to copy
+the explored vendor's topology.
