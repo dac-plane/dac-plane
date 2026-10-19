@@ -70,6 +70,19 @@ func AttentionEvents() []AttentionEvent {
 
 var decidedStates = []AttentionState{AttentionDecided, AttentionDispatching, AttentionDelivered, AttentionConsumed}
 
+// unconsumedAttentionStates are the states in which a request still holds its
+// Attempt's wait: answered or not, the native wait is real until its product
+// effect is observed or the request closes otherwise.
+var unconsumedAttentionStates = []AttentionState{
+	AttentionPending, AttentionDecided, AttentionDispatching, AttentionDelivered,
+}
+
+// UnconsumedAttentionStates lists every state in which a request is still an
+// open wait.
+func UnconsumedAttentionStates() []AttentionState {
+	return slices.Clone(unconsumedAttentionStates)
+}
+
 // unconsumed adds the transitions shared by every undelivered-or-unconsumed state:
 // the task can be cancelled or the native request superseded.
 func unconsumed(transitions map[AttentionEvent][]AttentionState) map[AttentionEvent][]AttentionState {
@@ -95,6 +108,9 @@ var attentionMachine = newMachine(AttentionStates(), AttentionEvents(),
 		AttentionDispatching: unconsumed(map[AttentionEvent][]AttentionState{
 			AttentionRedeliver: {AttentionDispatching},
 			AttentionDeliver:   {AttentionDelivered},
+			// An authenticated consumption observation may race ahead of the
+			// send reply; consuming the exact native request proves delivery.
+			AttentionConsume: {AttentionConsumed},
 		}),
 		AttentionDelivered: unconsumed(map[AttentionEvent][]AttentionState{
 			AttentionConsume: {AttentionConsumed},

@@ -1,12 +1,14 @@
 package contracts
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
@@ -28,6 +30,9 @@ const (
 	EntryTurnFinished        = "turn.finished"
 	EntryEnvironmentObserved = "environment.observed"
 	EntryOperationOutcome    = "operation_outcome"
+	EntryAttentionRequested  = "attention.requested"
+	EntryDecisionConsumed    = "decision.consumed"
+	EntryRuntimeStopped      = "runtime.stopped"
 )
 
 // progressKinds are known observations that carry no product state.
@@ -54,7 +59,10 @@ const (
 // ClassifyEntry sorts an entry kind into apply, progress or refuse.
 func ClassifyEntry(kind string) EntryClass {
 	switch {
-	case slices.Contains([]string{EntryRuntimeStarted, EntryTurnStarted, EntryTurnFinished, EntryEnvironmentObserved, EntryOperationOutcome}, kind):
+	case slices.Contains([]string{
+		EntryRuntimeStarted, EntryTurnStarted, EntryTurnFinished, EntryEnvironmentObserved,
+		EntryOperationOutcome, EntryAttentionRequested, EntryDecisionConsumed, EntryRuntimeStopped,
+	}, kind):
 		return EntryApply
 	case slices.Contains(progressKinds, kind):
 		return EntryProgress
@@ -157,6 +165,85 @@ func (o OperationOutcome) Validate() error {
 		return nil
 	}
 	return fmt.Errorf("%w: operation_outcome requires accepted, succeeded, failed or rejected", ErrInvalid)
+}
+
+// AttentionRequested reports that the runtime needs a responder: a question, an
+// action approval naming the governed action and its digest, an authentication
+// handoff or blocked work. The request never names product identities; the
+// ingestion boundary resolves them from the bound event.
+type AttentionRequested struct {
+	NativeRef    string                  `json:"native_ref"`
+	Kind         lifecycle.AttentionKind `json:"kind"`
+	Action       identity.ActionClass    `json:"action,omitempty"`
+	ActionDigest identity.Digest         `json:"action_digest,omitempty"`
+	ExpiresAt    time.Time               `json:"expires_at"`
+}
+
+// Validate reports whether the request names a known kind, and an approval
+// carries its action exactly.
+func (a AttentionRequested) Validate() error {
+	if !validRef(a.NativeRef) || a.ExpiresAt.IsZero() || !slices.Contains(lifecycle.AttentionKinds(), a.Kind) {
+		return fmt.Errorf("%w: attention.requested requires a bounded native reference, a known kind and an expiry", ErrInvalid)
+	}
+	if a.Kind == lifecycle.AttentionActionApproval {
+		if a.Action == "" || a.ActionDigest == "" {
+			return fmt.Errorf("%w: attention.requested approval requires an action and its digest", ErrInvalid)
+		}
+		if err := a.Action.Validate(); err != nil {
+			return fmt.Errorf("%w: attention.requested action: %w", ErrInvalid, err)
+		}
+		if err := a.ActionDigest.Validate(); err != nil {
+			return fmt.Errorf("%w: attention.requested action digest: %w", ErrInvalid, err)
+		}
+		return nil
+	}
+	if a.Action != "" || a.ActionDigest != "" {
+		return fmt.Errorf("%w: only an action approval may carry an action", ErrInvalid)
+	}
+	return nil
+}
+
+// DecisionConsumed reports the runtime consuming a delivered decision.
+type DecisionConsumed struct {
+	NativeRef string `json:"native_ref"`
+}
+
+// Validate reports whether the observation names the native request it consumed.
+func (d DecisionConsumed) Validate() error {
+	if !validRef(d.NativeRef) {
+		return fmt.Errorf("%w: decision.consumed requires a bounded native reference", ErrInvalid)
+	}
+	return nil
+}
+
+// RuntimeStopped reports the runtime's own end of work after a stop request,
+// mirroring the interrupt acknowledgement: whether a run was actually active.
+type RuntimeStopped struct {
+	HadActiveRun bool `json:"had_active_run"`
+}
+
+// UnmarshalJSON preserves the distinction between a reported false value and
+// an omitted required field. A plain bool would decode both as false and make
+// the Go boundary weaker than the JSON Schema contract.
+func (r *RuntimeStopped) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		HadActiveRun *bool `json:"had_active_run"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	if wire.HadActiveRun == nil {
+		return fmt.Errorf("%w: runtime.stopped requires had_active_run", ErrInvalid)
+	}
+	r.HadActiveRun = *wire.HadActiveRun
+	return nil
+}
+
+// Validate reports whether the observation is a well-formed stop.
+func (r RuntimeStopped) Validate() error {
+	return nil
 }
 
 // DecodeEntry decodes and validates an inline payload into T, rejecting

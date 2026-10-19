@@ -114,9 +114,13 @@ func mustID[K any](t *testing.T) ids.ID[K] {
 }
 
 func testWorker(t *testing.T, f *fixture, cfg worker.Config) *worker.Worker {
+	return testWorkerWithPort(t, f, cfg, f.loopback)
+}
+
+func testWorkerWithPort(t *testing.T, f *fixture, cfg worker.Config, port contracts.Port) *worker.Worker {
 	t.Helper()
 	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		map[ids.ProviderID]contracts.Port{f.provider: f.loopback}, cfg, "test-worker")
+		map[ids.ProviderID]contracts.Port{f.provider: port}, cfg, "test-worker")
 	if err != nil {
 		t.Fatalf("worker.New() error = %v", err)
 	}
@@ -458,6 +462,84 @@ func TestWorkerExhaustionStopsDispatch(t *testing.T) {
 	}
 	if len(f.loopback.Sent()) != 1 {
 		t.Fatalf("Sent() = %d requests after two more ticks, want no spin", len(f.loopback.Sent()))
+	}
+}
+
+func TestWorkerDoesNotRetryStartAfterCancellation(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	opID, attemptID := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 1)
+	f.moveDispatched(t, ctx, opID, now)
+	w := testWorker(t, f, worker.DefaultConfig())
+	f.loopback.ScriptSendError(opID, errTransportForTest)
+
+	// The first start delivery fails and enters backoff.
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("first Tick() error = %v", err)
+	}
+	if len(f.loopback.Sent()) != 1 {
+		t.Fatalf("Sent() = %d requests, want the failed start", len(f.loopback.Sent()))
+	}
+
+	// Commit cancellation and its interrupt while the original start waits.
+	uow, err := store.Begin(ctx, f.pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	task := f.taskState(t, ctx, f.attemptState(t, ctx, opID))
+	tr := store.Transition{ExpectedVersion: task.Version, At: now.Add(time.Second), Actor: f.actor, AuditID: mustID[ids.Audit](t)}
+	if _, _, err := store.ApplyTask(ctx, uow, f.tenant, task.ID, lifecycle.TaskCancel, "", tr); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("ApplyTask(cancel) error = %v", err)
+	}
+	attempt, err := store.GetAttempt(ctx, uow, f.tenant, attemptID)
+	if err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("GetAttempt() error = %v", err)
+	}
+	cancelBody, err := json.Marshal(map[string]any{
+		"operation": opID.String(), "role": "runtime", "method": "interrupt",
+		"deadline": now.Add(time.Hour).UTC().Format(time.RFC3339), "cancel_reason": "user stop",
+	})
+	if err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	tr = store.Transition{
+		ExpectedVersion: attempt.Version, At: now.Add(time.Second), Actor: f.actor, AuditID: mustID[ids.Audit](t),
+		Outbox: &store.OutboxPayload{ID: attempt.ID.Untyped(), Attempt: attempt.ID, Body: cancelBody},
+	}
+	if _, _, err := store.ApplyAttempt(ctx, uow, f.tenant, attempt.ID, lifecycle.AttemptRequestCancel, "", tr); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("ApplyAttempt(request_cancel) error = %v", err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("cancel Tick() error = %v", err)
+	}
+	if len(f.loopback.Cancels()) != 1 {
+		t.Fatalf("Cancels() = %d, want the interrupt acknowledged", len(f.loopback.Cancels()))
+	}
+
+	// Make the backed-off start due. Cancellation must exhaust it without a
+	// second provider send after the only interrupt.
+	if _, err := f.pool.Exec(ctx, `update outbox set next_attempt_at = now() - interval '1 second'
+		where tenant_id = $1 and record_kind = 'provider_operation' and record_id = $2`, f.tenant.String(), opID.String()); err != nil {
+		t.Fatalf("force start row due: %v", err)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("post-cancel Tick() error = %v", err)
+	}
+	if len(f.loopback.Sent()) != 1 {
+		t.Fatalf("Sent() = %d requests, want no start after cancellation", len(f.loopback.Sent()))
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationUncertain {
+		t.Fatalf("operation state = %s, want uncertain after the earlier transport failure", operation.State)
+	}
+	if attempt := f.attemptState(t, ctx, opID); attempt.State != lifecycle.AttemptCancellationRequested {
+		t.Fatalf("attempt state = %s, want cancellation_requested pending stop evidence", attempt.State)
 	}
 }
 

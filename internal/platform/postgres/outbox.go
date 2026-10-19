@@ -23,13 +23,14 @@ type OutboxClaim struct {
 }
 
 // dispatchableRows matches the outbox rows the dispatch loop owns: provider
-// operation dispatches and attempt cancellation intents. It mirrors the
-// prototype's command-only outbox (StartAttempt, CancelAttempt, ...): every
-// other row belongs to future surfaces and stays pending. The lifecycle
-// names are lifecycle.RecordOperation, lifecycle.RecordAttempt and
-// lifecycle.AttemptRequestCancel; SQL spells them out because placeholders
-// cannot carry identifiers.
-const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel'))`
+// operation dispatches, attempt cancellation intents and decided attention
+// deliveries. It mirrors the prototype's command-only outbox (StartAttempt,
+// CancelAttempt, ...): every other row belongs to future surfaces and stays
+// pending. The lifecycle names are lifecycle.RecordOperation,
+// lifecycle.RecordAttempt, lifecycle.AttemptRequestCancel and
+// lifecycle.RecordAttention with lifecycle.AttentionDecide; SQL spells them
+// out because placeholders cannot carry identifiers.
+const dispatchableRows = `((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel') or (record_kind = 'attention_request' and event = 'decide'))`
 
 // ClaimOutboxRow takes the oldest due, unexhausted, dispatchable row for
 // owner. The SELECT skips rows locked by a live worker; the UPDATE moves the

@@ -8,6 +8,7 @@ package progress
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -57,6 +58,9 @@ func (s Step) Attempt(ctx context.Context, id ids.AttemptID, event lifecycle.Att
 		return lifecycle.Attempt{}, false, nil, err
 	}
 	if err := s.followAttempt(ctx, next); err != nil {
+		return lifecycle.Attempt{}, false, nil, err
+	}
+	if err := s.releaseReservation(ctx, next); err != nil {
 		return lifecycle.Attempt{}, false, nil, err
 	}
 	return next, true, nil, nil
@@ -110,4 +114,41 @@ func (s Step) followAttempt(ctx context.Context, attempt lifecycle.Attempt) erro
 		return err
 	}
 	return nil
+}
+
+// releaseReservation closes an Attempt's unused budget hold once its work
+// ended, in the same unit of work as the transition that ended it (#15: an
+// unused reservation is released exactly once at terminal completion; usage
+// arriving later records overshoot). The reservation id derives from the
+// attempt id, the derivation the dispatch budget gate already uses, so
+// lookups need no unit; an Attempt without a reservation releases nothing and
+// an already-released reservation replays as closed.
+func (s Step) releaseReservation(ctx context.Context, attempt lifecycle.Attempt) error {
+	if !slices.Contains(lifecycle.AttemptTerminalStates(), attempt.State) {
+		return nil
+	}
+	reservationID, err := ids.Parse[ids.Reservation](attempt.ID.String())
+	if err != nil {
+		return err
+	}
+	reservation, err := store.GetReservation(ctx, s.UOW, s.Tenant, reservationID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if reservation.State == lifecycle.ReservationReleased {
+		return nil
+	}
+	budget, err := store.GetBudget(ctx, s.UOW, s.Tenant, reservation.Budget)
+	if err != nil {
+		return err
+	}
+	tr, err := s.transition(budget.Version)
+	if err != nil {
+		return err
+	}
+	_, _, err = store.ReleaseBudget(ctx, s.UOW, s.Tenant, reservation.Budget, reservationID, tr)
+	return err
 }

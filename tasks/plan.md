@@ -1,200 +1,351 @@
-# Implementation plan: issue #24 event ingestion and attempt reconciliation
+# Implementation plan: issue #24 PR B — attention, decisions and cancellation
 
-Tracker: [GitHub issue #24](https://github.com/AssahBismarkabah/dac-plane/issues/24) (epic #11)
+Tracker: [GitHub issue #24](https://github.com/AssahBismarkabah/dac-plane/issues/24) (epic #11). PR A (ingestion and
+reconciliation) was merged at `baa31cc` with the give-up fix in `a6b9728`; this plan covers its second PR.
+Investigation verified the Go surface against `main` at `baa31cc` and the explore sources re-checked 2026-10-18.
 
 ## Objective
 
-Advance Attempts and Tasks from authenticated provider observations while preserving the
-replay, uncertainty and cancellation invariants: bind and authenticate every event before any
-mutation, ingest cursor-based streams idempotently, turn normalized entries into product
-records and transitions, move unknown outcomes into explicit reconciliation, and converge
-cancellation only after both runtime and environment stops are observed or reconciled.
-Attention, decisions and cancellation enter through the command boundary from #23.
+Complete the attention half of the first vertical slice: a provider raises an attention request through the
+ingestion boundary, an authorized responder records a decision through the command boundary, the decision is
+delivered to the runtime over the adapter, its observed consumption resumes work, approving once issues the
+scoped allow-once grant, and cancellation converges only after the runtime and environment stops are observed
+or reconciled — ending with the stop confirmed and the reservation released exactly once.
 
 Verification (from the issue):
 
 ```sh
-go test -tags=integration ./internal/application/... -run 'Event|Attention|Decision|Cancel|Reconcile'
-go test -race -tags=integration ./internal/application/... -run 'Event|Cancel|Reconcile'
+just test-integration ./internal/application/ -run 'Event|Attention|Decision|Cancel|Reconcile'
+just test-integration ./internal/worker/ -run 'Attention|Decision|Cancel|Reconcile'
+just test-integration-race ./internal/application/ ./internal/worker/
 ```
 
-## What exists (verified on `main` at `955d7be`)
+The worker also names its decision- and cancellation-path tests with the shared prefixes so the issue's own
+regexes cover them wherever they live.
 
-- `contracts.BindEvent` / `contracts.Ingest` (#17): bind an event to the authenticated `Peer`
-  and a recorded `ProviderOperation`; advance a cursor, count duplicates, flag stale
-  generations and rehydration. Frozen by the #18 gate.
-- Store (#20/#21): `ApplyAttempt`, `ApplyTask`, `InsertAttention`/`ApplyAttention`/
-  `DecideAttention`, `InsertBinding`/`ListBindings`, `InsertTurnEnd`, `UpsertObservation`,
-  `UpsertCursor`/`GetCursor`, `ApplyOperation`; all with replay and refusal evidence.
-- Worker (#21): sends dispatch rows, delivers `attempt/request_cancel` rows as protocol
-  cancels (`dispatch.go:94`), marks lost replies `uncertain`, and reconciles uncertain
-  operations from `operation_outcome` entries on the `dispatch` stream (`reconcile.go`).
-- Application (#23): `Submit`/`Assert` leave the Task `queued`, the Attempt `allocated` and
-  the runtime operation `dispatched`.
-- **Gap:** nothing moves an Attempt or a Task after submission. No code applies
-  `AttemptOutcomeUnknown`, `AttemptReconciled`, `AttemptRequestCancel`, the stop
-  observations, or any Task event beyond `submit`. The entry vocabulary exists only in a
-  simulator test (`progress`, `attention`, `turn_end`, `operation_outcome`), and that test has
-  the provider send a full product `AttentionRequest`, which ownership rule 7 forbids.
+## What exists (verified on main at `baa31cc`)
+
+- Lifecycle records and machines are complete and frozen: `AttentionRequest` (states pending, decided,
+  dispatching, delivered, consumed, expired, cancelled, superseded; `decide` is refused outside
+  `DecideAttention`; redelivery reuses the same decision identity; cancel/supersede are legal from every
+  unconsumed state), `Decision` (immutable; approve_once/deny/answer; answer requires a digest),
+  `AllowOnceGrant` deriving `identity.AuthorityGrant` from a recorded approve-once bound to the request's
+  operation, action digest and policy generation, and `identity.IssueGrant` refusing stale generations.
+- Task machine: `await_input` (running -> waiting_input), `input_resolved` (waiting_input -> running),
+  `input_unresolved` (waiting_input -> running/failed/cancelling), `cancel` (draft/queued direct;
+  running/waiting_input/verifying -> cancelling), `cancelling` exits only on `stop_confirmed`.
+- Attempt machine: `request_cancel` from active states -> `cancellation_requested` (directly `terminated`
+  from `allocated`), `runtime_stopped`/`environment_stopped` converge `cancellation_requested` on both
+  observations (refusing a repeated observation of the same stop at the same version), `reconciled` ->
+  terminated, `request_cancel` from `reconciling` -> `cancellation_requested`.
+- Store: `InsertAttention`/`ApplyAttention`/`DecideAttention` (replay rules, refusal audits, immutable
+  decision trigger), `GetAttentionForUpdate`, grant store (`InsertGrant`/`RevokeGrant`/`GetGrantForUpdate`),
+  `ReserveBudget`/`ReportUsage`/`ReleaseBudget` (release exactly once), attempt leases, `LockCursor`/
+  `AdvanceCursor`, `RecordRefusal`, `GetPolicy`. Frozen DDL CHECK lists already allow outbox rows for
+  `attention_request`; the decision and attention DDL carry the one-decision-per-version and
+  digest-XOR constraints.
+- Worker: claims provider dispatch and `attempt/request_cancel` rows; the cancel path calls `port.Cancel`,
+  acks the row and leaves cancellation observation-driven; `steer_turn` and `interrupt` are frozen runtime
+  methods; every request frame carries a per-send `delivery_id`; the reconciler applies `operation_outcome`
+  only to uncertain operations; `abandonOperation` (a6b9728) resolves give-ups as rejected (never sent) or
+  uncertain (possibly delivered).
+- Application: `Submit`/`Assert` show the command-boundary pattern (envelope, fingerprint, ledger, refusal
+  reuse, all-transition-one-commit, outbox payload in the transition); `Ingest` (PR A) classifies entries,
+  binds, applies, and safe-defines cursor movement. `DecideAttention`/`CancelTask` do not exist; the command
+  ledger deliberately has no command list ("new command kinds must not need a schema migration", `00003`).
 
 ## Sources
 
-- Baseline ownership rules 2, 3, 7: runtime sessions correlate to an Attempt; the product
-  stores environment correlation and observed state without becoming a compute controller;
-  provider events are observations until authenticated, deduplicated and accepted.
-- Review invariants: events bound to tenant, Attempt, operation and sequence before they
-  affect state; cursor acknowledgement is ingestion progress, not completion; cancellation is
-  intent until runtime and environment stops are observed or reconciled; unknown outcomes
-  enter an explicit uncertain state and are never retried as no effect.
-- ADR-0003: replayable observation stream (connected, rows, cleared, cursor-too-old,
-  heartbeat, tombstones, rehydration); execution bindings; typed turn failures; environment
-  observations `absent | starting | running | hibernated | unknown`.
-- Evidence (shape only): Plane-Bot transcript watch frames, `turn_failed {code, summary,
-  error_details}`, turn end `awaiting_user_response` (the needs-input transition), interrupt
-  acknowledging `had_active_run` (DEEP-DIVES-04 §1); historical SPEC §11 (stop reasons:
-  only a proposed result moves to verification; idle, token limit and user cancel are not
-  success) and §13 (persist the attention request before displaying it; deliver the decision
-  through the runtime; observe consumption).
+- Baseline ownership rules 1 and 4 and the first vertical slice (attention request -> decision -> resume):
+  `docs/architecture/README.md` 59-65, 103-112.
+- Review invariants: a state transition and its outbox entry commit atomically; delivery is at least once
+  with stable ids and consumer dedup; leases are fenced ("a stale lease holder cannot mutate an Attempt or
+  acknowledge a Decision"); cancellation is intent until both stops are observed or reconciled; governed
+  authority with one-time retirement; audit digests only (`docs/architecture/review-2026-10-15.md` 47-71).
+- ADR-0003: unknown send durability enters reconciliation; `AuthorityGrant` allow-once is consumed
+  atomically at the execution transaction (enforcement #25; PR B only issues); cancel frames target an
+  in-flight request identity; ceilings and policy generations fail closed.
+- Gate #18: attention/decision schemas frozen with their test coverage
+  (`TestDenialIsDeliveredLikeAnyDecision`, `TestFirstDecisionWins`,
+  `TestApprovalConfersAllowOnceGrantUnderItsPolicy`); `TestCancellationOnlyEndsTerminated` and
+  `TestReconciliationNeverReturnsToDispatch` must keep holding.
+- SPEC (historical, shapes only): §11 one blocking request per attempt; denial blocks the action, not the
+  task; §12 persist the request before display; §13 first valid decision wins, deliver through the runtime,
+  "an answer is not proof that the runtime resumed", redelivery with the same decision id, supersede on a
+  dead native process; §22 cancel persists intent before dispatch, invalidates pending authorizations and
+  unused grants and never undoes effects; §25 "stop dispatching further work; terminate according to
+  policy"; §32 a crash between decision and delivery re-delivers the same decision id on the committed
+  outbox row.
 
-## Alignment with `architecture-explore/` (checked 2026-10-18)
+## Alignment with `architecture-explore/` (re-checked 2026-10-18)
 
-The first draft of this plan was checked against the exploration evidence. Seven points
-changed; each row names the evidence and the revision below.
-
-| # | First draft | Evidence | Revision |
+| # | Starting question | Evidence | Resolution |
 |---|---|---|---|
-| 1 | Flat entry names (`binding`, `turn_end`, `attention`) | SPEC §14 event families and the prototype `EVENT_TYPES` (`runtime.started`, `turn.started`, `turn.finished`, `attention.requested`, `decision.consumed`, ...) | Use the documented dotted names (Decision A) |
-| 2 | Every unknown kind refused | SPEC §14 and prototype `classifyEventType`: unknown optional progress is stored generically; unknown permission or state-changing semantics are rejected; "an observation cannot grant permission by name" | Three-way classification (Decision A) |
-| 3 | `turn_end completed` finalizes the Attempt and proposes a result | SPEC §11: an end-of-turn moves to verification only when the adapter reports a proposed result; idle, token limit and user-cancel are not success. Prototype `taskEventForStopReason` | A completed turn is recorded and changes no state; result proposal is #26 |
-| 4 | An attention entry is the only waiting signal; no limit | SPEC §11: one blocking attention request per attempt in v1; §12 step 5: persist the request before displaying it | `attention.requested` creates the request and the wait; a second open blocking request is refused |
-| 5 | Decision resumes work once delivered | SPEC §13: "An answer is not proof that the runtime resumed"; redeliver with the same decision ID; prototype event `decision.consumed` | Resume only on an observed `decision.consumed` (Decision D) |
-| 6 | Cancel moves the Task and Attempt only | SPEC §13/§22: cancelling invalidates pending authorizations and native waits, revokes unused grants; ADR-0011(b): from any state with possibly live execution the task stays `cancelling` until the stop is confirmed | Cancel also cancels open attention, revokes unused grants, and the dispatch moves the Task and Attempt out of directly-cancellable states (Decision C) |
-| 7 | Attention native ref and turn operation as natural keys | Prototype `0002_native_correlation.sql`: one native approval id maps to exactly one attention request, kept in a correlation table; our `attention_request` has no native ref and `turn_end` has no operation | Migration `00004` adds an attention correlation table; a turn end links to its operation through its turn binding (Decision B) |
+| 1 | Wait state and events | Prototype `waiting_attention` / `wait` / `response_consumed` (SPEC §11, machines.ts) | Frozen vocabulary is `waiting_input` with `await_input`/`input_resolved`/`input_unresolved` — baseline wins |
+| 2 | Deny ends the request as terminal `denied` | Prototype attention machine terminal `denied` (machines.ts 124) | Baseline changed this: a deny is an immutable Decision that is still delivered and observed consumed, so the runtime learns the denial (`attention.go` 81-85; `TestDenialIsDeliveredLikeAnyDecision`) |
+| 3 | Delivery as a `DeliverDecision` outbox command type | Prototype outbox `type` column; SPEC §32 crash story | The frozen outbox rows are keyed by `record_kind` + `event`, and `steer_turn` is the frozen runtime method (`port.go` 25): the row is `attention_request`/`decide` produced by the decide transition, the per-send `delivery_id` stays per send |
+| 4 | Where the grant's action class comes from | `AllowOnceGrant(decision, id, action, expires)` needs the class; `ActionClass` is an open validated vocabulary; the frozen request record has no class column | The approval `attention.requested` payload names the governed action; the correlation row records it (migration `00004`), and the decide command derives the grant from that row. Provenance chain: provider observation -> correlation -> decision -> grant; the responder never supplies the class |
+| 5 | Expired or superseded cannot authorize; one accepted decision per request version | SPEC §10/§13; prototype unique (tenant, request, request_version) | Already frozen in the `decision` DDL and `Decide` CAS; the prototype's `stale_attempt` check needs nothing new because the attempt binding in the frozen request is the event-bound attempt |
+| 6 | Queued cancel terminates without stops | ADR-0011(b)2: queued and ready-for-review cancel directly | Task `queued` has no runtime dispatch in flight (dispatch moves it to `running`), and `request_cancel` from `allocated` terminates directly in the frozen Attempt machine. No attention can be open on an `allocated` attempt (`await_input` is executing-only) |
+| 7 | Mark superseded and "reconcile the proposed action" on a dead native process | SPEC §13:598-602 | The operation owns its own lifecycle (PR A: uncertainty, abandon); PR B supersedes open attention wherever the attempt's work turns non-live, and invents no second reconciliation |
+| 8 | When does the reservation release | #15 acceptance: "Unused reservation is released exactly once at terminal completion"; SPEC §25:1151 | On Attempt terminal completion (completed/failed/terminated), whatever caused it — never coupled to the Task stop confirmation; late usage afterwards records overshoot (#15) |
+| 9 | Which stop reason drives a cancel command | Prototype `StopReason` union (machines.ts:54-62): only `user_cancel` maps to the cancel event; `idle`/`token_limit`/`unknown` produce none by design | `CancelTask` carries the single command-driven reason `user_stop`; the observation reasons belong to turn-end handling, not the command boundary |
+| 10 | What keys a consumed decision observation | SPEC §14:622-623 (the boundary supplies/verifies product identity), §13:598 ("redeliver to its mapped request"), prototype `0002_native_correlation.sql` | `decision.consumed` carries the native ref; the correlation row resolves it under the bound tenant, provider and attempt |
 
-Confirmed unchanged by the evidence: the ingestion boundary supplies or verifies tenant and
-attempt identity instead of trusting the payload (SPEC §14); deny resumes work and blocks only
-that action (ADR-0011(b)1, SPEC §11); late or stale terminal observations are retained for
-audit and never applied (ADR-0011(b)3, SPEC §11); duplicates are deduplicated and never
-executed twice, unknown external outcomes are never blindly repeated (SPEC §22).
+## Decision A: three new entry kinds (extends PR A's Decision A)
 
-## Decision A: a product-defined entry vocabulary (SPEC §14 names)
+Exact kinds join the accept list ahead of the refuse prefixes; unknown `attention.*` and `decision.*` kinds
+stay refused, so "an observation cannot grant permission by name" keeps holding. All three build their
+identities from the bound event — the payload never names tenant, attempt, provider or operation.
 
-Providers report observations; the product builds every record from the **bound event's**
-identities (tenant, Attempt, provider, operation); a payload never names or overrides them.
-New `internal/contracts/entries.go` plus `contracts/jsonschema/adapter/entry-*.schema.json`,
-guarded by both contract coverage tests and the vendor-name test. Inline payloads above
-256 KiB (the SPEC §14 proposed default) are refused; larger content travels as
-`payload_omitted` with its hash.
-
-| Entry kind | Payload (provider observation) | Product effect |
+| Entry kind | Payload | Effect |
 |---|---|---|
-| `runtime.started` | `native_ref` (session) | `Binding` runtime_session (`CheckBinding` refuses a session bound to another Attempt); Attempt `provisioning -> starting -> executing` |
-| `turn.started` | `native_ref` (turn), `session_ref` | `Binding` runtime_turn, refused unless the session is bound to this Attempt |
-| `turn.finished` | `session_ref`, `turn_ref`, `outcome`, typed `failure`, `ended_at` | `TurnEnd`; binds the turn from the event's operation if `turn.started` was not seen, so the failure keeps its operation. `completed`, `awaiting_input`: recorded, no transition. `failed`: Attempt `fail`, Task `execution_failed`, code and details preserved. `interrupted` during cancellation: the runtime stop |
-| `runtime.stopped` | `had_active_run` | The runtime stop acknowledgement during cancellation (Plane-Bot interrupt shape) |
-| `environment.observed` | `resource_ref`, `state`, `sequence`, `observed_at` | `EnvironmentObservation` (newer sequence supersedes; resource must be bound or is bound from the event); `absent`/`hibernated` during cancellation: the environment stop |
-| `attention.requested` | `native_ref`, `kind`, `action_digest` for an approval, `expires_at` | The product creates the `AttentionRequest` (responders: the task owner; current policy generation; provider and operation from the event) plus its correlation row; Attempt and Task `await_input`; refused while another blocking request is open |
-| `decision.consumed` | `native_ref` of the request | Attention `consume`; Task `input_resolved`; Attempt `resume` |
-| `operation_outcome` | `state` | Unchanged #21 worker semantics (name kept for compatibility); additionally resolves the Attempt from `reconciling` |
-| `message.delta`, `tool.proposed`, `tool.finished`, `checkpoint.created`, `progress` | object | Known progress: acknowledged, no record, no transition |
+| `attention.requested` | `native_ref`, `kind` (question / action_approval / authentication_handoff / blocked_work), for approvals `action` class + `action_digest`, `expires_at` | Product `AttentionRequest` created from the bound event: kind from the payload, digest copied for approvals, responders = the task owner principal, policy generation read from the tenant policy, `expires_at` must lie ahead of the event time. Transactionally claims the provider-native key before changing either lifecycle, then writes the request and correlation with Attempt `await_input` (from `executing`) and Task `await_input` (from `running`). A request whose state machine refuses the await transition or whose kind/payload combination fails validation is refused with evidence. A second unconsumed request on the Attempt (pending, decided, dispatching or delivered) is refused with evidence — one blocking request per attempt. |
+| `decision.consumed` | `native_ref` of the request | Resolves the attention through the correlation row (the row must be bound to this event's tenant, provider and attempt, else refused). Attention `consume`; Task `input_resolved` (from `waiting_input`); Attempt `resume` (from `waiting_input`). A `dispatching` request may consume directly because the authenticated observation can race ahead of the send reply and proves delivery to the exact native request. Decided-but-never-dispatched, superseded, cancelled or consumed requests refuse with evidence. |
+| `runtime.stopped` | required `had_active_run` | The runtime stop observation (Plane-Bot interrupt shape): Attempt `runtime_stopped` while `cancellation_requested`; only an already `terminated` Attempt can confirm a Task still left `cancelling`. Completed or failed work does not prove the environment stopped. |
 
-Unknown kinds follow SPEC §14: a kind with a state-changing prefix (`task.`, `attempt.`,
-`attention.`, `decision.`, `action.`, `result.`, `environment.`) or naming approval, grant or
-permission is refused with evidence; any other unknown kind is acknowledged as generic
-progress.
+`environment.observed` (existing kind) gains stop convergence: after binding and upserting the observation,
+an attempt in `cancellation_requested` observing `absent` or `hibernated` applies Attempt
+`environment_stopped`. Only an accepted latest observation can prove that stop; a stale or repeated resource
+sequence is ingestion progress only. Stop success applies Task `stop_confirmed` and releases the reservation
+(Decision D).
 
-## Decision B: ingestion is a provider-authenticated command
+New payload types (`AttentionRequested`, `DecisionConsumed`, `RuntimeStopped`) get their
+`adapter/entry-*.schema.json` files and the schema-conformance, enum and coverage guards — the same pattern
+as PR A's five.
 
-`application.Ingest(ctx, pool, peer contracts.Peer, event contracts.Event) (Ingestion, error)`:
-the transport authenticates `peer`; the command loads the operation, runs `BindEvent`, loads or
-starts the cursor, runs `Ingest`, applies accepted entries in order, and commits records,
-transitions, audit (actor: the provider) and the new cursor in one transaction. Idempotency
-comes from the stream, not a client nonce: entries at or below the cursor are skipped, and every
-effect also has a natural key (binding native ref, turn end session/turn, attention correlation
-native ref, observation sequence), so a rehydration replay converges without repeating
-transitions. Cleared and cursor-too-old reset the cursor and report `Rehydrate`; missing
-history is never read as success.
+## Decision B: migration 00004, correlation row and new store helpers
 
-Migration `00004_attention_native.sql` (additive): `attention_native (tenant_id, provider_id,
-native_ref, attention_id)`, unique on the native key and on the attention, mirroring the
-prototype's correlation table without changing the frozen `AttentionRequest` record.
+`00004_attention_native.sql` (additive; `schema.go.CurrentVersion = 4`):
 
-Production subscription transports stay out of scope; tests drive `Ingest` with simulator
-frames, and the worker's reconcile loop stays the only subscriber.
+- `attention_native (tenant_id, provider_id, native_ref, attention_id, action_class)`; primary key
+  `(tenant_id, provider_id, native_ref)` — one native ref maps to exactly one attention under one provider —
+  plus `UNIQUE (tenant_id, attention_id)` — an attention has at most one native mapping; `action_class`
+  stays nullable (questions carry none), and a NULL on an approval is refused at decide time, after the row
+  exists.
+- Store helpers: `LockAttentionNative` (transaction-scoped serialization of one provider-native key before
+  lifecycle mutation), `InsertAttentionNative` (natural-key replay, mirroring `InsertBinding`),
+  `GetAttentionNative` (by tenant + provider + native ref — a plain read: the correlation row is
+  write-once provenance and never mutated), `ListOpenAttentionByAttempt` (states pending, decided,
+  dispatching, delivered); `ListGrantsByAttempt` (open grants: revoked_at and retired_at null) for
+  revocation; `GetOperationByAttempt` for the cancel body's operation id. `GetPolicy` already exists for
+  the current policy generation.
 
-## Decision C: dispatch, unknown outcomes and cancellation
+## Decision C: DecideAttention and its delivery
 
-- **Dispatch leaves the cancellable-directly states.** Enqueueing a runtime dispatch (in
-  `Submit` and `Assert` from #23) now also applies Task `dispatch` (`queued -> running`) and
-  Attempt `provision` (`allocated -> provisioning`) in the same transaction: once a dispatch
-  may be sent, execution may be live, so cancellation must wait for stops (ADR-0011(b)2).
-  A governed submission stays `queued`/`allocated` until its receipt enqueues the dispatch.
-- **Unknown outcomes.** An operation that becomes `uncertain` moves its Attempt to
-  `reconciling` (`outcome_unknown`) and supersedes its open attention request (SPEC §13: a
-  dead native process supersedes its request); an `operation_outcome` resolves the Attempt with
-  `reconciled` to the observed state.
-- **`CancelTask` command** (principal, nonce, expected Task version), one transaction:
-  - `queued` (nothing enqueued): Task `cancel -> cancelled`, Attempt `request_cancel ->
-    terminated`, reservation released;
-  - possibly live: Task `cancel -> cancelling`, Attempt `request_cancel ->
-    cancellation_requested`, an `attempt/request_cancel` outbox row with a `CancelReason`
-    dispatch body, open attention `cancel`, unused allow-once grants of the Attempt revoked.
-- **Convergence.** The Attempt terminates only after both stops (runtime: `runtime.stopped`
-  or `turn.finished interrupted`; environment: `environment.observed absent/hibernated`), or a
-  reconciliation: an Attempt that never bound an environment resource reconciles the
-  environment stop, and a dispatch that was never delivered reconciles the runtime stop. On
-  termination the Task gets `stop_confirmed` and the reservation is released exactly once
-  (#15). Late `turn.finished`/`operation_outcome` after cancellation are refused and recorded.
+`DecideAttention` embeds `Command` (actor, nonce, expected version) plus `Attention ids.AttentionID`, kind
+(DecisionKind), answer digest for answers, at time. Fingerprint over `{attention, kind, answer_digest,
+expected_version}`. One transaction:
 
-## Decision D: attention and decisions through the command boundary
+1. Load the attention in the caller's tenant (`ErrNotFound` otherwise, matching the cross-tenant invariant),
+   plus its correlation row (approvals need the recorded action class; its absence on an approval is a
+   validation failure) and the tenant policy's current generation.
+2. Build the `Decision` (principal = calling actor; request version = `Command.ExpectedVersion`; kind from
+   the payload; digest only for answers) — first valid decision wins; wrong responder, kind/request-kind
+   mismatch, stale policy, wrong request version and expiry refuse through the frozen machine and record
+   their refusal audit; an identical recorded decision replays it.
+3. `store.DecideAttention` — decision row, attention version to `decided`, history, all one commit.
+4. For `approve_once`: `request.AllowOnceGrant(decision, grantID, correlationRow.ActionClass,
+   attention.ExpiresAt)` — the grant expires exactly at the request's expiry, which the decide ceremony
+   already required to lie ahead; `identity.IssueGrant` refuses a policy generation that moved on; then
+   `store.InsertGrant`. Standing grants and deny-policy persistence are #25; nothing else is issued here.
+5. Enqueue the delivery row in the same commit: record kind `attention_request`, record id the attention id,
+   event `decide`, row id derived from the decision id (a replayed decide never duplicates the row), demand
+   `person` (a decision delivery preempts background rows in the existing scheduler), body
+   `{decision_id, attention, attempt, native_ref, kind, answer_digest?, action?, expires_at}`.
 
-`DecideAttention` command (principal, nonce, request version, current policy generation):
-store `DecideAttention`, then a `DeliverDecision` outbox row (stable id: the decision id, so
-redelivery reuses it) that the worker sends as a runtime `steer_turn` carrying the decision
-kind and answer digest; a delivery reply moves the request to `delivered`; only an ingested
-`decision.consumed` moves it to `consumed` and resumes work (Task `input_resolved`, Attempt
-`resume`). Deny follows the same path and resumes work with the action blocked (ADR-0011(b)1).
-Approve-once also issues the allow-once grant derived by `AllowOnceGrant`; enforcing it at
-dispatch is #25.
+Worker delivery (`decisionRow`, claimed through an extended `dispatchableRows` predicate:
+`or (record_kind = 'attention_request' and event = 'decide')`):
 
-## Delivery: two PRs against #24
+- Load the attention; a `decided` state moves it to `dispatching` (`AttentionDispatch`, CAS) — anything
+  else (delivered, consumed, cancelled, superseded, expired) acks the row idempotently, so replay and
+  duplicate work produce at-most-once sends.
+- Take the attempt lease exactly like a dispatch does; a lost lease race releases the row.
+- Send `contracts.Request{Operation: the attention's operation, Delivery: fresh delivery id, Tenant,
+  Attempt, Role runtime, Method steer_turn, Arguments: body}`; a reply:
+  - accepted -> `AttentionDeliver` (dispatching -> delivered) and ack the row, lease release, one commit;
+  - rejected -> the delivery cannot reach the native request: `AttentionSupersede` + exhaust the row with a
+    static reason — superseded becomes the only stop state the request reaches from a rejected steer; work
+    stays as the attempt machinery keeps it (waiting_input still counts as live, matching prototype and
+    SPEC — the wait's own eventual policy resolution is out of scope);
+  - pending -> leave the row processing (lease lapse reclaims), like `SendPending`;
+  - transport failure -> `retryPrepared`-style backoff; unknown durability never marks delivered; a spent
+    retry budget exhausts the row and leaves the request `dispatching` — inspectable, but NOT replayable
+    from the plane: the decide ledger replays the stored decide without re-running work, so no second row
+    can appear. Resumption of a stuck `dispatching` request is #27 recovery (or an explicit real re-decide
+    through the surface; the machine's `delivered -> cancel` path keeps it unreachable-minus-nothing).
+    Never resume work by a silent assumption ("an answer is not proof that the runtime resumed").
 
-- **PR A, ingestion and reconciliation:** entry vocabulary and schemas, `Ingest`, cursor
-  handling, bindings, turn ends, environment observations, dispatch moving Task and Attempt,
-  unknown-outcome reconciliation. Tests named `TestEvent*` and `TestReconcile*`.
-- **PR B, attention, decisions and cancellation:** migration `00004`, `attention.requested`,
-  `DecideAttention`, decision delivery and `decision.consumed`, `CancelTask`, stop convergence,
-  grant revocation and reservation release. Tests named `TestAttention*`, `TestDecision*` and
-  `TestCancel*`.
+Every reply must match both the stable operation and the current delivery identity. A delayed reply from an
+earlier delivery is malformed and cannot acknowledge or resolve the current claim.
 
-## Acceptance tests (both PRs)
+No expire driver ships in this PR; the request expiry only binds the decide ceremony (the frozen expiry
+ceilings). Consumption follows only from the ingested `decision.consumed` entry.
 
-- Forged envelopes (another provider's peer, another tenant, an operation of another
-  Attempt) and observations whose session or resource is bound to another Attempt are refused
-  before any mutation, with refusal evidence.
-- A duplicate rows frame, a duplicate tombstone and a full replay after `cleared` repeat no
-  transition and create no second record; the cursor only moves forward within a generation.
-- `cleared` and `cursor_too_old` report rehydration and change no lifecycle state; heartbeats
-  and progress kinds change nothing; an unknown `attempt.*` or `*approved*` kind is refused.
-- `turn.finished completed` changes no state; `failed` preserves code, summary, details digest
-  and the provider operation.
-- A lost reply moves the Attempt to `reconciling` and supersedes open attention; an
-  `operation_outcome` resolves it.
-- Cancellation: a queued governed task cancels directly; a dispatched one waits; one stop
-  leaves `cancellation_requested`; both terminate, confirm the Task stop and release the
-  reservation once; an Attempt with no environment binding reconciles that stop; a late
-  `turn.finished` after cancel is refused and recorded; open attention is cancelled and unused
-  grants revoked.
-- Attention: `attention.requested` creates the request and waits; a second one is refused; a
-  decision is delivered, consumed only via `decision.consumed`, and resumes work; deny resumes
-  with the action blocked; a stale-version decision conflicts.
+## Decision D: CancelTask and stop convergence
+
+`CancelTask` embeds `Command` (actor, nonce, expected Task version), `Task ids.TaskID`, the fixed
+command-driven reason `user_stop` (resolution 2: the only cancel-mapping member of the prototype's
+`StopReason` union), and `at`. Fingerprint over `{task, reason, expected_version}`. One transaction:
+
+- Load the Task in the caller's tenant; unknown reads as absent (cross-tenant invariant).
+- Require the calling principal to own the Task. Another tenant principal reads as absent; another principal
+  in the same tenant receives an unauthorized-actor refusal before any lifecycle mutation.
+- **Task `queued`** (governed pre-receipt, or back to queued from a review): `TaskCancel -> cancelled`.
+  An allocated Attempt applies `request_cancel -> terminated` and releases its reservation in the same commit.
+  A terminal Attempt from earlier reviewed work stays terminal; cancellation revokes any unused grants rather
+  than rewriting completed or failed history.
+- **Task `running` or `waiting_input`** (live dispatch or live native wait): `TaskCancel -> cancelling`;
+  Attempt `request_cancel -> cancellation_requested`; enqueue the cancel outbox row
+  (`attempt`/`request_cancel`, body `{operation: attempt's current dispatched operation via
+  GetOperationByAttempt, role runtime, method "interrupt", deadline now+config horizon,
+  cancel_reason}` — refusing when no operation exists, since that is a ledger-level producer error);
+  attention `cancel` on every unconsumed open request of the Attempt ("cancelling invalidates pending
+  authorizations and native waits"); grant `RevokeGrant` on every open grant of the Attempt ("unused
+  grants are revoked"). A latest stored `absent` or `hibernated` observation for every bound environment
+  resource is applied as existing environment-stop evidence in the same commit; cancellation does not
+  require the provider to invent a new sequence for an unchanged stopped environment.
+- The dispatch checklist reads the Attempt after claiming any `start_turn` row. If cancellation is already
+  committed, it exhausts that start instead of sending or retrying it; an earlier transport failure leaves
+  the operation uncertain, but cannot cause work to start after the cancellation interrupt.
+- **Task already `cancelling`**: a same-nonce replay returns the stored result through the idempotency
+  ledger; a different nonce runs the work and refuses on the version CAS (the Task already left `queued`/
+  `running`/`waiting_input`), recording the refusal audit.
+
+Convergence (the follow rules; the frozen machines decide order, the boundary only applies and audits):
+
+- New follow rule in `lifecycle.TaskFollowsAttempt`: Attempt `terminated` AND Task `cancelling` ->
+  `stop_confirmed`. Completed or failed Attempts do not prove environment shutdown. Existing rules stay:
+  failed + running -> `execution_failed`;
+  uncertain + live -> `reconciling`; nothing else changes, so `TestReconciliationNeverReturnsToDispatch`
+  and `TestCancellationOnlyEndsTerminated` keep holding.
+- Release is not cancellation-coupled: #15's acceptance criterion — "Unused reservation is released exactly
+  once at terminal completion" — puts the release on ATTEMPT terminal completion (completed, failed,
+  terminated), whatever caused it. A shared `releaseIfTerminal(ctx, uow, tenant, attempt, tr)` helper runs
+  after every outcome that lands the Attempt in a terminal state inside the caller's commit (stop
+  convergence, reconcile resolution, failed turn, give-up abandon), keyed by the reservation id derived
+  from the attempt id — the same derivation `checkBudget` already uses — through `GetReservation` +
+  `ReleaseBudget`, which replays as already-released. Late usage arriving after a release records overshoot
+  (#15). A queued-cancel releases in its own commit (the attempt terminated directly).
+- A `neverSent` give-up (`abandonOperation`) on a `cancellation_requested` attempt applies the runtime stop,
+  and an Attempt with no environment binding applies the environment stop as well — it terminates without
+  inventing a provider ("a dispatch that was never delivered reconciles the runtime stop"); a possibly-
+  delivered give-up stays uncertain and keeps waiting for real observations. The same terminal-release
+  helper closes the reservation in that commit.
+- `environmentObserved`, `runtimeStopped` and `turnFinished interrupted` share the same stop helper; the
+  machines alone decide ordering (`RejectStopAlreadyObserved` surfaces as a refusal audit for a stale
+  duplicate after the state moved, and as a replay for a same-version duplicate). Non-stop observations
+  (`unknown`, `starting`, `running`) during cancellation stay progress-only — only `absent` and
+  `hibernated` are definite stops.
+
+Race policy for every attention/grant mutation outside a single CAS (cancel command touching many requests,
+supersede helper, revoke loop): apply per record with the record's current version after a fresh read; on
+`ErrStaleVersion` re-read and re-apply — the machine keeps `cancel`/`supersede` legal from every unconsumed
+state, including `delivered` — and when the state meanwhile became `consumed` the wait resolved
+legitimately, so writing nothing is correct. A racing worker bump never blocks or rolls back the whole
+cancel command.
+
+## Decision E: non-live work supersedes its wait
+
+One helper `supersedeOpenAttention(ctx, uow, tenant, attempt, actor, at)`: apply `AttentionSupersede` on
+every unconsumed open request of the Attempt in the caller's transaction, ignoring (already-superseded,
+cancelled, consumed) states through the machine's own replay and refusal handling. Called:
+
+- from `resolveSend` when a reply lands `SendUnknown` (the plane can no longer know the wait is real);
+- from `abandonOperation` when the resolved target is `uncertain` (the give-up mirror);
+- from the turn-finished failure path when `AttemptFail` applies (a failed run cannot serve its wait);
+- never from the reconcile path itself (by then the wait already superseded, or the machine refuses).
+
+A `decision.consumed` against a superseded request is refusal evidence, never resurrection.
+
+## Acceptance tests
+
+In `internal/application` unless delivery requires the worker fixture; names match
+`-run 'Event|Attention|Decision|Cancel|Reconcile'` in both packages.
+
+- **Attention requests**: `TestAttentionRequestedCreatesRequestAndWaits` (pending request + correlation row,
+  Attempt/Task `await_input`); `TestAttentionRequestedSecondBlockingRefused`;
+  `TestAttentionRequestedNativeReferenceRaceHasOneReachableWait` (one correlation, one wait, no orphan);
+  kind payloads: an approval
+  requires class + digest; a non-approval carrying one is refused; `TestAttentionRequestedExpiredRefused`
+  (`expires_at` behind the event time).
+- **Decisions**: `TestDecisionDenyRecordsAndDelivers` (decision row, delivery row, steer accepted, request
+  delivered; then ingest `decision.consumed` -> request consumed, Task `input_resolved`, Attempt `resume`);
+  `TestDecisionAnswerCarriesDigest`; `TestDecisionApproveOnceIssuesAllowOnceGrant` (fields, generation, same
+  row on replay); `TestDecisionStaleVersionConflicts`; `TestDecisionWrongResponderForbidden`;
+  `TestDecisionReplayReturnsRecordedDecision`; `TestDecisionStalePolicyForbidden`.
+- **Delivery**: `TestDeliveryRedeliversAfterCrashBetweenDecideAndSend` (row survives restart and re-claims;
+  SPEC §32); `TestDeliveryRejectedSteerSupersedesRequest`; decided-before-dispatch consumption is refused,
+  while dispatching consumption proves delivery even when it races ahead of the reply; a reply for another
+  delivery is rejected; duplicate arrow-worker delivery does not double-send (one steer per decision in
+  `Sent()`).
+- **Cancellation**: `TestCancelQueuedTaskCancelsAndReleases`; `TestCancelDispatchedTaskWaitsForStops`
+  (cancelling + `cancellation_requested` + cancel row + attention cancelled + grants revoked;
+  `TestWorkerCancelIndependentOfStop` keeps asserting the protocol cancel at the worker layer);
+  owner-only authorization and ready-for-review direct cancellation; `TestEventEnvironmentStopConvergesCancellation`;
+  `TestEventRuntimeStopCompletesCancellation` (both stops -> terminated -> Task `stop_confirmed` -> reservation
+  released once, with nonce replay returning the original command result); stale environment observations
+  cannot prove a stop; a latest environment stop observed before cancellation is reused;
+  `TestTerminalAttemptAloneDoesNotProveCancellationStops`; `TestEventFailedTurnAfterCancelRefuses`
+  (late observation refused and recorded); `TestAbandonReconcilesNeverSentCancel` (asserts the released
+  reservation alongside the termination); `TestWorkerDoesNotRetryStartAfterCancellation` (a backed-off
+  start is exhausted after the interrupt and never reaches the provider again).
+- **Reservation release**: `TestReservationReleasesAtAttemptTerminal` (a failed turn and a
+  never-sent give-up both release exactly once; a duplicate release replays as already-released; late
+  usage after release records overshoot per #15 — the completed path's production arrives with #26).
+- **Uncertainty hooks**: `TestReconcileUnknownOutcomeSupersedesAttention`.
+- **Replay/dedupe acceptance**: repeated frames repeat no transition; the correlation natural key, the
+  decision-id row and the CAS keep concurrent duplicates convergent (end-to-end duplicate decide command
+  through the ledger).
+
+## Verification
+
+```sh
+just test-contracts            # three new schemas must compile and be covered, vendor test stays clean
+just test-integration ./internal/application/ ./internal/worker/
+just ci                        # before opening the PR
+```
+
+PR: `feat(application): deliver decisions and converge cancellation`, filled with the adorsys-gis template,
+mutation-verified per the repo habit, review-bot findings checked against the mechanism before fixing or
+rebutting.
 
 ## Boundaries
 
-- No artifacts, result revisions or reviews (#26); no governed-action enforcement (#25).
-- No production event transport; `Peer` comes from the caller as the transport's
-  authentication result.
-- The frozen #17 contracts and the 00001 to 00003 schema are not changed; entry payload
-  schemas and migration `00004` are additive.
-- #23's `Submit`/`Assert` change only by adding the Task and Attempt dispatch transitions to
-  the enqueue (Decision C); its acceptance tests are updated for the new states.
+- No #25 enforcement (dispatch-time grant revalidation, hook interception), no attention expiry driver, no
+  standing-grant issuance, no attention projection/UI read model (#26 stacks those), no `input_unresolved`
+  producer (parked with the wait policy in #25 — the machine slot stays unused by design here).
+- No production transport for decisions; the simulator scripts the delivery replies in a `RowsFrame`-style
+  flow only where needed, and the worker tests use the existing loopback script surface.
+- Frozen contracts (#17/#18), schemas 00001-00003 and the established PR A behavior stay untouched; the PR
+  adds migration 00004, three entry schemas, and composition logic only. No new ADR.
+
+## Resolutions (settled from the sources, 2026-10-19)
+
+None of the four alignment questions stayed open — each resolves in `architecture-explore/` or the frozen
+baseline, and the answers amended the decisions above:
+
+1. **`decision.consumed` carries the native ref** — SPEC §14:622-623 makes the authenticated boundary the
+   supplier of product identity ("it does not trust these fields merely because the worker sent them"), §13:598
+   redelivers "to its mapped request", and prototype `0002_native_correlation.sql` made the native id the
+   correlation key in both directions. The correlation row resolves it under the bound tenant, provider and
+   attempt; no product id travels in that payload. (Decision A as written.)
+2. **Cancel reason: one command-driven value.** Prototype `StopReason` is a closed union
+   (machines.ts:54-62) in which only `user_cancel` maps to the cancel event — `idle`, `token_limit` and
+   `unknown` deliberately produce none ("stays running; needs follow-up or user decision"). The command
+   `CancelTask` carries the single fixed reason `user_stop`; `admin_stop` and the runtime-observation
+   reasons are not command vocabulary. The adapter body's free-text `cancel_reason` stays unchanged
+   (native interrupts carry a reason string, DEEP-DIVES-04:47-49).
+3. **`input_unresolved` stays unproduced — by evidence, not neglect.** Its producer is request-policy or
+   expiry logic: task.go:89-91 ("An unresolved one resumes, fails or cancels according to the request's
+   policy"), SPEC §11:490-491, machines.ts:26. M1 PR B has neither a request-policy surface nor an expiry
+   driver (boundaries: #25, #27), and denial in the frozen baseline resolves via `input_resolved`. Consequence
+   owned: a request superseded on non-live work leaves its Task in `waiting_input` until the user cancels or
+   the wait returns through a fresh attempt — the PR body will state this.
+4. **Release rides attempt-terminal completion, not Task-stop confirmation.** #15's criterion — "Unused
+   reservation is released exactly once at terminal completion" — settles the timing on the attempt's
+   terminal state, whatever caused it, with late usage recording overshoot afterwards (Decision D as
+   amended). This supersedes the earlier task-confirmation stance and slightly widens PR B: the
+   terminal-release helper also fires on ordinary attempt failure and on give-up resolution. Reviewer note:
+   without it, every normally failed attempt leaks its reservation, and #28's invariant sweep would have
+   flagged the leak later regardless.

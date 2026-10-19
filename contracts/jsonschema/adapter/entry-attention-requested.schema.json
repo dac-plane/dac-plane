@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AttentionRequested",
+  "description": "Payload of an attention.requested entry. The request names the native reference it answers and never carries product identities; only an action approval names a governed action and its digest.",
+  "type": "object",
+  "required": ["native_ref", "kind", "expires_at"],
+  "additionalProperties": false,
+  "properties": {
+    "native_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" },
+    "kind": { "enum": ["question", "action_approval", "authentication_handoff", "blocked_work"] },
+    "action": { "$ref": "../identity/common.schema.json#/$defs/actionClass" },
+    "action_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "expires_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "properties": { "kind": { "const": "action_approval" } } },
+  "then": { "required": ["action", "action_digest"] },
+  "else": { "not": { "anyOf": [{ "required": ["action"] }, { "required": ["action_digest"] }] } }
+}

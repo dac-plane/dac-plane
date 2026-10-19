@@ -30,6 +30,9 @@ const (
 	reasonTransportFailed   = "transport_unavailable"
 	reasonMalformedReply    = "malformed_reply"
 	reasonRetryBudgetSpent  = "retry_budget_exhausted"
+	reasonNoOperation       = "no_operation"
+	reasonDecisionRejected  = "decision_rejected"
+	reasonAttemptCancelling = "attempt_cancelling"
 )
 
 func (w *Worker) transition(expectedVersion uint64, at time.Time) (store.Transition, error) {
@@ -40,11 +43,18 @@ func (w *Worker) transition(expectedVersion uint64, at time.Time) (store.Transit
 	return store.Transition{ExpectedVersion: expectedVersion, At: at, Actor: SystemActor(), AuditID: auditID}, nil
 }
 
-// handleRow routes one ready row: cancel intents to the provider's cancel
-// path, operation dispatches through the pre-dispatch checklist and send,
-// and anything else to poison. Poison rows are exhausted with a static
-// reason so they stay inspectable and never spin.
+// handleRow routes one ready row: decided attention deliveries to their
+// delivery path, cancel intents to the provider's cancel path, operation
+// dispatches through the pre-dispatch checklist and send, and anything else
+// to poison. Poison rows are exhausted with a static reason so they stay
+// inspectable and never spin.
 func (w *Worker) handleRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, now time.Time) error {
+	if row.Record == lifecycle.RecordAttention {
+		if row.Event != string(lifecycle.AttentionDecide) {
+			return w.poison(ctx, tenant, row, now, reasonNoHandler)
+		}
+		return w.decisionRow(ctx, tenant, row, now)
+	}
 	body, err := ParseDispatchBody(row.Payload)
 	if err != nil {
 		return w.poison(ctx, tenant, row, now, reasonInvalidBody)
@@ -196,7 +206,7 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil {
 		return w.retryPrepared(ctx, tenant, row, prepared, now, reasonTransportFailed)
 	}
-	return w.resolveSend(ctx, tenant, row, prepared, reply, now)
+	return w.resolveSend(ctx, tenant, row, prepared, delivery, reply, now)
 }
 
 // preparedDispatch is a claimed row that passed the checklist, with the
@@ -287,6 +297,19 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		// behind a dispatched-never-sent operation.
 	default:
 		return exhaust(claim, reasonUnknownState)
+	}
+	attempt, err := store.GetAttempt(ctx, uow, tenant, operation.Attempt)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return exhaust(claim, reasonUnknownAttempt)
+		}
+		return nil, err
+	}
+	if attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptTerminated {
+		// Cancellation supersedes every outstanding start delivery. In
+		// particular, a transport-failed start must not become eligible again
+		// after the only interrupt has already been acknowledged.
+		return exhaust(claim, reasonAttemptCancelling)
 	}
 	if now.After(body.Deadline) {
 		return exhaust(claim, reasonDeadlineExceeded)
@@ -457,8 +480,8 @@ func (w *Worker) recordShadow(ctx context.Context, uow *store.UnitOfWork, tenant
 // operation terminal and ack the row; unknown parks the operation in
 // uncertain for the reconciler; pending leaves the row processing so the
 // lease lapse reclaims it.
-func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, reply contracts.Reply, now time.Time) error {
-	if reply.Operation.String() != prepared.operation.ID.String() {
+func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, delivery ids.DeliveryID, reply contracts.Reply, now time.Time) error {
+	if reply.Operation != prepared.operation.ID || reply.Delivery != delivery {
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply, true)
 	}
 	if err := reply.Validate(); err != nil {
@@ -501,6 +524,12 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 			return err
 		}
 		if reply.Durability == lifecycle.SendUnknown {
+			// The plane can no longer know the wait is real: the attempt
+			// moved to reconciliation, and its open native request
+			// supersedes — it never resurrects on a guess.
+			if err := step.SupersedeOpenAttention(ctx, prepared.operation.Attempt); err != nil {
+				return err
+			}
 			w.logger.Info("operation entered reconciliation", "operation", prepared.operation.ID.String())
 		}
 		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil {
@@ -634,7 +663,10 @@ func (w *Worker) exhaustPrepared(ctx context.Context, tenant ids.TenantID, row s
 // transport failure, a crash before the reply was stored, a pending reply),
 // so the effect is unknown and the operation goes to reconciliation; it is
 // never treated as no effect. Only a dispatched operation is resolved: any
-// other state already says what happened to it.
+// other state already says what happened to it. An unresolved wait follows
+// the outcome: uncertainty supersedes the open native request, and a
+// never-sent rejection reconciles the stops of an Attempt already awaiting
+// them — nothing ran, so nothing else will ever report a stop.
 func (w *Worker) abandonOperation(ctx context.Context, uow *store.UnitOfWork, tenant ids.TenantID, id ids.OperationID, neverSent bool, now time.Time) error {
 	operation, err := store.GetOperation(ctx, uow, tenant, id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -659,7 +691,52 @@ func (w *Worker) abandonOperation(ctx context.Context, uow *store.UnitOfWork, te
 		return err
 	}
 	step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: now}
-	return step.FollowOperation(ctx, resolved)
+	if err := step.FollowOperation(ctx, resolved); err != nil {
+		return err
+	}
+	if target == lifecycle.OperationUncertain {
+		// The give-up mirror of a lost reply: the wait supersedes with the
+		// operation's uncertainty.
+		if err := step.SupersedeOpenAttention(ctx, operation.Attempt); err != nil {
+			return err
+		}
+		return nil
+	}
+	return w.stopNeverSentCancellation(ctx, step, tenant, operation.Attempt)
+}
+
+// stopNeverSentCancellation reconciles the stops of an Attempt awaiting them
+// when its operation was never delivered: no request reached the provider, so
+// the runtime stop is definite, and with no environment ever bound the
+// environment stop is too. The Attempt terminates without inventing a
+// provider, releasing its reservation in the same commit.
+func (w *Worker) stopNeverSentCancellation(ctx context.Context, step progress.Step, tenant ids.TenantID, attemptID ids.AttemptID) error {
+	attempt, err := store.GetAttempt(ctx, step.UOW, tenant, attemptID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if attempt.State != lifecycle.AttemptCancellationRequested {
+		return nil
+	}
+	if !attempt.RuntimeStopped {
+		if _, applied, _, err := step.Attempt(ctx, attemptID, lifecycle.AttemptRuntimeStopped, ""); err != nil {
+			return err
+		} else if !applied {
+			return nil
+		}
+	}
+	binding, err := store.HasEnvironmentBinding(ctx, step.UOW, tenant, attemptID)
+	if err != nil {
+		return err
+	}
+	if binding {
+		return nil
+	}
+	_, _, _, err = step.Attempt(ctx, attemptID, lifecycle.AttemptEnvironmentStopped, "")
+	return err
 }
 
 // ackClaim acknowledges a row whose claim is still held (cancel path).

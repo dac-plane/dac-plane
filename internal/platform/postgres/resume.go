@@ -151,7 +151,8 @@ func OutboxReadyEntries(ctx context.Context, q Querier, tenant ids.TenantID, now
 // backstop. Every other pending row belongs to future surfaces.
 func OutboxReadyDispatch(ctx context.Context, q Querier, tenant ids.TenantID, now time.Time, limit int) ([]OutboxRow, error) {
 	query := selectOutboxRow + ` where tenant_id = $1 and exhausted_at is null and next_attempt_at <= $2
-		and ((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel'))
+		and ((record_kind = 'provider_operation') or (record_kind = 'attempt' and event = 'request_cancel')
+			or (record_kind = 'attention_request' and event = 'decide'))
 		and (status = 'pending'
 			or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= $2))
 		order by next_attempt_at`
