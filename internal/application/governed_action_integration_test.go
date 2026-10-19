@@ -424,7 +424,6 @@ func TestGovernedActionCrashMarkerNeverResends(t *testing.T) {
 	g.enforce(t, e, g.cmd)
 	pause := e.Control().Pause(g.cmd.Request.Operation, simulator.AfterEffect)
 	cfg := worker.DefaultConfig()
-	cfg.ClaimTTL = 20 * time.Millisecond
 	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{g.provider: e}, cfg, "crashing-worker")
 	if err != nil {
 		t.Fatal(err)
@@ -435,13 +434,36 @@ func TestGovernedActionCrashMarkerNeverResends(t *testing.T) {
 	go func() { done <- w.Tick(ctx) }()
 	select {
 	case <-pause.Reached():
+	case err := <-done:
+		t.Fatalf("dispatch ended before the crash boundary: %v", err)
 	case <-g.ctx.Done():
 		t.Fatal("effect boundary not reached")
 	}
 	cancel()
-	<-done
-	// The next worker may reclaim, but must reconcile the durable send marker.
-	time.Sleep(25 * time.Millisecond)
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("crashed dispatch error=%v, want context cancellation", err)
+	}
+	// Crash only after the effect, then expire its claims explicitly. A tiny
+	// real-time lease can lapse during preparation on a slower CI runner and
+	// correctly yield before sending, which does not simulate this crash.
+	g.seed(t, func(u *store.UnitOfWork) error {
+		tag, err := u.Exec(g.ctx, `update outbox set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and record_id=$2 and status='processing'`, g.tenant.String(), g.cmd.Request.Operation.String())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("crash did not retain the claimed action outbox row")
+		}
+		tag, err = u.Exec(g.ctx, `update attempt set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and attempt_id=$2 and lease_owner='crashing-worker'`, g.tenant.String(), g.s.Attempt.ID.String())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("crash did not retain the attempt lease")
+		}
+		return nil
+	})
+	// A replacement may reclaim, but must reconcile the durable send marker.
 	g.tick(t, e)
 	op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
 	if err != nil || op.State != lifecycle.OperationUncertain {
