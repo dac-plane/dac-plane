@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionConsumed",
+  "description": "Payload of a decision.consumed entry. The runtime names the native request whose decision it consumed; product identities resolve through the correlation binding.",
+  "type": "object",
+  "required": ["native_ref"],
+  "additionalProperties": false,
+  "properties": {
+    "native_ref": { "$ref": "../lifecycle/common.schema.json#/$defs/nativeRef" }
+  }
+}

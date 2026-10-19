@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -191,6 +192,12 @@ func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOu
 		outcome, err = applyDecoded(ctx, a, entry, a.environmentObserved)
 	case contracts.EntryOperationOutcome:
 		outcome, err = applyDecoded(ctx, a, entry, a.operationOutcome)
+	case contracts.EntryAttentionRequested:
+		outcome, err = applyDecoded(ctx, a, entry, a.attentionRequested)
+	case contracts.EntryDecisionConsumed:
+		outcome, err = applyDecoded(ctx, a, entry, a.decisionConsumed)
+	case contracts.EntryRuntimeStopped:
+		outcome, err = applyDecoded(ctx, a, entry, a.runtimeStopped)
 	}
 	return outcome, err
 }
@@ -335,6 +342,18 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 	} else if replayed {
 		return entryApplied, nil
 	}
+	if payload.Outcome == lifecycle.TurnInterrupted {
+		// An interrupted turn reports the runtime's own end of work: the
+		// stop observation of an attempt already awaiting its stops.
+		attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+		if err != nil {
+			return 0, err
+		}
+		if attempt.State == lifecycle.AttemptCancellationRequested {
+			return a.applyStop(ctx, entry, lifecycle.AttemptRuntimeStopped)
+		}
+		return entryApplied, nil
+	}
 	if payload.Outcome != lifecycle.TurnFailed {
 		return entryApplied, nil
 	}
@@ -355,12 +374,19 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 		// retained as evidence and never overrides the current state.
 		return entryRefused, a.record(ctx, refusal)
 	}
+	// A failed run cannot serve its wait: its open native request supersedes,
+	// never resurrects.
+	if err := a.step.SupersedeOpenAttention(ctx, a.event.Attempt); err != nil {
+		return 0, err
+	}
 	return entryApplied, nil
 }
 
 // environmentObserved records an observation of a resource bound to this
 // Attempt, binding it from the event's operation when first seen. The
-// product stores observed state; it does not control compute.
+// product stores observed state; it does not control compute. An environment
+// observed absent or hibernated while the Attempt awaits its stops is a
+// definite stop observation; every other state is progress only.
 func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.Entry, payload contracts.EnvironmentObserved) (entryOutcome, error) {
 	ok, err := a.bind(ctx, lifecycle.ResourceEnvironmentResource, payload.ResourceRef, "")
 	if err != nil {
@@ -375,6 +401,206 @@ func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.E
 		ObservedAt: payload.ObservedAt.UTC().Truncate(time.Microsecond),
 	}); err != nil {
 		return 0, err
+	}
+	switch payload.State {
+	case lifecycle.RunAbsent, lifecycle.RunHibernated:
+		attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+		if err != nil {
+			return 0, err
+		}
+		if attempt.State == lifecycle.AttemptCancellationRequested {
+			return a.applyStop(ctx, entry, lifecycle.AttemptEnvironmentStopped)
+		}
+	}
+	return entryApplied, nil
+}
+
+// attentionRequested raises a product attention request for the event's
+// Attempt from a provider observation: the request never names product
+// identities itself, and the one native reference maps to exactly one
+// request. The attempt then awaits and the task waits; the frozen machines
+// refuse an attempt that cannot await, and every refusal is evidence.
+func (a entryApplier) attentionRequested(ctx context.Context, entry contracts.Entry, payload contracts.AttentionRequested) (entryOutcome, error) {
+	attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	task, err := store.GetTask(ctx, a.uow, a.event.Tenant, attempt.Task)
+	if err != nil {
+		return 0, err
+	}
+	// One blocking request per attempt: an unconsumed wait means this one
+	// cannot join.
+	open, err := store.ListOpenAttentionByAttempt(ctx, a.uow, a.event.Tenant, attempt.ID)
+	if err != nil {
+		return 0, err
+	}
+	if len(open) > 0 {
+		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+	}
+	// A native reference the provider already raised resolves to its first
+	// request; it is provenance, never a rebind.
+	if _, err := store.GetAttentionNative(ctx, a.uow, a.event.Tenant, a.event.Provider, payload.NativeRef); err == nil {
+		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
+	policy, err := store.GetPolicy(ctx, a.uow, a.event.Tenant)
+	if err != nil {
+		return 0, err
+	}
+	attentionID, err := ids.New[ids.Attention]()
+	if err != nil {
+		return 0, err
+	}
+	request := lifecycle.AttentionRequest{
+		ID: attentionID, Tenant: a.event.Tenant, Task: attempt.Task, Attempt: attempt.ID,
+		Kind: payload.Kind, PolicyGeneration: policy.Generation,
+		Responders: []ids.PrincipalID{task.Owner},
+		ExpiresAt:  payload.ExpiresAt.UTC().Truncate(time.Microsecond),
+	}
+	if payload.Kind == lifecycle.AttentionActionApproval {
+		request.Provider, request.Operation = a.event.Provider, a.event.Operation
+		request.ActionDigest = payload.ActionDigest
+	}
+	if !request.ExpiresAt.After(a.step.At) {
+		return a.refuse(ctx, entry, lifecycle.RejectRequestExpired)
+	}
+	request, err = lifecycle.NewAttentionRequest(request, a.step.At)
+	if err != nil {
+		return a.refuse(ctx, entry, lifecycle.RejectInvalidTransition)
+	}
+	// The wait is taken first: an Attempt that cannot await refuses the
+	// whole observation, so nothing is written for a request that could
+	// never block its work.
+	if _, applied, refusal, err := a.step.Attempt(ctx, a.event.Attempt, lifecycle.AttemptAwaitInput, ""); err != nil {
+		return 0, err
+	} else if !applied && refusal != nil {
+		return entryRefused, a.record(ctx, refusal)
+	} else if applied {
+		if _, err := a.step.Task(ctx, attempt.Task, lifecycle.TaskAwaitInput); err != nil {
+			return 0, err
+		}
+	}
+	if _, _, err := store.InsertAttention(ctx, a.uow, request); err != nil {
+		if errors.Is(err, store.ErrPayloadMismatch) {
+			return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+		}
+		return 0, err
+	}
+	// The correlation row binds the native reference under the provider that
+	// reported it; for an approval it also records the governed action class
+	// the observation named, the provenance a decision needs.
+	native := store.AttentionNative{
+		Tenant: a.event.Tenant, Provider: a.event.Provider, NativeRef: payload.NativeRef,
+		Attention: request.ID, ActionClass: payload.Action, CreatedAt: a.step.At,
+	}
+	if _, _, err := store.InsertAttentionNative(ctx, a.uow, native); err != nil {
+		if errors.Is(err, store.ErrPayloadMismatch) {
+			return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+		}
+		return 0, err
+	}
+	return entryApplied, nil
+}
+
+// decisionConsumed records the runtime consuming a delivered decision,
+// resolved through the native reference under this event's provider and
+// attempt. The request closes, the attempt resumes and the task leaves its
+// wait; a request not yet delivered, or one closed without delivery, is
+// refused as evidence — a consumed observation is never a route to a state
+// the machine did not reach.
+func (a entryApplier) decisionConsumed(ctx context.Context, entry contracts.Entry, payload contracts.DecisionConsumed) (entryOutcome, error) {
+	native, err := store.GetAttentionNative(ctx, a.uow, a.event.Tenant, a.event.Provider, payload.NativeRef)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+		}
+		return 0, err
+	}
+	attention, err := store.GetAttention(ctx, a.uow, a.event.Tenant, native.Attention)
+	if err != nil {
+		return 0, err
+	}
+	if attention.Attempt != a.event.Attempt {
+		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+	}
+	auditID, err := ids.New[ids.Audit]()
+	if err != nil {
+		return 0, err
+	}
+	consumed, replayed, err := store.ApplyAttention(ctx, a.uow, a.event.Tenant, attention.ID, lifecycle.AttentionConsume, store.Transition{
+		ExpectedVersion: attention.Version, At: a.step.At, Actor: a.step.Actor, AuditID: auditID,
+	})
+	if err != nil {
+		var refusal *lifecycle.TransitionError
+		if errors.As(err, &refusal) {
+			return entryRefused, a.record(ctx, refusal)
+		}
+		return 0, err
+	}
+	if replayed {
+		return entryApplied, nil
+	}
+	_, applied, refusal, err := a.step.Attempt(ctx, a.event.Attempt, lifecycle.AttemptResume, "")
+	if err != nil {
+		return 0, err
+	}
+	if !applied && refusal != nil {
+		// The wait resolved but the attempt can no longer resume it: the
+		// contradiction is evidence, and the consumption stays recorded.
+		return entryRefused, a.record(ctx, refusal)
+	}
+	if _, err := a.step.Task(ctx, consumed.Task, lifecycle.TaskInputResolved); err != nil {
+		return 0, err
+	}
+	return entryApplied, nil
+}
+
+// runtimeStopped applies the runtime's stop observation. While the attempt
+// awaits its stops it converges the cancellation — the machines order the
+// runtime and environment observations and refuse a repeated one. An attempt
+// that already ended while its task still stands cancelling confirms the
+// task's stop: cancellation is intent until the work ended, whichever way it
+// ended.
+func (a entryApplier) runtimeStopped(ctx context.Context, entry contracts.Entry, _ contracts.RuntimeStopped) (entryOutcome, error) {
+	attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	if slices.Contains(lifecycle.AttemptTerminalStates(), attempt.State) {
+		task, err := store.GetTask(ctx, a.uow, a.event.Tenant, attempt.Task)
+		if err != nil {
+			return 0, err
+		}
+		if task.State != lifecycle.TaskCancelling {
+			return entryApplied, nil
+		}
+		if _, err := a.step.Task(ctx, task.ID, lifecycle.TaskStopConfirmed); err != nil {
+			return 0, err
+		}
+		return entryApplied, nil
+	}
+	if attempt.State != lifecycle.AttemptCancellationRequested {
+		// A runtime stop without a requested stop: no work may end
+		// unprompted, so the observation is refused, not applied.
+		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+	}
+	return a.applyStop(ctx, entry, lifecycle.AttemptRuntimeStopped)
+}
+
+// applyStop applies one stop observation to an attempt already awaiting its
+// stops. A refusal — a repeated observation of the same stop, or one
+// contradicting the current state — is recorded evidence, never an override;
+// the attempt's terminal move releases the reservation through the progress
+// step.
+func (a entryApplier) applyStop(ctx context.Context, entry contracts.Entry, event lifecycle.AttemptEvent) (entryOutcome, error) {
+	_, applied, refusal, err := a.step.Attempt(ctx, a.event.Attempt, event, "")
+	if err != nil {
+		return 0, err
+	}
+	if !applied && refusal != nil {
+		return entryRefused, a.record(ctx, refusal)
 	}
 	return entryApplied, nil
 }

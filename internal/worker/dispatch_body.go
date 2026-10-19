@@ -70,3 +70,25 @@ func ParseDispatchBody(payload []byte) (DispatchBody, error) {
 		Unit: raw.Unit, Amount: raw.Amount, CancelReason: raw.CancelReason,
 	}, nil
 }
+
+// DecisionBody is the JSON envelope in a decision-delivery outbox payload.
+// The worker forwards the payload untouched as the steer's arguments and
+// reads only the expiry that bounds the request frame.
+type DecisionBody struct {
+	// ExpiresAt is the request's expiry; it bounds the steer request.
+	ExpiresAt time.Time
+}
+
+// ParseDecisionBody decodes and checks the envelope.
+func ParseDecisionBody(payload []byte) (DecisionBody, error) {
+	var raw struct {
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return DecisionBody{}, fmt.Errorf("decision body: %w", err)
+	}
+	if raw.ExpiresAt.IsZero() {
+		return DecisionBody{}, fmt.Errorf("decision body requires an expiry: %w", errInvalidBody)
+	}
+	return DecisionBody{ExpiresAt: raw.ExpiresAt}, nil
+}

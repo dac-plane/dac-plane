@@ -392,10 +392,21 @@ func TestTaskFollowsAttempt(t *testing.T) {
 	if event, ok := TaskFollowsAttempt(AttemptFailed, TaskRunning); !ok || event != TaskExecutionFailed {
 		t.Fatalf("failed attempt on running task = %s, %v", event, ok)
 	}
-	for _, task := range []TaskState{TaskQueued, TaskCancelling, TaskWaitingInput, TaskFailed} {
+	for _, task := range []TaskState{TaskQueued, TaskWaitingInput, TaskFailed} {
 		if _, ok := TaskFollowsAttempt(AttemptFailed, task); ok {
 			t.Errorf("failed attempt moves a %s task", task)
 		}
+	}
+	// Cancellation is intent until the Attempt's work ended: whichever way the
+	// Attempt turned terminal, it confirms the cancelling Task's stop.
+	for _, terminal := range AttemptTerminalStates() {
+		event, ok := TaskFollowsAttempt(terminal, TaskCancelling)
+		if !ok || event != TaskStopConfirmed {
+			t.Errorf("terminal %s on a cancelling task = %s, %v", terminal, event, ok)
+		}
+	}
+	if _, ok := TaskFollowsAttempt(AttemptExecuting, TaskCancelling); ok {
+		t.Error("a live attempt confirms its task's stop")
 	}
 	if _, ok := TaskFollowsAttempt(AttemptExecuting, TaskRunning); ok {
 		t.Fatal("an executing attempt moves its task")

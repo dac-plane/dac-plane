@@ -19,6 +19,9 @@ var (
 	turnFinishedContract   = schematest.GoContract[TurnFinished](filepath.Join(schemaDir, "entry-turn-finished.schema.json"))
 	observedContract       = schematest.GoContract[EnvironmentObserved](filepath.Join(schemaDir, "entry-environment-observed.schema.json"))
 	outcomeContract        = schematest.GoContract[OperationOutcome](filepath.Join(schemaDir, "entry-operation-outcome.schema.json"))
+	requestedContract      = schematest.GoContract[AttentionRequested](filepath.Join(schemaDir, "entry-attention-requested.schema.json"))
+	consumedContract       = schematest.GoContract[DecisionConsumed](filepath.Join(schemaDir, "entry-decision-consumed.schema.json"))
+	stoppedContract        = schematest.GoContract[RuntimeStopped](filepath.Join(schemaDir, "entry-runtime-stopped.schema.json"))
 )
 
 func TestClassifyEntryFollowsTheSpecification(t *testing.T) {
@@ -27,6 +30,9 @@ func TestClassifyEntryFollowsTheSpecification(t *testing.T) {
 		EntryTurnFinished:        EntryApply,
 		EntryEnvironmentObserved: EntryApply,
 		EntryOperationOutcome:    EntryApply,
+		EntryAttentionRequested:  EntryApply,
+		EntryDecisionConsumed:    EntryApply,
+		EntryRuntimeStopped:      EntryApply,
 		"progress":               EntryProgress,
 		"message.delta":          EntryProgress,
 		"tool.finished":          EntryProgress,
@@ -38,6 +44,9 @@ func TestClassifyEntryFollowsTheSpecification(t *testing.T) {
 		"tool.approved":          EntryRefuse,
 		"scope.grant":            EntryRefuse,
 		"permission.changed":     EntryRefuse,
+		"attention.granted":      EntryRefuse,
+		"decision.recorded":      EntryRefuse,
+		"decision.delivered":     EntryRefuse,
 	} {
 		if got := ClassifyEntry(kind); got != want {
 			t.Errorf("ClassifyEntry(%q) = %s, want %s", kind, got, want)
@@ -83,6 +92,15 @@ func entryFixtures(t *testing.T) map[string]fixture {
 		"turn failed":     {turnFinishedContract, schematest.Marshal(t, failed)},
 		"observed":        {observedContract, schematest.Marshal(t, EnvironmentObserved{ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 2, ObservedAt: now})},
 		"outcome":         {outcomeContract, schematest.Marshal(t, OperationOutcome{State: lifecycle.OperationSucceeded})},
+		"requested question": {requestedContract, schematest.Marshal(t, AttentionRequested{
+			NativeRef: "widget-1", Kind: lifecycle.AttentionQuestion, ExpiresAt: now.Add(time.Hour),
+		})},
+		"requested approval": {requestedContract, schematest.Marshal(t, AttentionRequested{
+			NativeRef: "widget-2", Kind: lifecycle.AttentionActionApproval, Action: "fs.write",
+			ActionDigest: identity.DigestOf([]byte(`{"path":"main.go"}`)), ExpiresAt: now.Add(time.Hour),
+		})},
+		"consumed": {consumedContract, schematest.Marshal(t, DecisionConsumed{NativeRef: "widget-1"})},
+		"stopped":  {stoppedContract, schematest.Marshal(t, RuntimeStopped{HadActiveRun: true})},
 	}
 }
 
@@ -109,6 +127,16 @@ func TestContractConformanceEntryPayloads(t *testing.T) {
 		{"observed unknown state", "observed", func(d map[string]any) { d["state"] = "paused" }},
 		{"observed zero sequence", "observed", func(d map[string]any) { d["sequence"] = 0 }},
 		{"outcome uncertain", "outcome", func(d map[string]any) { d["state"] = "uncertain" }},
+		{"requested empty native ref", "requested question", func(d map[string]any) { d["native_ref"] = "" }},
+		{"requested unknown kind", "requested question", func(d map[string]any) { d["kind"] = "suggestion" }},
+		{"requested approval without action", "requested approval", func(d map[string]any) { d["action"] = "" }},
+		{"requested approval without digest", "requested approval", func(d map[string]any) { d["action_digest"] = "" }},
+		{"requested question carries an action", "requested question", func(d map[string]any) { d["action"] = "fs.write" }},
+		{"requested bad action class", "requested approval", func(d map[string]any) { d["action"] = "FS.Write" }},
+		{"requested bad digest", "requested approval", func(d map[string]any) { d["action_digest"] = "md5:zz" }},
+		{"consumed empty native ref", "consumed", func(d map[string]any) { d["native_ref"] = "" }},
+		{"consumed smuggles an attention", "consumed", func(d map[string]any) { d["attention_id"] = "x" }},
+		{"stopped smuggles a stop proof", "stopped", func(d map[string]any) { d["confirmed"] = true }},
 	} {
 		base := fixtures[tc.base]
 		data := schematest.Mutate(t, base.data, tc.change)

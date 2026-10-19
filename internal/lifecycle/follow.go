@@ -32,9 +32,25 @@ func AttemptFollowsOperation(operation OperationState, attempt AttemptState) (At
 	return "", "", false
 }
 
+// attemptTerminalStates are the Attempt machine's terminal states. Every
+// terminal Attempt ends its work, so follow rules and the budget release
+// (#15: unused reservation released exactly once at terminal completion)
+// need them without reaching into the machine.
+var attemptTerminalStates = []AttemptState{AttemptCompleted, AttemptFailed, AttemptTerminated}
+
+// AttemptTerminalStates lists the Attempt machine's terminal states.
+func AttemptTerminalStates() []AttemptState {
+	return slices.Clone(attemptTerminalStates)
+}
+
 // TaskFollowsAttempt returns the Task transition an Attempt's state implies,
-// and false when it implies none: a failed Attempt fails the running Task.
+// and false when it implies none: a failed Attempt fails the running Task,
+// and a terminal Attempt confirms the stop of a cancelling Task — cancellation
+// is an intent until the Attempt's work ended, whichever way it ended.
 func TaskFollowsAttempt(attempt AttemptState, task TaskState) (TaskEvent, bool) {
+	if slices.Contains(attemptTerminalStates, attempt) && task == TaskCancelling {
+		return TaskStopConfirmed, true
+	}
 	if attempt == AttemptFailed && task == TaskRunning {
 		return TaskExecutionFailed, true
 	}

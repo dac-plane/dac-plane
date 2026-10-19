@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RuntimeStopped",
+  "description": "Payload of a runtime.stopped entry, mirroring a cancellation acknowledgement: whether a run was actually active when the stop landed.",
+  "type": "object",
+  "required": ["had_active_run"],
+  "additionalProperties": false,
+  "properties": {
+    "had_active_run": { "type": "boolean" }
+  }
+}
