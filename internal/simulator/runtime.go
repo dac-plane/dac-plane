@@ -54,10 +54,11 @@ type RuntimeOp struct {
 
 // Runtime is a deterministic runtime provider behind contracts.Port.
 type Runtime struct {
-	config     Config
-	scenario   RuntimeScenario
-	ledger     *Ledger
-	deliveries *deliveries
+	artifactExport *artifactExport
+	config         Config
+	scenario       RuntimeScenario
+	ledger         *Ledger
+	deliveries     *deliveries
 }
 
 // NewRuntime validates the config and the scenario and returns the simulator.
@@ -116,6 +117,9 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	}
 	if err := checkRequest(r.config, contracts.RoleRuntime, request); err != nil {
 		return contracts.Reply{}, err
+	}
+	if request.Method == contracts.MethodExportArtifacts && r.artifactExport != nil {
+		return r.exportArtifact(ctx, request)
 	}
 	r.ledger.recordRequest(request)
 	step, ok := r.scenario.Operations[request.Operation]
