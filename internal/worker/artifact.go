@@ -73,7 +73,7 @@ func (w *Worker) artifactRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil {
 		return err
 	}
-	_, task, err := store.LockResultScope(ctx, u, tenant, work.Manifest.Attempt)
+	attempt, task, err := store.LockResultScope(ctx, u, tenant, work.Manifest.Attempt)
 	if err != nil {
 		return err
 	}
@@ -82,6 +82,19 @@ func (w *Worker) artifactRow(ctx context.Context, tenant ids.TenantID, row store
 		return err
 	}
 	if !current || task.State != lifecycle.TaskVerifying {
+		if attempt.State == lifecycle.AttemptReconciling && task.State == lifecycle.TaskVerifying {
+			latest, err := store.GetAttemptByTask(ctx, u, tenant, task.ID)
+			if err != nil {
+				return err
+			}
+			if latest.ID == attempt.ID {
+				// Reconciliation pauses this writer; it does not retire its work.
+				if err = store.ReleaseOutboxRow(ctx, u, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
+					return err
+				}
+				return u.Commit(ctx)
+			}
+		}
 		if err = store.AckOutboxRow(ctx, u, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
 			return err
 		}

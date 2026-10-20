@@ -384,6 +384,26 @@ func TestResultRuntimeReconciliationRestoresFinalizing(t *testing.T) {
 		}
 		return (progress.Step{UOW: u, Tenant: g.tenant, Actor: worker.SystemActor(), At: time.Now()}).FollowOperation(g.ctx, op)
 	})
+	if task, attempt := g.states(t, g.s); task != lifecycle.TaskVerifying || attempt != lifecycle.AttemptReconciling {
+		t.Fatalf("expected recovery pause=%s/%s", task, attempt)
+	}
+	work := g.work(t)
+	for range 2 {
+		if err := g.artifactWorker(t, g.bytes).Tick(g.ctx); err != nil {
+			t.Fatal(err)
+		}
+		var status string
+		var attempts int
+		if err := g.pool.QueryRow(g.ctx, `select status,attempts from outbox where tenant_id=$1 and outbox_id=$2`, g.tenant.String(), work.Manifest.Operation.String()).Scan(&status, &attempts); err != nil {
+			t.Fatal(err)
+		}
+		if status != "pending" || attempts != 0 {
+			t.Fatalf("reconciliation consumed artifact work: status=%s attempts=%d", status, attempts)
+		}
+	}
+	if g.count(t, "provider_operation", "operation_id in ($2,$3,$4,$5)", work.Authorize.String(), work.Export.String(), work.Stat.String(), work.Manifest.Operation.String()) != 0 || g.count(t, "artifact_verification", "true") != 0 {
+		t.Fatal("reconciliation started artifact dispatch or admitted artifacts")
+	}
 	g.ingestNow(t, g.event(g.rt, g.s, 1, simulator.RowsFrame(false, row(4, contracts.EntryOperationOutcome, contracts.OperationOutcome{State: lifecycle.OperationSucceeded}))))
 	if task, attempt := g.states(t, g.s); task != lifecycle.TaskVerifying || attempt != lifecycle.AttemptFinalizing {
 		t.Fatalf("reconciliation lost phase=%s/%s", task, attempt)
