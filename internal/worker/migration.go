@@ -23,8 +23,35 @@ type migrationClaimSnapshot struct {
 	at    time.Time
 }
 
+var errMigrationBudgetExhausted = errors.New("migration cannot preserve budget coverage")
+
+func sendMigrationRequest(ctx context.Context, port contracts.Port, request contracts.Request, timeout time.Duration) (contracts.Reply, error) {
+	sendCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return port.Send(sendCtx, request)
+}
+
 func migrationItemMatchesClaim(current, claimed lifecycle.MigrationItem, state lifecycle.MigrationItemState) bool {
 	return !current.SourceAttempt.IsZero() && current.State == state && current.ClaimEpoch == claimed.ClaimEpoch
+}
+
+func migrationReservationAvailable(ctx context.Context, u *store.UnitOfWork, tenant ids.TenantID, attempt ids.AttemptID) (bool, error) {
+	reservationID, err := ids.Parse[ids.Reservation](attempt.String())
+	if err != nil {
+		return false, err
+	}
+	reservation, err := store.GetReservationForUpdate(ctx, u, tenant, reservationID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	budget, err := store.GetBudgetForUpdate(ctx, u, tenant, reservation.Budget)
+	if err != nil {
+		return false, err
+	}
+	return reservation.State == lifecycle.ReservationHeld && reservation.Amount > reservation.Consumed && budget.Consumed+budget.Reserved <= budget.Ceiling, nil
 }
 
 func (w *Worker) beginMigrationClaimSnapshot(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, source ids.AttemptID) (migrationClaimSnapshot, error) {
@@ -231,6 +258,24 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemQueued {
 		return lifecycle.MigrationItem{}, store.ErrStaleVersion
 	}
+	if _, _, err := store.LockResultScope(ctx, u, tenant, current.SourceAttempt); err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	available, err := migrationReservationAvailable(ctx, u, tenant, current.SourceAttempt)
+	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	if !available {
+		current.State, current.Reason, current.UpdatedAt = lifecycle.MigrationItemUnresolved, "source_reservation_exhausted", now.UTC()
+		if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+			return lifecycle.MigrationItem{}, err
+		}
+		if err := u.Commit(ctx); err != nil {
+			return lifecycle.MigrationItem{}, err
+		}
+		committed = true
+		return lifecycle.MigrationItem{}, store.ErrStaleVersion
+	}
 	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	if _, applied, _, err := step.Attempt(ctx, current.SourceAttempt, lifecycle.AttemptMigrate, lifecycle.AttemptMigrating); err != nil || !applied {
 		if err != nil {
@@ -292,7 +337,7 @@ func (w *Worker) sendSourceQuiesce(ctx context.Context, tenant ids.TenantID, cla
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	reply, err := port.Send(ctx, request)
+	reply, err := sendMigrationRequest(ctx, port, request, w.cfg.SendTimeout)
 	if err != nil {
 		return w.markMigrationUncertain(ctx, tenant, claim, item, item.QuiesceOperation)
 	}
@@ -391,6 +436,7 @@ func (w *Worker) settleSourceQuiesce(ctx context.Context, tenant ids.TenantID, c
 	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
 		return err
 	}
+	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	current.ContextRefs = receipt.ContextRefs
 	current.UpdatedAt = now.UTC()
 	pass, err := store.GetMigrationPass(ctx, u, tenant, current.Migration)
@@ -398,6 +444,21 @@ func (w *Worker) settleSourceQuiesce(ctx context.Context, tenant ids.TenantID, c
 		return err
 	}
 	if err := w.allocateMigrationTargetTx(ctx, u, tenant, current, pass, now.UTC()); err != nil {
+		if errors.Is(err, errMigrationBudgetExhausted) {
+			current.State, current.UpdatedAt = lifecycle.MigrationItemFailed, now.UTC()
+			if _, applied, _, stepErr := step.Attempt(ctx, current.SourceAttempt, lifecycle.AttemptFail, lifecycle.AttemptFailed); stepErr != nil {
+				return stepErr
+			} else if !applied {
+				return store.ErrStaleVersion
+			}
+			if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+				return err
+			}
+			if err := finishMigrationPass(ctx, u, tenant, pass, lifecycle.MigrationFail, now.UTC()); err != nil {
+				return err
+			}
+			return u.Commit(ctx)
+		}
 		return err
 	}
 	if err := u.Commit(ctx); err != nil {
@@ -485,12 +546,12 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if err != nil {
 		return err
 	}
-	if reservation.State != lifecycle.ReservationHeld || reservation.Amount <= reservation.Consumed {
-		return store.ErrPayloadMismatch
-	}
 	budget, err := store.GetBudgetForUpdate(ctx, u, tenant, reservation.Budget)
 	if err != nil {
 		return err
+	}
+	if reservation.State != lifecycle.ReservationHeld || reservation.Amount <= reservation.Consumed || budget.Consumed+budget.Reserved > budget.Ceiling {
+		return errMigrationBudgetExhausted
 	}
 	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	tr, err := stepTransition(budget.Version, now.UTC())
@@ -605,6 +666,9 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 			item.EnvironmentEpoch = item.ClaimEpoch
 		}
 		if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.EnvironmentOperation); err != nil {
+			if errors.Is(err, errMigrationBudgetExhausted) {
+				return w.failMigrationForBudget(ctx, tenant, claim, item, item.EnvironmentOperation)
+			}
 			return err
 		}
 		receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.EnvironmentOperation, item.TargetAttempt, contracts.RoleEnvironment, contracts.MethodProvision,
@@ -625,6 +689,9 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 		item.RestartEpoch = item.ClaimEpoch
 	}
 	if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.RestartOperation); err != nil {
+		if errors.Is(err, errMigrationBudgetExhausted) {
+			return w.failMigrationForBudget(ctx, tenant, claim, item, item.RestartOperation)
+		}
 		return err
 	}
 	receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.RestartOperation, item.TargetAttempt, contracts.RoleRuntime, contracts.MethodStartTurn,
@@ -651,7 +718,7 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 	if err := req.Validate(); err != nil {
 		return contracts.MigrationReceipt{}, false, err
 	}
-	reply, err := port.Send(ctx, req)
+	reply, err := sendMigrationRequest(ctx, port, req, w.cfg.SendTimeout)
 	if err != nil {
 		if markErr := w.markMigrationUncertain(ctx, tenant, claim, item, operation); markErr != nil {
 			return contracts.MigrationReceipt{}, false, markErr
@@ -681,6 +748,15 @@ func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.Te
 	op, err := store.GetOperation(ctx, u, tenant, operation)
 	if err != nil {
 		return err
+	}
+	if op.State == lifecycle.OperationRecorded && (operation == current.EnvironmentOperation || operation == current.RestartOperation) {
+		available, err := migrationReservationAvailable(ctx, u, tenant, current.TargetAttempt)
+		if err != nil {
+			return err
+		}
+		if !available {
+			return errMigrationBudgetExhausted
+		}
 	}
 	stageEpoch := &current.QuiesceEpoch
 	if operation == current.EnvironmentOperation {
@@ -712,6 +788,57 @@ func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.Te
 	return u.Commit(ctx)
 }
 
+func (w *Worker) failMigrationForBudget(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
+	if err != nil {
+		return err
+	}
+	u, current, pass, now := snapshot.uow, snapshot.item, snapshot.pass, snapshot.at
+	defer func() { _ = u.Rollback(ctx) }()
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemStarting) {
+		return store.ErrStaleVersion
+	}
+	stage, err := store.GetOperation(ctx, u, tenant, operation)
+	if err != nil {
+		return err
+	}
+	if stage.State != lifecycle.OperationRecorded || (operation != current.EnvironmentOperation && operation != current.RestartOperation) {
+		return store.ErrStaleVersion
+	}
+	if _, _, err := store.LockResultScope(ctx, u, tenant, current.SourceAttempt); err != nil {
+		return err
+	}
+	if _, _, err := store.LockResultScope(ctx, u, tenant, current.TargetAttempt); err != nil {
+		return err
+	}
+	available, err := migrationReservationAvailable(ctx, u, tenant, current.TargetAttempt)
+	if err != nil {
+		return err
+	}
+	if available {
+		return store.ErrStaleVersion
+	}
+	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
+	if _, applied, _, err := step.Attempt(ctx, current.SourceAttempt, lifecycle.AttemptFail, lifecycle.AttemptFailed); err != nil {
+		return err
+	} else if !applied {
+		return store.ErrStaleVersion
+	}
+	if _, applied, _, err := step.Attempt(ctx, current.TargetAttempt, lifecycle.AttemptFail, lifecycle.AttemptFailed); err != nil {
+		return err
+	} else if !applied {
+		return store.ErrStaleVersion
+	}
+	current.State, current.UpdatedAt = lifecycle.MigrationItemFailed, now.UTC()
+	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+		return err
+	}
+	if err := finishMigrationPass(ctx, u, tenant, pass, lifecycle.MigrationFail, now.UTC()); err != nil {
+		return err
+	}
+	return u.Commit(ctx)
+}
+
 func (w *Worker) settleMigrationEnvironment(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, pass lifecycle.MigrationPass, receipt contracts.MigrationReceipt) error {
 	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
@@ -729,15 +856,8 @@ func (w *Worker) settleMigrationEnvironment(ctx context.Context, tenant ids.Tena
 	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
 		return err
 	}
-	bindings, err := store.ListBindings(ctx, u, tenant, pass.To, lifecycle.ResourceEnvironmentResource, receipt.EnvironmentRef)
-	if err != nil {
-		return err
-	}
 	binding := lifecycle.Binding{Tenant: tenant, Attempt: current.TargetAttempt, Provider: pass.To, Operation: current.EnvironmentOperation, Kind: lifecycle.ResourceEnvironmentResource, NativeRef: receipt.EnvironmentRef, BoundAt: now.UTC()}
-	if err := lifecycle.CheckBinding(bindings, binding); err != nil {
-		return err
-	}
-	if _, _, err := store.InsertBinding(ctx, u, binding); err != nil {
+	if err := insertMigrationBinding(ctx, u, tenant, binding); err != nil {
 		return err
 	}
 	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
@@ -773,6 +893,18 @@ func acceptMigrationOperation(ctx context.Context, u *store.UnitOfWork, tenant i
 	return err
 }
 
+func insertMigrationBinding(ctx context.Context, u *store.UnitOfWork, tenant ids.TenantID, binding lifecycle.Binding) error {
+	bindings, err := store.ListBindings(ctx, u, tenant, binding.Provider, binding.Kind, binding.NativeRef)
+	if err != nil {
+		return err
+	}
+	if err := lifecycle.CheckBinding(bindings, binding); err != nil {
+		return err
+	}
+	_, _, err = store.InsertBinding(ctx, u, binding)
+	return err
+}
+
 func (w *Worker) settleMigrationCutover(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, receipt contracts.MigrationReceipt) error {
 	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
@@ -790,15 +922,8 @@ func (w *Worker) settleMigrationCutover(ctx context.Context, tenant ids.TenantID
 	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
 		return err
 	}
-	bindings, err := store.ListBindings(ctx, u, tenant, op.Provider, lifecycle.ResourceRuntimeSession, receipt.SessionRef)
-	if err != nil {
-		return err
-	}
 	runtimeBinding := lifecycle.Binding{Tenant: tenant, Attempt: current.TargetAttempt, Provider: op.Provider, Operation: current.RestartOperation, Kind: lifecycle.ResourceRuntimeSession, NativeRef: receipt.SessionRef, BoundAt: now.UTC()}
-	if err := lifecycle.CheckBinding(bindings, runtimeBinding); err != nil {
-		return err
-	}
-	if _, _, err := store.InsertBinding(ctx, u, runtimeBinding); err != nil {
+	if err := insertMigrationBinding(ctx, u, tenant, runtimeBinding); err != nil {
 		return err
 	}
 	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}

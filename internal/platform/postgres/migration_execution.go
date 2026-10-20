@@ -26,9 +26,9 @@ func SnapshotMigrationItems(ctx context.Context, u *UnitOfWork, pass lifecycle.M
 		from attempt a join provider_operation o on o.tenant_id=a.tenant_id and o.attempt_id=a.attempt_id
 		join task t on t.tenant_id=a.tenant_id and t.task_id=a.task_id
 		where a.tenant_id=$1 and o.provider_id=$2
-		and a.state not in ('completed','failed','terminated')
+		and not (a.state = any($4))
 		and a.created_at <= $3 and o.created_at <= $3
-		order by a.attempt_id,o.created_at desc,o.operation_id desc`, pass.Tenant.String(), pass.From.String(), pass.UpdatedAt)
+		order by a.attempt_id,o.created_at desc,o.operation_id desc`, pass.Tenant.String(), pass.From.String(), pass.UpdatedAt, stringsAny(lifecycle.AttemptTerminalStates()))
 		if err != nil {
 			return nil, err
 		}

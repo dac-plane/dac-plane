@@ -101,8 +101,11 @@ var attemptMachine = newMachine(AttemptStates(), AttemptEvents(),
 			AttemptMigrate:    {AttemptMigrating},
 		}),
 		AttemptWaitingInput: active(map[AttemptEvent][]AttemptState{AttemptResume: {AttemptExecuting}}),
-		AttemptMigrating:    {AttemptMigrationSuperseded: {AttemptMigrated}},
-		AttemptFinalizing:   active(map[AttemptEvent][]AttemptState{AttemptComplete: {AttemptCompleted}}),
+		AttemptMigrating: {
+			AttemptFail:                {AttemptFailed},
+			AttemptMigrationSuperseded: {AttemptMigrated},
+		},
+		AttemptFinalizing: active(map[AttemptEvent][]AttemptState{AttemptComplete: {AttemptCompleted}}),
 		// Cancellation is intent: the attempt terminates only after both the
 		// runtime and the environment stop are observed, or reconciliation
 		// establishes that they stopped.

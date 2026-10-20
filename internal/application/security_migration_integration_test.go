@@ -28,6 +28,36 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
+type reportUsageAfterMigrationProvision struct {
+	contracts.Port
+	report func()
+	done   bool
+}
+
+type reportUsageAfterMigrationQuiesce struct {
+	contracts.Port
+	report func()
+	done   bool
+}
+
+func (p *reportUsageAfterMigrationQuiesce) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if err == nil && !p.done && request.Method == contracts.MethodInterrupt {
+		p.done = true
+		p.report()
+	}
+	return reply, err
+}
+
+func (p *reportUsageAfterMigrationProvision) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if err == nil && !p.done && request.Method == contracts.MethodProvision {
+		p.done = true
+		p.report()
+	}
+	return reply, err
+}
+
 func TestSecurityMigrationRevocationSerializesWithCommand(t *testing.T) {
 	f, cmd := migrationFixture(t)
 	u, err := store.Begin(f.ctx, f.pool)
@@ -364,6 +394,174 @@ func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
 	}
 }
 
+func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	submission := f.submit(t, f.submitCommand("migration-exhausted-reservation"))
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{submission.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, sourceRuntime)
+	frame := simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "exhausted-source-session"}),
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "exhausted-source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
+	)
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 2 {
+		t.Fatalf("source bindings=%+v", got)
+	}
+	view, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view = migrate(t, f, view, lifecycle.MigrationPreview, "migration-exhausted-preview")
+	view = migrate(t, f, view, lifecycle.MigrationExecute, "migration-exhausted-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiescePort := &reportUsageAfterMigrationQuiesce{Port: sourceRuntime, report: func() {
+		f.seed(t, func(u *store.UnitOfWork) error {
+			budget, err := store.GetBudgetForUpdate(f.ctx, u, f.tenant, submission.Budget.ID)
+			if err != nil {
+				return err
+			}
+			reservation, err := store.GetReservationForUpdate(f.ctx, u, f.tenant, submission.Reservation.ID)
+			if err != nil {
+				return err
+			}
+			outboxID, err := ids.New[ids.Any]()
+			if err != nil {
+				return err
+			}
+			_, _, _, err = store.ReportUsage(f.ctx, u, f.tenant, budget.ID, reservation.ID, reservation.Amount, store.Transition{
+				ExpectedVersion: budget.Version, At: f.at.Add(2 * time.Minute), Actor: lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: f.principal},
+				AuditID: mustID[ids.Audit](t), Outbox: &store.OutboxPayload{ID: outboxID, Body: []byte(`{"usage":"migration-test"}`)},
+			})
+			return err
+		})
+	}}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: quiescePort, cmd.To: targetRuntime}, worker.DefaultConfig(), "migration-exhausted",
+		worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ReapClaims(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
+	if err != nil || len(items) != 1 || items[0].State != lifecycle.MigrationItemFailed {
+		t.Fatalf("migration items=%+v err=%v; want terminal failed item after a quiesce-time budget exhaustion", items, err)
+	}
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, view.Pass.ID)
+	if err != nil || pass.State != lifecycle.MigrationFailed {
+		t.Fatalf("migration pass=%s err=%v; want failed", pass.State, err)
+	}
+	sourceAttempt, err := store.GetAttempt(f.ctx, f.pool, f.tenant, submission.Attempt.ID)
+	if err != nil || sourceAttempt.State != lifecycle.AttemptFailed {
+		t.Fatalf("source attempt=%s err=%v; want failed rather than stranded migrating", sourceAttempt.State, err)
+	}
+}
+
+func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	submit := f.submitCommand("migration-budget-recheck")
+	submit.Ceiling = 150
+	submission := f.submit(t, submit)
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{submission.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, sourceRuntime)
+	frame := simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "budget-source-session"}),
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "budget-source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
+	)
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 2 {
+		t.Fatalf("source bindings=%+v", got)
+	}
+	view, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view = migrate(t, f, view, lifecycle.MigrationPreview, "migration-budget-preview")
+	view = migrate(t, f, view, lifecycle.MigrationExecute, "migration-budget-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provision := &reportUsageAfterMigrationProvision{Port: targetEnvironment, report: func() {
+		f.seed(t, func(u *store.UnitOfWork) error {
+			budget, err := store.GetBudgetForUpdate(f.ctx, u, f.tenant, submission.Budget.ID)
+			if err != nil {
+				return err
+			}
+			reservation, err := store.GetReservationForUpdate(f.ctx, u, f.tenant, submission.Reservation.ID)
+			if err != nil {
+				return err
+			}
+			outboxID, err := ids.New[ids.Any]()
+			if err != nil {
+				return err
+			}
+			_, _, _, err = store.ReportUsage(f.ctx, u, f.tenant, budget.ID, reservation.ID, reservation.Amount, store.Transition{
+				ExpectedVersion: budget.Version, At: f.at.Add(2 * time.Minute), Actor: lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: f.principal},
+				AuditID: mustID[ids.Audit](t), Outbox: &store.OutboxPayload{ID: outboxID, Body: []byte(`{"usage":"migration-late-source"}`)},
+			})
+			return err
+		})
+	}}
+	var workerLog bytes.Buffer
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime}, worker.DefaultConfig(), "migration-budget-recheck",
+		worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: provision}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pass := range 3 {
+		if pass > 0 {
+			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.ReapClaims(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
+	if err != nil || len(items) != 1 || items[0].State != lifecycle.MigrationItemFailed {
+		budget, budgetErr := store.GetBudget(f.ctx, f.pool, f.tenant, submission.Budget.ID)
+		t.Fatalf("migration items=%+v err=%v budget=%+v budgetErr=%v target sends=%+v worker=%s; want failed migration after late usage", items, err, budget, budgetErr, targetRuntime.Ledger().Sent(), workerLog.String())
+	}
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, view.Pass.ID)
+	if err != nil || pass.State != lifecycle.MigrationFailed {
+		t.Fatalf("migration pass=%s err=%v; want failed", pass.State, err)
+	}
+	for _, request := range targetRuntime.Ledger().Sent() {
+		if request.Method == contracts.MethodStartTurn {
+			t.Fatal("target runtime started after its budget coverage was lost")
+		}
+	}
+}
+
 func TestEmptyMigrationCompletesAndReleasesTenantSlot(t *testing.T) {
 	f, cmd := migrationFixture(t)
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
@@ -550,6 +748,33 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	}
 	if sourceRuntime.Ledger().Deliveries(items[0].QuiesceOperation) != 2 {
 		t.Fatalf("quiesce deliveries=%d; want lost-reply replay under stable operation identity", sourceRuntime.Ledger().Deliveries(items[0].QuiesceOperation))
+	}
+	runtimeOperation, err := store.GetOperationByAttempt(f.ctx, f.pool, f.tenant, target.ID)
+	if err != nil || runtimeOperation.ID != items[0].RestartOperation {
+		t.Fatalf("target runtime operation=%s err=%v; want migration restart operation %s", runtimeOperation.ID, err, items[0].RestartOperation)
+	}
+	repeat := cmd
+	repeat.Command.Nonce = "migration-repeat-source-pass"
+	repeatView, err := application.CreateMigration(f.ctx, f.pool, repeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeatView = migrate(t, f, repeatView, lifecycle.MigrationPreview, "migration-repeat-source-preview")
+	repeatView = migrate(t, f, repeatView, lifecycle.MigrationExecute, "migration-repeat-source-execute")
+	if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+		t.Fatal(err)
+	}
+	workerInstance, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "migration-repeat-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workerInstance.ReapClaims(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	repeatPass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, repeatView.Pass.ID)
+	repeatItems, listErr := store.ListMigrationItems(f.ctx, f.pool, f.tenant, repeatView.Pass.ID)
+	if err != nil || listErr != nil || repeatPass.State != lifecycle.MigrationCompleted {
+		t.Fatalf("repeat source pass=%s items=%+v err=%v listErr=%v; want empty pass completed without enrolling migrated source", repeatPass.State, repeatItems, err, listErr)
 	}
 }
 

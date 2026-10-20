@@ -30,9 +30,9 @@ CREATE TABLE migration_item (
  CHECK (target_attempt_id IS NULL OR target_attempt_id <> source_attempt_id),
  CHECK ((state = 'unresolved') = (reason IS NOT NULL)),
  CHECK (quiesce_operation_id IS NOT NULL OR state IN ('queued','unresolved')),
- CHECK ((state IN ('starting','cutover','cleaning_up','completed')) = (target_attempt_id IS NOT NULL)),
- CHECK ((state IN ('starting','cutover','cleaning_up','completed')) = (restart_operation_id IS NOT NULL)),
- CHECK ((state IN ('starting','cutover','cleaning_up','completed')) = (environment_operation_id IS NOT NULL)),
+ CHECK (state NOT IN ('starting','cutover','cleaning_up','completed') OR target_attempt_id IS NOT NULL),
+ CHECK (state NOT IN ('starting','cutover','cleaning_up','completed') OR restart_operation_id IS NOT NULL),
+ CHECK (state NOT IN ('starting','cutover','cleaning_up','completed') OR environment_operation_id IS NOT NULL),
  CHECK (state NOT IN ('cleaning_up','completed') OR cleanup_operation_id IS NOT NULL),
  CHECK (quiesce_epoch <= claim_epoch AND environment_epoch <= claim_epoch AND restart_epoch <= claim_epoch AND cleanup_epoch <= claim_epoch)
 );
