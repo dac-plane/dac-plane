@@ -72,12 +72,20 @@ independently of batching, replay flags and delivery timestamps. Off observation
 apply nothing. A demoted uncertain operation remains unresolved until authoritative
 reconciliation is permitted; shadow evidence is not silently promoted.
 
+Shadow cursor loss opens one bounded replay using a subscription-local cursor.
+Cleared generations and replay progress never update the primary cursor; only
+deduplicated comparison digests survive restart. Off mode does not reopen replay
+or record comparison evidence. Missing history and repeated resets remain
+non-authoritative and cannot settle an uncertain operation.
+
 Decision delivery uses the same qualification boundary. A queued decision in
 shadow/off mode retains its pending delivery intent without steering the runtime
 or changing the attention state. If qualification changes during an in-flight
 steer, settlement leaves its result unresolved. Every post-send decision path,
 including retry, malformed-reply exhaustion and lease release, locks Outbox →
 Attempt → Task → harness and rechecks both fences using current server time.
+Losing either fence, even at a final settlement check, rolls back as a no-fault
+decision-delivery result so remaining rows in the tenant's batch still run.
 
 ## Acceptance index
 
@@ -96,9 +104,10 @@ survive. Direct SQL is limited to qualification and precise crash/fault boundari
 | Stale send/decision writes emit no partial state or history | `TestRecoveryStaleSendSettlementWritesNothing`, `TestRecoveryStaleDecisionAcknowledgementWritesNothing`; existing persistence lease/maintenance fencing tests |
 | Exact governed receipt; no authority revival | `TestRecoveryQueuedPolicyGenerationBlocksAfterRestart`; existing governed lost-reply, receipt-rehydration, crash-marker and queued-authority regression tests |
 | Artifact replay preserves exact admission | `TestRecoveryArtifactRetryAndFencedAdmission`; existing artifact lost-commit-reply, stale/future-writer and post-commit crash tests |
-| Shadow restart preserves primary authority | `TestRecoveryShadowObservationsCannotSettlePrimary`, `TestRecoveryShadowGovernedReceiptPreservesPrimary`, `TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent`, `TestRecoveryOffObservationsDoNotMutate` |
+| Shadow restart preserves primary authority | `TestRecoveryShadowObservationsCannotSettlePrimary`, `TestRecoveryShadowGovernedReceiptPreservesPrimary`, `TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent`, `TestRecoveryOffObservationsDoNotMutate`, `TestRecoveryShadowResetReopensLocalReplay` |
 | Outcome/cursor transaction is all-or-nothing | `TestRecoveryOutcomeAndCursorRollbackTogether` |
 | Decision dispatch and settlement respect qualification and expiry | `TestRecoveryDecisionQualificationBeforeSend`, `TestRecoveryDecisionDemotionBeforeSettlement`, `TestRecoveryDecisionErrorsRespectFences` |
+| Lost decision fences do not abort the tenant batch | `TestRecoveryLostDecisionFenceKeepsBatchMoving`, including expiry injected after the initial settlement fence check |
 
 Run `just test-recovery`, `just test-recovery-race`, `just test-contracts` and
 `just ci`. Focused integration recipes bypass the cache and use the same macOS
@@ -109,7 +118,7 @@ The completed local `just ci` run passed, including uncached race-enabled
 application, worker, PostgreSQL and migration tests. Contract guards, module
 checks, vet, vulnerability scanning and workflow lint passed. A temporary inverted
 outcome-entry gate was caught by its recovery regression and restored before
-commit. The campaign adds 25 recovery test functions alongside existing evidence.
+commit. The campaign adds 27 recovery test functions alongside existing evidence.
 
 ## Limits and remaining gates
 

@@ -86,7 +86,24 @@ PR architecture-review follow-up:
   integration suites. Vulnerability scanning found no vulnerabilities and
   workflow lint passed.
 
-The campaign adds 25 recovery test functions, retaining the existing replay,
+Additional PR review regressions:
+
+- Shadow cursor resets originally left replay closed. Local-only shadow
+  ingestion now opens bounded replay without creating/advancing primary cursors
+  or settling operations. Tests cover cleared/expired cursors, unavailable
+  replay, reset loops, restart deduplication and off mode.
+- Lost decision fences originally aborted the rest of the tenant batch.
+  Decision delivery now treats stale-version races as no-ops after the inner
+  transaction rolls back. Batch tests cover accepted, transport-error and
+  malformed replies across expiry/takeover, including expiry injected after
+  the initial settlement check.
+- Both regressions failed before their respective fixes.
+- Race-enabled shadow reset regressions passed (23.669s), and the expanded
+  decision recovery suite passed (158.568s), including the late-expiry rollback
+  and same-batch continuation test. The follow-up full-CI result is recorded
+  in PR #59.
+
+The campaign adds 27 recovery test functions, retaining the existing replay,
 authority, artifact and fencing tests as complementary evidence. Local full CI
 is not a claim about unrun GitHub checks or production-provider qualification.
 
