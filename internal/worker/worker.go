@@ -93,6 +93,7 @@ type Worker struct {
 	logger      *slog.Logger
 	ports       map[ids.ProviderID]contracts.Port
 	enforcement map[ids.ProviderID]contracts.Port
+	artifacts   map[ids.ProviderID]ArtifactStorePort
 	owner       string
 	cfg         Config
 	stats       Stats

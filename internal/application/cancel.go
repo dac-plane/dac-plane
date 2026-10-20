@@ -130,6 +130,10 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
+	attempt, task, err = store.LockResultScope(ctx, u.uow, tenant, attempt.ID)
+	if err != nil {
+		return nil, err
+	}
 	// The expected version is the view the cancellation was decided on: a
 	// task a concurrent writer already moved past it is this command's
 	// version conflict, while a task already cancelling or taken is refused

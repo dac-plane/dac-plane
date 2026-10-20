@@ -133,6 +133,10 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 - [Historical build specification](../../architecture-explore/docs/spec/SPEC.md), used as design input
   only where the active baseline adopts it
 
+## Implementation notes
+
+- [Artifact admission, immutable results and review/rework (#26)](artifact-results-26.md)
+
 ## Change triggers
 
 Revise these views when an accepted ADR changes lifecycle ownership, splits or combines a container,

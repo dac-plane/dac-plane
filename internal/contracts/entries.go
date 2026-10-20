@@ -33,6 +33,7 @@ const (
 	EntryAttentionRequested  = "attention.requested"
 	EntryDecisionConsumed    = "decision.consumed"
 	EntryRuntimeStopped      = "runtime.stopped"
+	EntryResultProposed      = "result.proposed"
 )
 
 // progressKinds are known observations that carry no product state.
@@ -61,7 +62,7 @@ func ClassifyEntry(kind string) EntryClass {
 	switch {
 	case slices.Contains([]string{
 		EntryRuntimeStarted, EntryTurnStarted, EntryTurnFinished, EntryEnvironmentObserved,
-		EntryOperationOutcome, EntryAttentionRequested, EntryDecisionConsumed, EntryRuntimeStopped,
+		EntryOperationOutcome, EntryAttentionRequested, EntryDecisionConsumed, EntryRuntimeStopped, EntryResultProposed,
 	}, kind):
 		return EntryApply
 	case slices.Contains(progressKinds, kind):

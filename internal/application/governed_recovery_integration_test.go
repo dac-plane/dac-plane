@@ -289,7 +289,7 @@ func TestGovernedActionDowngradePreservesPendingApproval(t *testing.T) {
 	if _, err := provider.ApplyVersion(f.ctx, 5, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade governed actions") {
 		t.Fatalf("downgrade did not refuse version 5 evidence: %v", err)
 	}
-	if version, err := provider.GetDBVersion(f.ctx); err != nil || version != 5 {
+	if version, err := provider.GetDBVersion(f.ctx); err != nil || version != migrations.CurrentVersion {
 		t.Fatalf("failed downgrade changed schema version: %d, %v", version, err)
 	}
 	preserved, err := store.GetAttention(f.ctx, f.pool, f.tenant, request.ID)

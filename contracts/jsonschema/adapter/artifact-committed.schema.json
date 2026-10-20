@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest",
+    "outcome",
+    "observed"
+  ],
+  "properties": {
+    "manifest": {
+      "$ref": "../lifecycle/artifact-manifest.schema.json"
+    },
+    "outcome": {
+      "enum": [
+        "committed",
+        "retry",
+        "fenced"
+      ]
+    },
+    "reason": {
+      "enum": [
+        "missing_bytes",
+        "digest_mismatch",
+        "size_mismatch"
+      ]
+    },
+    "object_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "observed": {
+      "$ref": "artifact-stored.schema.json"
+    },
+    "committed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "committed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "object_version",
+          "committed_at"
+        ],
+        "not": {
+          "required": [
+            "reason"
+          ]
+        },
+        "properties": {
+          "observed": {
+            "properties": {
+              "present": {
+                "const": true
+              }
+            },
+            "required": [
+              "digest"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "retry"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reason"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "object_version"
+              ]
+            },
+            {
+              "required": [
+                "committed_at"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "fenced"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "object_version"
+              ]
+            },
+            {
+              "required": [
+                "committed_at"
+              ]
+            },
+            {
+              "required": [
+                "reason"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

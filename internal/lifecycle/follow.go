@@ -55,5 +55,8 @@ func TaskFollowsAttempt(attempt AttemptState, task TaskState) (TaskEvent, bool) 
 	if attempt == AttemptFailed && task == TaskRunning {
 		return TaskExecutionFailed, true
 	}
+	if attempt == AttemptFailed && task == TaskVerifying {
+		return TaskVerificationFailed, true
+	}
 	return "", false
 }

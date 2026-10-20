@@ -24,11 +24,15 @@ type AssertSpend struct {
 	Command
 	// SubmissionNonce names the governed submission being completed.
 	SubmissionNonce string
-	Assertion       lifecycle.SpendAssertion
+	// ReviewNonce selects a request_changes scheduling record instead of an
+	// initial submission. Exactly one of the two nonces must be supplied.
+	ReviewNonce string
+	Assertion   lifecycle.SpendAssertion
 }
 
 type assertPayload struct {
 	Submission      string                   `json:"submission"`
+	Review          string                   `json:"review,omitempty"`
 	ExpectedVersion uint64                   `json:"expected_version"`
 	Assertion       lifecycle.SpendAssertion `json:"assertion"`
 }
@@ -42,7 +46,7 @@ func (c AssertSpend) validate() error {
 	if err := c.Command.validate(false); err != nil {
 		return err
 	}
-	if c.SubmissionNonce == "" || len(c.SubmissionNonce) > maxNonceLength {
+	if (c.SubmissionNonce == "") == (c.ReviewNonce == "") || len(c.SubmissionNonce) > maxNonceLength || len(c.ReviewNonce) > maxNonceLength {
 		return fmt.Errorf("%w: the submission nonce must be 1 to %d bytes", ErrInvalidCommand, maxNonceLength)
 	}
 	if c.Assertion.Challenge.IsZero() || c.Assertion.AssertedAt.IsZero() {
@@ -59,7 +63,7 @@ func Assert(ctx context.Context, pool *pgxpool.Pool, cmd AssertSpend) (Submissio
 		return Submission{}, err
 	}
 	digest, err := fingerprint(commandAssertSpend, assertPayload{
-		Submission: cmd.SubmissionNonce, ExpectedVersion: cmd.ExpectedVersion, Assertion: cmd.Assertion,
+		Submission: cmd.SubmissionNonce, Review: cmd.ReviewNonce, ExpectedVersion: cmd.ExpectedVersion, Assertion: cmd.Assertion,
 	})
 	if err != nil {
 		return Submission{}, err
@@ -69,20 +73,13 @@ func Assert(ctx context.Context, pool *pgxpool.Pool, cmd AssertSpend) (Submissio
 	}); err != nil {
 		return Submission{}, err
 	}
-	return GetSubmission(ctx, pool, cmd.Actor, cmd.SubmissionNonce)
+	return spendScheduling(ctx, pool, cmd)
 }
 
 func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage, error) {
 	principal := cmd.Actor.Principal()
 	tenant := principal.Tenant
-	record, err := store.GetCommandRecord(ctx, u.uow, tenant, principal.ID, commandSubmitTask, cmd.SubmissionNonce)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("%w: no such submission", ErrInvalidCommand)
-	}
-	if err != nil {
-		return nil, err
-	}
-	submission, err := loadSubmission(ctx, u.uow, tenant, cmd.SubmissionNonce, record.Result)
+	submission, err := spendScheduling(ctx, u.uow, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -118,4 +115,31 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 		}
 	}
 	return json.Marshal(assertion{Submission: cmd.SubmissionNonce, Spend: submission.Challenge.ID.String()})
+}
+
+func spendScheduling(ctx context.Context, q store.Querier, cmd AssertSpend) (Submission, error) {
+	principal := cmd.Actor.Principal()
+	kind, nonce := commandSubmitTask, cmd.SubmissionNonce
+	if cmd.ReviewNonce != "" {
+		kind, nonce = commandReviewResult, cmd.ReviewNonce
+	}
+	record, err := store.GetCommandRecord(ctx, q, principal.Tenant, principal.ID, kind, nonce)
+	if errors.Is(err, store.ErrNotFound) {
+		return Submission{}, fmt.Errorf("%w: no such scheduling record", ErrInvalidCommand)
+	}
+	if err != nil {
+		return Submission{}, err
+	}
+	raw := record.Result
+	if cmd.ReviewNonce != "" {
+		var v ReviewView
+		if err = json.Unmarshal(raw, &v); err != nil {
+			return Submission{}, err
+		}
+		if len(v.Scheduling) == 0 {
+			return Submission{}, ErrInvalidCommand
+		}
+		raw = v.Scheduling
+	}
+	return loadSubmission(ctx, q, principal.Tenant, nonce, raw)
 }

@@ -1,131 +1,100 @@
-# Issue #25: governed actions
+# Issue #26: verified artifacts, immutable results and review/rework
 
-Tracker: [#25](https://github.com/AssahBismarkabah/dac-plane/issues/25). Branch:
-`feat/25-governed-actions`, based on #55 at `7bb523a`. One PR carries this feature and its review fixes.
+Tracker: [#26](https://github.com/dac-plane/dac-plane/issues/26).
+Branch: `feature/26-artifact-results`, based on merged #25 at `34238eb`.
+One feature branch carries implementation and review corrections.
 
-## Contract and architecture
+## Sources and boundary
 
-Implement ADR-0003 scoped action authority, synchronous interception, operation-bound
-receipts, and serialized stateful actions. The active architecture and ADRs are authoritative.
-The Plane-Bot `DEEP-DIVES-03.md` sections 2–4 supply evidence for source attribution,
-retirement, scope classes, generation invalidation, and observe/act discipline;
-`DEEP-DIVES-04.md` supplies hook semantics. Exploration files remain read-only.
+The active architecture and ADR-0003 govern the work. Exploration SPEC sections
+11 and 21 explain why only an explicit adapter-reported proposed result starts
+verification, and why integrity admission is distinct from semantic correctness.
+Exploration files remain read-only.
 
-Existing pure authority and hook contracts are reused. One-time and standing approvals
-retain Decision provenance. An approval names a distinct action operation, while the runtime
-turn continues to carry its attention event and receive its steer/cancel. Runtime operation
-lookups exclude governed actions; action rejection and receipt reconciliation do not resolve
-the runtime's independent lifecycle.
+A successful native turn alone creates no result. A bound result proposal plus
+its successful turn activates staged evidence export. Immutable store receipts,
+not object presence or runtime claims, authorize product-owned admission.
+Only a fully admitted proposal creates a revision; authorized owner review
+accepts, rejects or schedules a new budgeted Attempt.
 
-## Ordered implementation
+No cloud store, transport, UI, retention policy, automatic acceptance, production
+provider qualification or arbitrary verification runner is selected here.
 
-1. Extend grants and uses with Decision provenance and exact scope on uses. Add
-   `approve_standing`, scope on approval requests, `ActionExecution`, and
-   `EnforcementReceipt`; mirror the changes in JSON Schema and agreement tests.
-2. Add migration 00005 without editing released migrations. Denial evidence may exist
-   without an executable provider operation. `governed_action` owns immutable replay
-   identity; allowed uses additionally create a provider operation and dispatch outbox.
-   Receipts are immutable and reference both the requested and executable operation.
-3. `EnforceGovernedAction` authenticates the provider, evaluates a bounded pre-action
-   hook outside the database transaction, then locks operation replay identity, policy,
-   Attempt, and grant. Authorization checks the effective input. One transaction records
-   hook evidence, authority use, audit/event evidence, retirement, and allowed dispatch.
-   Failure records a denial with no executable operation or outbox. Changed operation
-   payloads conflict; replay returns the original evidence even after expiry/cancellation.
-4. The worker rechecks current grant, policy, active Attempt, harness, deadline and
-   leases before recording its send marker. An existing marker after a crash becomes
-   uncertain; it is never resent. Execution is bounded by configured send timeout and
-   action deadline. Receipt insertion, operation completion and fenced acknowledgement
-   commit together. Only an exact authenticated receipt settles an uncertain action.
-5. Extend the deterministic enforcement simulator with separate hook/execution dedupe,
-   immutable execution fingerprints, resource reservations and receipt replay. Check the
-   observation token under the resource mutex immediately before mutation and capture
-   the resulting state digest in that same critical section.
-6. Exercise the full flow through application commands/events and the worker. Run the
-   focused acceptance suite, contract guards, integration/race checks, then `just ci`.
-   Review correctness, architecture, security and recovery before committing.
+## Ordered work
 
-## M1 execution boundary
+1. Contracts: typed result.proposed and artifact transfer/observation/commit
+   payloads, integrity-verification record, typed identifiers, schemas and
+   agreement tests.
+2. Durability: migration 00006, immutable proposal/staged identity, separate
+   writer generation, stage operation purposes, commit/verification evidence,
+   revision links and guarded downgrade.
+3. Application: serialized proposal/turn join in both observation orders,
+   finalization gates, owner-only idempotent review, atomic budgeted rework and
+   spend assertion support for review scheduling records.
+4. Worker/simulators: dedicated artifact registry and routing, stable replay-safe
+   stage operations, bounded fenced calls, byte-backed hashing/immutable commit,
+   crash recovery without inferring admission from stat.
+5. Acceptance: application/worker end-to-end and race tests, mismatch/forgery/
+   cancellation/claim-loss tests, migration and immutability proof, mutation
+   check, focused review, then full CI.
 
-The implemented action is a fixed `resource.mutate` simulator operation. Its input is a
-bounded JSON object with `resource` and `value`; scope is the named resource subject.
-The hook may rewrite the value. A rewrite changing the resource is refused rather than
-reusing the original subject's authority. The executor retains input by digest from the
-pre-action stage; product records/outbox contain only identifiers, scope, digests and the
-observation precondition. No raw values or credentials enter PostgreSQL.
+## Invariants
 
-`WithEnforcementPorts` explicitly binds the enforcement role of the same qualified
-provider audience alongside its runtime role. This implements the baseline's runtime-hook
-enforcement option; a separate gateway identity requires future explicit audience mapping.
-No production policy engine, tool catalogue, secret broker or payload store is selected.
+- Proposal identity comes from authenticated runtime bindings. Providers do not
+  choose product identifiers or writer generations.
+- Scope locking follows Attempt then Task, consistent with existing progress
+  transitions. Proposal and successful-turn observations join under these locks.
+- Artifact generations are independent of outbox/Attempt lease epochs.
+- Upload capabilities exist in call memory only; PostgreSQL and outbox hold
+  immutable manifests, identifiers and integrity metadata, never credentials.
+- A receipt must match the whole staged manifest and winning store identity.
+  Stat and send acceptance alone never create admitted evidence.
+- Retry/fenced/mismatch/partial admission creates no ResultRevision.
+- All artifacts in a new revision belong to its exact Attempt and source
+  revision. Prior evidence stays attached to prior immutable revisions.
+- Cancellation, stale/future writers and shadow qualification block admission.
+- Request changes preserves review/revision lineage, uses the existing ceiling,
+  and commits scheduling/reservation/spend records atomically.
+- Runtime lookup/reconciliation excludes artifact stage operations. Runtime
+  uncertainty during verification restores finalizing rather than executing.
 
-Existing persisted grants can lack Decision provenance, but this execution boundary
-refuses them. New application approvals always carry their recorded Decision. Historical
-scope-less approval records cannot issue new authority through the updated command.
+## Verification
 
-## Acceptance evidence
-
-`TestGovernedAction*` covers exact one-time execution and retirement, replay and changed
-payload conflicts, standing grants, requested/effective digests, revocation, generation and
-ceiling denials, expired/missing/mismatched grants, hook denial/missing/timeout/malformed/
-transport failure, stale tokens, per-resource serialization, changed state at the effect
-boundary, runtime-operation collisions, queued-action invalidation, and lost-reply receipt
-reconciliation without repeating effects. Additional tests cover forbidden scoped issuance,
-contract conformance, migration up/down, and existing runtime/attention/cancellation flows.
-
-```sh
-just test-contracts
-just test-integration ./internal/application/ -run GovernedAction
-just test-integration-race ./internal/application/ -run GovernedAction
-just ci
-```
-
-macOS integration commands use the SDK selection in `justfile`. An empty test-name match
-is not acceptance evidence. Verification results are reported only after observed completion.
+Run uncached focused application and worker integration/race suites, the
+PostgreSQL and migration suites, contract guards, and `just ci`. macOS uses the
+SDK selection in justfile. Record only observed completed results.
 
 ## Completed verification
 
-The initial implementation passed `just test-contracts`, focused governed-action
-integration tests (normal and race-enabled), and the full `just ci` suite passed. The final
-CI-equivalent run used `SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" just ci` on macOS;
-the race-enabled integration packages passed, including application (223.530s), worker
-(55.073s), PostgreSQL (99.638s), and migrations (27.773s). Vulnerability scanning reported
-no vulnerabilities and workflow linting passed.
+Implementation and acceptance tests are committed on the feature branch. The
+final full run passed:
 
-The acceptance suite additionally verifies exact-byte JSON digests and grant issue,
-retirement and revocation evidence. A temporary mutation that inverted hook refusal made
-the denial acceptance test fail; the original gate was restored and the final suite passed.
-No production provider, network transport, or deployed environment was exercised.
+```sh
+SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" just ci
+```
 
-## Architecture-review corrections
+The final race-enabled integration run passed application (279.239s), worker
+(39.298s), PostgreSQL (86.506s) and migrations (19.712s). Format/module checks,
+vet, unit/race tests, schema coverage, vulnerability scanning and workflow lint
+passed. Vulnerability scanning reported no vulnerabilities.
 
-The review reproduced three worker gaps and added permanent regressions in
-`internal/application/governed_recovery_integration_test.go`:
+The focused application acceptance suite also passed with and without the race
+detector. Additional focused runs proved shared initial/rework scheduling and
+lease expiry during the final budget-lock wait. A temporary inversion of the
+verification digest check made its contract test fail; restoring the exact gate
+made it pass. The mutation was never committed.
 
-1. Sample authorization time after policy/Attempt/grant/send-marker locks, and refresh each
-   dispatch row's clock. Cover expiry during a slow preceding send and while waiting for
-   policy or operation locks; yield claims that expired during those waits.
-2. Treat a governed operation still in `recorded` as provably never sent, regardless of
-   the outbox claim epoch. Cover lease contention followed by revocation: reject without
-   effect or futile receipt polling, while preserving uncertainty for actual send markers.
-3. Explicitly reopen receipt replay after a generation reset or cursor-too-old response.
-   Preserve monotonic durable progress, bound reset loops, retain reset progress if replay
-   is unavailable, and never execute the action again to recover a receipt.
-4. Refuse downgrade before destructive DDL when version 5 scope, Decision provenance
-   or action/receipt evidence exists. Hold table locks across the check and DDL. Cover
-   a pending scoped approval: schema version and scope survive refusal, and approval
-   still succeeds. Empty-database down/up remains supported.
+The bounded review found and corrected proposal/turn join races, verification
+failure/reconciliation phase handling, conflicting cancellation/worker lock
+orders, unlocked harness demotion and aggregate stage latency exceeding a lease.
+The final review pass found no concrete blockers. The separately offered external
+review was explicitly skipped by the user and was not run.
 
-The new regression cases failed before these corrections and passed afterward. The final
-full-suite results for the correction commit are recorded in PR #56 after verification.
+No production provider, cloud storage, network transport or deployed environment
+was exercised. Local full CI is not a claim about unrun GitHub checks.
 
-## Remaining M1 freeze gate
+## Remaining M1 boundary
 
-This issue demonstrates pre-action authorization and receipt/denial enforcement. It does not
-claim complete hook-lifecycle integration. Before #30 freezes ADR-0003 parity, add durable,
-stage-specific post-action/failure-hook delivery and safe evidence for typed outcome,
-duration and usage; route hook messages/context safely rather than silently dropping them.
-Prove one stable action identity works across pre-action, execution and post/failure stages,
-and that a lost post-hook reply never repeats the governed effect. This remains an explicit
-M1 completion requirement, not production-provider qualification and not a reason to copy
-the explored vendor's topology.
+Broader recovery/security campaigns remain #27/#28. The post-action/failure-hook
+delivery and safe typed hook evidence requirement from #25 remains an explicit
+#30 freeze gate; it is not silently claimed by artifact integrity admission.

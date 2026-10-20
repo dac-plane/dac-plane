@@ -73,7 +73,11 @@ func (s Step) Task(ctx context.Context, id ids.TaskID, event lifecycle.TaskEvent
 	if err != nil {
 		return false, err
 	}
-	if _, _, check := task.Apply(event, task.Version, "", s.At); check != nil {
+	target := lifecycle.TaskState("")
+	if event == lifecycle.TaskVerificationFailed {
+		target = lifecycle.TaskFailed
+	}
+	if _, _, check := task.Apply(event, task.Version, target, s.At); check != nil {
 		var refusal *lifecycle.TransitionError
 		if errors.As(check, &refusal) {
 			return false, nil
@@ -84,7 +88,7 @@ func (s Step) Task(ctx context.Context, id ids.TaskID, event lifecycle.TaskEvent
 	if err != nil {
 		return false, err
 	}
-	_, _, err = store.ApplyTask(ctx, s.UOW, s.Tenant, id, event, "", tr)
+	_, _, err = store.ApplyTask(ctx, s.UOW, s.Tenant, id, event, target, tr)
 	return err == nil, err
 }
 
@@ -99,6 +103,18 @@ func (s Step) FollowOperation(ctx context.Context, operation lifecycle.ProviderO
 	event, target, ok := lifecycle.AttemptFollowsOperation(operation.State, attempt.State)
 	if !ok {
 		return nil
+	}
+	if target == lifecycle.AttemptExecuting && attempt.State == lifecycle.AttemptReconciling {
+		task, err := store.GetTask(ctx, s.UOW, s.Tenant, attempt.Task)
+		if err != nil {
+			return err
+		}
+		if task.State == lifecycle.TaskVerifying {
+			if _, err = store.GetResultProposal(ctx, s.UOW, s.Tenant, attempt.ID); err != nil {
+				return err
+			}
+			target = lifecycle.AttemptFinalizing
+		}
 	}
 	_, _, _, err = s.Attempt(ctx, attempt.ID, event, target)
 	return err
