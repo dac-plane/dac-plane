@@ -15,6 +15,42 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
+type migrationClaimSnapshot struct {
+	uow   *store.UnitOfWork
+	pass  lifecycle.MigrationPass
+	items []lifecycle.MigrationItem
+	item  lifecycle.MigrationItem
+	at    time.Time
+}
+
+func (w *Worker) beginMigrationClaimSnapshot(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, source ids.AttemptID) (migrationClaimSnapshot, error) {
+	var snapshot migrationClaimSnapshot
+	u, err := store.Begin(ctx, w.pool)
+	if err != nil {
+		return snapshot, err
+	}
+	var now time.Time
+	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		_ = u.Rollback(ctx)
+		return snapshot, err
+	}
+	pass, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
+	if err != nil {
+		_ = u.Rollback(ctx)
+		return snapshot, err
+	}
+	snapshot = migrationClaimSnapshot{uow: u, pass: pass, items: items, at: now.UTC()}
+	if !source.IsZero() {
+		for _, item := range items {
+			if item.SourceAttempt == source {
+				snapshot.item = item
+				break
+			}
+		}
+	}
+	return snapshot, nil
+}
+
 // driveMigrationItems begins at most one source quiesce per pass. The send
 // marker is committed before Send. Reply settlement is deliberately separate:
 // no interrupt reply is treated as cutover until its fenced stage receipt and
@@ -102,19 +138,12 @@ func (w *Worker) migrationPortsReady(ctx context.Context, tenant ids.TenantID, p
 }
 
 func (w *Worker) finishEmptyMigration(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, migration ids.MigrationID) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, ids.AttemptID{})
 	if err != nil {
 		return err
 	}
+	u, pass, items, now := snapshot.uow, snapshot.pass, snapshot.items, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	pass, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
 	if pass.ID != migration || len(items) != 0 {
 		return store.ErrStaleVersion
 	}
@@ -125,19 +154,12 @@ func (w *Worker) finishEmptyMigration(ctx context.Context, tenant ids.TenantID, 
 }
 
 func (w *Worker) failMigrationItems(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, migration ids.MigrationID, snapshot []lifecycle.MigrationItem) error {
-	u, err := store.Begin(ctx, w.pool)
+	claimSnapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, ids.AttemptID{})
 	if err != nil {
 		return err
 	}
+	u, pass, items, now := claimSnapshot.uow, claimSnapshot.pass, claimSnapshot.items, claimSnapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	pass, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
 	if pass.ID != migration || len(items) != len(snapshot) {
 		return store.ErrStaleVersion
 	}
@@ -313,26 +335,12 @@ func validateMigrationReceipt(reply contracts.Reply, request contracts.Request, 
 }
 
 func (w *Worker) markMigrationUncertain(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
 	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	_, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
-	var current lifecycle.MigrationItem
-	for _, candidate := range items {
-		if candidate.SourceAttempt == item.SourceAttempt {
-			current = candidate
-			break
-		}
-	}
 	if current.SourceAttempt.IsZero() || current.ClaimEpoch != item.ClaimEpoch {
 		return store.ErrStaleVersion
 	}
@@ -353,26 +361,12 @@ func (w *Worker) markMigrationUncertain(ctx context.Context, tenant ids.TenantID
 }
 
 func (w *Worker) settleSourceQuiesce(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, receipt contracts.MigrationReceipt) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
 	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	_, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
-	var current lifecycle.MigrationItem
-	for _, candidate := range items {
-		if candidate.SourceAttempt == item.SourceAttempt {
-			current = candidate
-			break
-		}
-	}
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemQuiescing || current.QuiesceOperation != item.QuiesceOperation || current.ClaimEpoch != item.ClaimEpoch {
 		return store.ErrStaleVersion
 	}
@@ -671,26 +665,12 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 }
 
 func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
 	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	_, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
-	var current lifecycle.MigrationItem
-	for _, candidate := range items {
-		if candidate.SourceAttempt == item.SourceAttempt {
-			current = candidate
-			break
-		}
-	}
 	if current.SourceAttempt.IsZero() || current.ClaimEpoch != item.ClaimEpoch || (current.State != lifecycle.MigrationItemStarting && current.State != lifecycle.MigrationItemCleaningUp) {
 		return store.ErrStaleVersion
 	}
@@ -729,26 +709,12 @@ func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.Te
 }
 
 func (w *Worker) settleMigrationEnvironment(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, pass lifecycle.MigrationPass, receipt contracts.MigrationReceipt) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
 	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	_, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
-	var current lifecycle.MigrationItem
-	for _, candidate := range items {
-		if candidate.SourceAttempt == item.SourceAttempt {
-			current = candidate
-			break
-		}
-	}
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemStarting || current.ClaimEpoch != item.ClaimEpoch || current.EnvironmentEpoch != receipt.ClaimEpoch {
 		return store.ErrStaleVersion
 	}
@@ -804,26 +770,12 @@ func acceptMigrationOperation(ctx context.Context, u *store.UnitOfWork, tenant i
 }
 
 func (w *Worker) settleMigrationCutover(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, receipt contracts.MigrationReceipt) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
 	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	_, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
-	var current lifecycle.MigrationItem
-	for _, candidate := range items {
-		if candidate.SourceAttempt == item.SourceAttempt {
-			current = candidate
-			break
-		}
-	}
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemStarting || current.ClaimEpoch != item.ClaimEpoch || current.RestartEpoch != receipt.ClaimEpoch || current.EnvironmentRef != receipt.EnvironmentRef {
 		return store.ErrStaleVersion
 	}
@@ -931,26 +883,12 @@ func (w *Worker) driveMigrationCleanup(ctx context.Context, tenant ids.TenantID,
 }
 
 func (w *Worker) settleMigrationCleanup(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, receipt contracts.MigrationReceipt) error {
-	u, err := store.Begin(ctx, w.pool)
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
 	}
+	u, pass, items, current, now := snapshot.uow, snapshot.pass, snapshot.items, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	var now time.Time
-	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	pass, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
-	if err != nil {
-		return err
-	}
-	var current lifecycle.MigrationItem
-	for _, candidate := range items {
-		if candidate.SourceAttempt == item.SourceAttempt {
-			current = candidate
-			break
-		}
-	}
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemCleaningUp || current.ClaimEpoch != item.ClaimEpoch || current.CleanupEpoch != receipt.ClaimEpoch {
 		return store.ErrStaleVersion
 	}
