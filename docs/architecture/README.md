@@ -137,6 +137,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 
 - [Artifact admission, immutable results and review/rework (#26)](artifact-results-26.md)
 - [Recovery, replay, fencing and restart evidence (#27)](recovery-27.md)
+- [Security and lifecycle acceptance, in progress (#28)](security-28.md)
 
 ## Change triggers
 
