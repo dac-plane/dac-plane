@@ -160,6 +160,10 @@ var migrationMachine = newMachine(MigrationStates(), MigrationEvents(),
 		MigrationExecuting: {
 			MigrationComplete: {MigrationCompleted},
 			MigrationFail:     {MigrationFailed},
+			// Cancellation of an executing pass is authoritative intent to stop
+			// future cutovers. Item cleanup remains durable evidence; it never
+			// becomes a successful transfer merely because the pass was cancelled.
+			MigrationCancel: {MigrationCancelled},
 		},
 	},
 )
@@ -175,6 +179,61 @@ type MigrationPass struct {
 	Version   uint64          `json:"version"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// MigrationItemState is the durable per-Attempt outcome of a tenant-wide
+// harness migration. A pass may complete only after every item completed;
+// failed and unresolved items deliberately keep the pass non-successful.
+type MigrationItemState string
+
+const (
+	MigrationItemQueued     MigrationItemState = "queued"
+	MigrationItemQuiescing  MigrationItemState = "quiescing"
+	MigrationItemStarting   MigrationItemState = "starting"
+	MigrationItemCutover    MigrationItemState = "cutover"
+	MigrationItemCleaningUp MigrationItemState = "cleaning_up"
+	MigrationItemCompleted  MigrationItemState = "completed"
+	MigrationItemFailed     MigrationItemState = "failed"
+	MigrationItemUnresolved MigrationItemState = "unresolved"
+)
+
+// MigrationItemStates lists every durable migration item state.
+func MigrationItemStates() []MigrationItemState {
+	return []MigrationItemState{
+		MigrationItemQueued, MigrationItemQuiescing, MigrationItemStarting,
+		MigrationItemCutover, MigrationItemCleaningUp, MigrationItemCompleted,
+		MigrationItemFailed, MigrationItemUnresolved,
+	}
+}
+
+// MigrationItem is one source Attempt captured when a tenant-wide pass
+// starts. TargetAttempt is allocated only after source quiescence and means
+// restart-from-artifacts; it never reuses a native source session.
+type MigrationItem struct {
+	Tenant        ids.TenantID       `json:"tenant_id"`
+	Migration     ids.MigrationID    `json:"migration_id"`
+	SourceAttempt ids.AttemptID      `json:"source_attempt_id"`
+	TargetAttempt ids.AttemptID      `json:"target_attempt_id,omitzero"`
+	State         MigrationItemState `json:"state"`
+	ClaimEpoch    uint64             `json:"claim_epoch"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+}
+
+// Validate reports whether an item can be used as durable migration evidence.
+func (i MigrationItem) Validate() error {
+	if i.Tenant.IsZero() || i.Migration.IsZero() || i.SourceAttempt.IsZero() || i.ClaimEpoch == 0 || i.UpdatedAt.IsZero() {
+		return fmt.Errorf("%w: migration item requires tenant, pass, source, fence and time", ErrInvalid)
+	}
+	if !slices.Contains(MigrationItemStates(), i.State) {
+		return fmt.Errorf("%w: unknown migration item state", ErrInvalid)
+	}
+	if i.TargetAttempt.IsZero() && (i.State == MigrationItemCutover || i.State == MigrationItemCleaningUp || i.State == MigrationItemCompleted) {
+		return fmt.Errorf("%w: cut over migration item requires a target attempt", ErrInvalid)
+	}
+	if !i.TargetAttempt.IsZero() && i.TargetAttempt == i.SourceAttempt {
+		return fmt.Errorf("%w: migration target must be a new attempt", ErrInvalid)
+	}
+	return nil
 }
 
 // NewMigrationPass returns a planned pass at version 1.

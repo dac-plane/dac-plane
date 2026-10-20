@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MigrationItem",
+  "description": "One source Attempt captured by a tenant-wide harness migration. A target attempt means restart-from-artifacts, never native-session resume.",
+  "type": "object",
+  "required": ["tenant_id", "migration_id", "source_attempt_id", "state", "claim_epoch", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "migration_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "source_attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "target_attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "state": { "enum": ["queued", "quiescing", "starting", "cutover", "cleaning_up", "completed", "failed", "unresolved"] },
+    "claim_epoch": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}
