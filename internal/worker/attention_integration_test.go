@@ -49,6 +49,11 @@ func (f *fixture) arrangeDecidedAttention(t *testing.T, ctx context.Context, at 
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	if _, err := store.UpsertHarness(ctx, uow, lifecycle.HarnessQualification{
+		Tenant: f.tenant, Provider: f.provider, Mode: lifecycle.HarnessLive, Version: 1, UpdatedAt: at,
+	}); err != nil {
+		t.Fatalf("UpsertHarness() error = %v", err)
+	}
 	task, err := lifecycle.NewTask(mustID[ids.Task](t), f.tenant, f.principal, at)
 	if err != nil {
 		t.Fatalf("NewTask() error = %v", err)

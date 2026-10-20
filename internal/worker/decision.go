@@ -89,21 +89,27 @@ func (w *Worker) prepareDecision(ctx context.Context, tenant ids.TenantID, row s
 		return nil
 	}
 	ack := func(claim store.OutboxClaim) (*preparedDecision, error) {
-		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, now); err != nil {
+		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
 			return nil, err
 		}
 		w.stats.Acks.Add(1)
 		return nil, commit()
 	}
 	exhaust := func(claim store.OutboxClaim, reason string) (*preparedDecision, error) {
-		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, reason, now); err != nil {
+		if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, claim.Epoch); err != nil {
+			return nil, err
+		}
+		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, reason, time.Now().UTC()); err != nil {
 			return nil, err
 		}
 		w.stats.Exhausts.Add(1)
 		return nil, commit()
 	}
 	release := func(claim store.OutboxClaim) (*preparedDecision, error) {
-		if err := store.ReleaseOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, now); err != nil && !errors.Is(err, store.ErrStaleVersion) {
+		if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, claim.Epoch); err != nil {
+			return nil, err
+		}
+		if err := store.ReleaseOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
 			return nil, err
 		}
 		return nil, commit()
@@ -145,12 +151,8 @@ func (w *Worker) prepareDecision(ctx context.Context, tenant ids.TenantID, row s
 	default:
 		return ack(claim)
 	}
-	attention, applied, err := w.moveAttention(ctx, uow, tenant, attention, event, now)
-	if err != nil {
+	if _, _, err := store.LockResultScope(ctx, uow, tenant, attention.Attempt); err != nil {
 		return nil, err
-	}
-	if !applied {
-		return ack(claim)
 	}
 	// Steer the parent runtime, never the distinct action operation named
 	// by an approval request.
@@ -172,6 +174,22 @@ func (w *Worker) prepareDecision(ctx context.Context, tenant ids.TenantID, row s
 		}
 		return nil, err
 	}
+	harness, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
+	if errors.Is(err, store.ErrNotFound) {
+		return release(claim)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !harness.Mode.Authoritative() {
+		// Qualification may change after the command was recorded. Retain
+		// its delivery intent without changing the native request's state.
+		return release(claim)
+	}
+	if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, claim.Epoch); err != nil {
+		return nil, err
+	}
+	now = time.Now().UTC()
 	lease, err := store.ClaimAttemptLease(ctx, uow, tenant, attention.Attempt, w.owner, w.cfg.ClaimTTL, now)
 	if err != nil {
 		if errors.Is(err, store.ErrStaleVersion) {
@@ -179,11 +197,52 @@ func (w *Worker) prepareDecision(ctx context.Context, tenant ids.TenantID, row s
 		}
 		return nil, err
 	}
+	attention, applied, err := w.moveAttention(ctx, uow, tenant, attention, event, now)
+	if err != nil {
+		return nil, err
+	}
+	if !applied {
+		// A racing ingestion already closed the wait. Roll back the lease
+		// and claim; the next tick can acknowledge the current state.
+		return nil, nil
+	}
+	if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, claim.Epoch); err != nil {
+		return nil, err
+	}
+	if err := store.CheckAttemptLease(ctx, uow, tenant, attention.Attempt, lease); err != nil {
+		return nil, err
+	}
 	if err := commit(); err != nil {
 		return nil, err
 	}
 	w.stats.Claims.Add(1)
 	return &preparedDecision{claim: claim, attention: attention, operation: operation, lease: lease}, nil
+}
+
+// lockDecisionSettlement uses the dispatch lock order for every post-send
+// path, including errors. Expiry or demotion cannot authorize a retry write
+// or lease release just because the original claim's epoch still matches.
+func (w *Worker) lockDecisionSettlement(ctx context.Context, u *store.UnitOfWork, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDecision) (bool, error) {
+	if err := store.LockDispatchResult(ctx, u, tenant, row.ID); err != nil {
+		return false, err
+	}
+	if _, _, err := store.LockResultScope(ctx, u, tenant, prepared.attention.Attempt); err != nil {
+		return false, err
+	}
+	h, err := store.GetHarnessForUpdate(ctx, u, tenant, prepared.operation.Provider)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || !h.Mode.Authoritative() {
+		return false, err
+	}
+	if err := store.CheckOutboxClaim(ctx, u, tenant, row.ID, prepared.claim.Epoch); err != nil {
+		return false, err
+	}
+	if err := store.CheckAttemptLease(ctx, u, tenant, prepared.attention.Attempt, prepared.lease); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // resolveDecision applies a provider reply to a claimed delivery: accepted
@@ -216,9 +275,10 @@ func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row s
 			_ = uow.Rollback(ctx)
 		}
 	}()
-	if err := store.LockDispatchResult(ctx, uow, tenant, row.ID); err != nil {
+	if live, err := w.lockDecisionSettlement(ctx, uow, tenant, row, prepared); err != nil || !live {
 		return err
 	}
+	now = time.Now().UTC()
 	if reply.Durability == lifecycle.SendRejected {
 		// The steer cannot reach the native request: the wait supersedes as
 		// the only end reachable from a rejected delivery. Work stays as the
@@ -308,6 +368,10 @@ func (w *Worker) retryDecision(ctx context.Context, tenant ids.TenantID, row sto
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	if live, err := w.lockDecisionSettlement(ctx, uow, tenant, row, prepared); err != nil || !live {
+		return err
+	}
+	now = time.Now().UTC()
 	if exhausted {
 		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, string(code), now); err != nil {
 			return err
@@ -342,6 +406,10 @@ func (w *Worker) exhaustDecision(ctx context.Context, tenant ids.TenantID, row s
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	if live, err := w.lockDecisionSettlement(ctx, uow, tenant, row, prepared); err != nil || !live {
+		return err
+	}
+	now = time.Now().UTC()
 	if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, reason, now); err != nil {
 		return err
 	}
@@ -369,7 +437,11 @@ func (w *Worker) releaseDecision(ctx context.Context, tenant ids.TenantID, row s
 			_ = uow.Rollback(ctx)
 		}
 	}()
-	if err := store.ReleaseOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil && !errors.Is(err, store.ErrStaleVersion) {
+	if live, err := w.lockDecisionSettlement(ctx, uow, tenant, row, prepared); err != nil || !live {
+		return err
+	}
+	now = time.Now().UTC()
+	if err := store.ReleaseOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil {
 		return err
 	}
 	if err := w.releaseDecisionLease(ctx, uow, tenant, prepared, now); err != nil {

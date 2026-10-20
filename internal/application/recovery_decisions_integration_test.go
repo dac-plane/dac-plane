@@ -1,0 +1,156 @@
+//go:build integration
+
+package application_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+)
+
+func TestRecoveryDecisionErrorsRespectFences(t *testing.T) {
+	for _, outcome := range []string{"transport", "unknown", "malformed"} {
+		for _, fence := range []string{"outbox_expiry", "attempt_expiry", "outbox_takeover", "attempt_takeover"} {
+			t.Run(outcome+"/"+fence, func(t *testing.T) {
+				f := newFixture(t, lifecycle.HarnessLive)
+				s, rt := f.executing(t, "decision-error")
+				f.raise(t, rt, s, 2, question("question", f.at.Add(time.Hour)))
+				cmd := f.decideCommand("answer", f.attention(t, s), lifecycle.DecisionDeny)
+				cmd.At = f.at
+				view := f.decide(t, cmd)
+				steer := f.steer(t, s)
+				var before map[string]string
+				p := &recoveryPort{Port: steer, send: func(ctx context.Context, r contracts.Request) (contracts.Reply, error) {
+					reply, err := steer.Send(ctx, r)
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch fence {
+					case "outbox_expiry":
+						_, err = f.pool.Exec(ctx, `update outbox set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), view.DecisionID)
+					case "attempt_expiry":
+						_, err = f.pool.Exec(ctx, `update attempt set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and attempt_id=$2`, f.tenant.String(), s.Attempt.ID.String())
+					case "outbox_takeover":
+						_, err = f.pool.Exec(ctx, `update outbox set lease_epoch=lease_epoch+1,claimed_by='replacement' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), view.DecisionID)
+					case "attempt_takeover":
+						_, err = f.pool.Exec(ctx, `update attempt set lease_epoch=lease_epoch+1,lease_owner='replacement' where tenant_id=$1 and attempt_id=$2`, f.tenant.String(), s.Attempt.ID.String())
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					before = f.recoverySnapshot(t)
+					switch outcome {
+					case "transport":
+						return contracts.Reply{}, io.ErrUnexpectedEOF
+					case "unknown":
+						reply.Durability = lifecycle.SendUnknown
+					case "malformed":
+						reply.Outcome = "invalid"
+					}
+					return reply, nil
+				}}
+				if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil && !errors.Is(err, store.ErrStaleVersion) {
+					t.Fatal(err)
+				}
+				if before == nil || !reflect.DeepEqual(before, f.recoverySnapshot(t)) {
+					t.Fatal("stale error handler mutated authoritative records")
+				}
+				if steer.Ledger().Effects(s.Operation.ID) != 1 {
+					t.Fatal("decision effect count changed")
+				}
+			})
+		}
+	}
+}
+
+func TestRecoveryDecisionQualificationBeforeSend(t *testing.T) {
+	for _, mode := range []string{"shadow", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t, lifecycle.HarnessLive)
+			s, rt := f.executing(t, "decision-qualification")
+			f.raise(t, rt, s, 2, question("question", f.at.Add(time.Hour)))
+			cmd := f.decideCommand("answer", f.attention(t, s), lifecycle.DecisionDeny)
+			cmd.At = f.at
+			f.decide(t, cmd)
+			if _, err := f.pool.Exec(f.ctx, `update harness_qualification set mode=$2,version=version+1 where tenant_id=$1`, f.tenant.String(), mode); err != nil {
+				t.Fatal(err)
+			}
+			before := f.recoverySnapshot(t)
+			steer := f.steer(t, s)
+			f.reopen(t)
+			if err := recoveryWorker(t, f, steer).Tick(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			after := f.recoverySnapshot(t)
+			// Yielding the queue claim is allowed; primary lifecycle is not.
+			delete(before, "outbox")
+			delete(after, "outbox")
+			if !reflect.DeepEqual(before, after) || len(steer.Ledger().Sent()) != 0 {
+				t.Fatal("non-live decision mutated primary state or called the runtime")
+			}
+			if _, err := f.pool.Exec(f.ctx, `update harness_qualification set mode='live',version=version+1 where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+			if err := recoveryWorker(t, f, steer).Tick(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if steer.Ledger().Effects(s.Operation.ID) != 1 {
+				t.Fatal("qualification gate lost the queued decision")
+			}
+		})
+	}
+}
+
+func TestRecoveryDecisionDemotionBeforeSettlement(t *testing.T) {
+	for _, outcome := range []string{"accepted", "rejected", "transport", "malformed"} {
+		for _, mode := range []string{"shadow", "off"} {
+			t.Run(outcome+"/"+mode, func(t *testing.T) {
+				f := newFixture(t, lifecycle.HarnessLive)
+				s, rt := f.executing(t, "decision-demotion")
+				f.raise(t, rt, s, 2, question("question", f.at.Add(time.Hour)))
+				cmd := f.decideCommand("answer", f.attention(t, s), lifecycle.DecisionDeny)
+				cmd.At = f.at
+				f.decide(t, cmd)
+				steer := f.steer(t, s)
+				var before map[string]string
+				p := &recoveryPort{Port: steer, send: func(ctx context.Context, r contracts.Request) (contracts.Reply, error) {
+					reply, err := steer.Send(ctx, r)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := f.pool.Exec(ctx, `update harness_qualification set mode=$2,version=version+1 where tenant_id=$1`, f.tenant.String(), mode); err != nil {
+						t.Fatal(err)
+					}
+					before = f.recoverySnapshot(t)
+					switch outcome {
+					case "rejected":
+						reply.Durability = lifecycle.SendRejected
+						reply.Outcome = contracts.OutcomeFailed
+						reply.Failure = &contracts.Failure{Code: contracts.FailureProviderFailed, Message: "rejected"}
+					case "transport":
+						return contracts.Reply{}, io.ErrUnexpectedEOF
+					case "malformed":
+						reply.Outcome = "invalid"
+					}
+					return reply, nil
+				}}
+				if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil {
+					t.Fatal(err)
+				}
+				if before == nil || !reflect.DeepEqual(before, f.recoverySnapshot(t)) {
+					t.Fatal("demoted decision handler committed primary changes")
+				}
+				if steer.Ledger().Effects(s.Operation.ID) != 1 {
+					t.Fatal("decision effect count changed")
+				}
+			})
+		}
+	}
+}
