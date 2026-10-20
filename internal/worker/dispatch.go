@@ -531,6 +531,12 @@ func (w *Worker) checkBudget(ctx context.Context, uow *store.UnitOfWork, tenant 
 		if stored.Amount != body.Amount {
 			return &exhaustedError{reason: reasonReservationMixup}
 		}
+		// A hold that originally fit can lose its coverage when another
+		// Attempt reports late usage. Equality remains valid: an existing
+		// reservation may legitimately fill the ceiling exactly.
+		if budget.Consumed+budget.Reserved > budget.Ceiling {
+			return &exhaustedError{reason: reasonBudgetExhausted}
+		}
 		return nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err

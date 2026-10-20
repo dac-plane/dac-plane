@@ -235,57 +235,23 @@ func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOu
 	case contracts.EntryResultProposed:
 		outcome, err = applyDecoded(ctx, a, entry, a.resultProposed)
 	case contracts.EntryUsageReported:
-		outcome, err = applyDecoded(ctx, a, entry, a.usageReported)
+		outcome, err = a.usageReported(ctx, entry)
 	}
 	return outcome, err
 }
 
-func (a entryApplier) usageReported(ctx context.Context, entry contracts.Entry, payload contracts.UsageReported) (entryOutcome, error) {
-	attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+func (a entryApplier) usageReported(ctx context.Context, entry contracts.Entry) (entryOutcome, error) {
+	applied, refusal, err := a.step.Usage(ctx, a.event.Attempt, entry)
 	if err != nil {
 		return 0, err
 	}
-	// An Attempt's reservation uses its product-allocated identity. Resolve
-	// and lock budget before reservation, matching accounting's lock order.
-	budget, err := store.GetBudgetForUpdateByTaskUnit(ctx, a.uow, a.event.Tenant, attempt.Task, payload.Unit)
-	if errors.Is(err, store.ErrNotFound) {
-		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+	if refusal != nil {
+		return entryRefused, a.record(ctx, refusal)
 	}
-	if err != nil {
-		return 0, err
+	if applied {
+		return entryApplied, nil
 	}
-	reservationID, err := ids.Parse[ids.Reservation](attempt.ID.String())
-	if err != nil {
-		return 0, err
-	}
-	reservation, err := store.GetReservationForUpdate(ctx, a.uow, a.event.Tenant, reservationID)
-	if errors.Is(err, store.ErrNotFound) {
-		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
-	}
-	if err != nil {
-		return 0, err
-	}
-	if reservation.Attempt != attempt.ID || reservation.Budget != budget.ID {
-		return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
-	}
-	// Older totals can arrive after newer ones. They acknowledge ingestion,
-	// never decrease consumption or reopen a released reservation.
-	if payload.Cumulative <= reservation.Consumed {
-		return entryProgress, nil
-	}
-	// Check representability before writing, so malformed observations can
-	// be refused without losing the rest of the valid frame.
-	if _, _, _, err := budget.ReportUsage(reservation, payload.Cumulative, budget.Version, a.step.At); err != nil {
-		return a.refuse(ctx, entry, lifecycle.RejectInvalidTransition)
-	}
-	auditID, err := ids.New[ids.Audit]()
-	if err != nil {
-		return 0, err
-	}
-	_, _, _, err = store.ReportUsage(ctx, a.uow, a.event.Tenant, budget.ID, reservation.ID, payload.Cumulative, store.Transition{
-		ExpectedVersion: budget.Version, At: a.step.At, Actor: a.step.Actor, AuditID: auditID,
-	})
-	return entryApplied, err
+	return entryProgress, nil
 }
 
 // applyDecoded decodes an entry's payload and applies it; a payload that
