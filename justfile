@@ -9,7 +9,7 @@ go_dirs := "cmd internal"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
-recovery_tests := "Recovery|Reconcile|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
+recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
 
 # Some macOS Command Line Tools SDKs break the cgo linker used by the
 # integration tests; pointing SDKROOT at the active Xcode SDK avoids it.
