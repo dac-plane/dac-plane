@@ -4,6 +4,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -14,6 +15,82 @@ import (
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
 )
+
+func TestSecuritySpendCancellationWinsBeforeAssertionScopeLock(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.governed(t, "security-cancel-assert")
+	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := store.Begin(f.ctx, f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = u.Rollback(f.ctx) }()
+	if _, err := store.GetBudgetForUpdate(f.ctx, u, f.tenant, s.Budget.ID); err != nil {
+		t.Fatal(err)
+	}
+	var gatePID int
+	if err := u.QueryRow(f.ctx, `select pg_backend_pid()`).Scan(&gatePID); err != nil {
+		t.Fatal(err)
+	}
+	waitBlockedBy := func(blocker int) int {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+		defer cancel()
+		for {
+			var pid int
+			if err := f.pool.QueryRow(ctx, `select coalesce((select pid from pg_stat_activity where datname=current_database() and $1=any(pg_blocking_pids(pid)) limit 1),0)`, blocker).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			if pid != 0 {
+				return pid
+			}
+			select {
+			case <-time.After(10 * time.Millisecond):
+			case <-ctx.Done():
+				t.Fatal("command did not reach the expected database lock")
+			}
+		}
+	}
+	// Cancellation holds Attempt/Task while waiting to release the budget.
+	// The assertion can read the old committed snapshot, but must then wait
+	// for cancellation's Attempt lock before it can authorize anything.
+	cancelDone, assertDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := application.Cancel(f.ctx, f.pool, f.cancelCommand("cancel-before-assert", s.Task.ID, s.Task.Version))
+		cancelDone <- err
+	}()
+	cancelPID := waitBlockedBy(gatePID)
+	cmd := f.assertCommand("assert-after-cancel", s, assertion)
+	go func() {
+		_, err := application.Assert(f.ctx, f.pool, cmd)
+		assertDone <- err
+	}()
+	waitBlockedBy(cancelPID)
+	if err := u.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-cancelDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-assertDone; !errors.Is(err, application.ErrInvalidCommand) {
+		t.Fatalf("assertion after cancellation=%v, want refusal", err)
+	}
+	after := f.reload(t, s.Nonce)
+	if after.Task.State != lifecycle.TaskCancelled || after.Attempt.State != lifecycle.AttemptTerminated || after.Reservation.State != lifecycle.ReservationReleased || after.Budget.Reserved != 0 || after.Challenge.State != lifecycle.SpendPending || after.Operation != s.Operation || after.Receipt != nil || after.Dispatch != nil {
+		t.Fatalf("assertion changed cancelled scheduling: %+v", after)
+	}
+	if f.count(t, "spend_receipt", "true") != 0 || f.count(t, "command_record", "command='assert_spend'") != 0 || f.count(t, "outbox", "true") != 0 {
+		t.Fatal("cancelled assertion persisted proof or dispatch")
+	}
+	rt := f.runtime(t, s.Operation.ID)
+	f.tick(t, rt)
+	if rt.Ledger().Effects(s.Operation.ID) != 0 || rt.Ledger().Deliveries(s.Operation.ID) != 0 {
+		t.Fatal("cancelled assertion reached the runtime")
+	}
+}
 
 func TestSecuritySpendConcurrentProofHasOneWinningCommand(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)

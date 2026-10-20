@@ -121,25 +121,37 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 		return nil, refusal(lifecycle.RejectRequestExpired)
 	}
 
+	// Cancellation may have committed while this command waited for scope.
+	// Reload scheduling under the lock rather than authorizing its old view.
+	submission, err = spendScheduling(ctx, u.uow, cmd)
+	if err != nil {
+		return nil, err
+	}
+	if submission.Task.State != lifecycle.TaskQueued || submission.Attempt.State != lifecycle.AttemptAllocated || submission.Operation.State != lifecycle.OperationRecorded {
+		return nil, fmt.Errorf("%w: the submission is no longer schedulable", ErrInvalidCommand)
+	}
+	if submission.Reservation.State != lifecycle.ReservationHeld {
+		return nil, fmt.Errorf("%w: the submission's reservation is no longer held for this amount", ErrInvalidCommand)
+	}
+
 	// Assertion time remains evidence, never the authorization clock.
 	u.lastAt = cmd.Assertion.AssertedAt
 	if _, _, _, err := store.AssertSpendChallenge(ctx, u.uow, tenant, submission.Challenge.ID, cmd.Assertion, cmd.ExpectedVersion, tr); err != nil {
 		return nil, err
 	}
-
-	// Receipt and reservation are both required before enqueue.
-	if submission.Reservation.State != lifecycle.ReservationHeld || submission.Reservation.Amount != cmd.Assertion.Terms.Amount {
+	// Keep proof mismatch validation ahead of the reservation amount check.
+	// Any failure rolls the provisional receipt back with this transaction.
+	if submission.Reservation.Amount != cmd.Assertion.Terms.Amount {
 		return nil, fmt.Errorf("%w: the submission's reservation is no longer held for this amount", ErrInvalidCommand)
 	}
+
 	// Only a recorded operation can create dispatch work. Exact command
 	// replay bypasses this callback and cannot enqueue another row.
-	if submission.Operation.State == lifecycle.OperationRecorded {
-		if err := enqueue(ctx, u, tenant, dispatchSpec{
-			operation: submission.Operation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
-			deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
-		}); err != nil {
-			return nil, err
-		}
+	if err := enqueue(ctx, u, tenant, dispatchSpec{
+		operation: submission.Operation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
+		deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
+	}); err != nil {
+		return nil, err
 	}
 	return json.Marshal(assertion{Submission: cmd.SubmissionNonce, Spend: submission.Challenge.ID.String()})
 }
