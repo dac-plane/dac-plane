@@ -470,6 +470,10 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 	if err != nil || sourceAttempt.State != lifecycle.AttemptFailed {
 		t.Fatalf("source attempt=%s err=%v; want failed rather than stranded migrating", sourceAttempt.State, err)
 	}
+	latest, err := store.GetAttemptByTask(f.ctx, f.pool, f.tenant, submission.Task.ID)
+	if err != nil || latest.ID != sourceAttempt.ID {
+		t.Fatalf("latest attempt=%s err=%v; want source %s and no orphan target", latest.ID, err, sourceAttempt.ID)
+	}
 }
 
 func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {

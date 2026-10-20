@@ -535,9 +535,6 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if err != nil {
 		return err
 	}
-	if _, _, err := store.InsertAttempt(ctx, u, target); err != nil {
-		return err
-	}
 	reservationID, err := ids.Parse[ids.Reservation](source.ID.String())
 	if err != nil {
 		return err
@@ -552,6 +549,9 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	}
 	if reservation.State != lifecycle.ReservationHeld || reservation.Amount <= reservation.Consumed || budget.Consumed+budget.Reserved > budget.Ceiling {
 		return errMigrationBudgetExhausted
+	}
+	if _, _, err := store.InsertAttempt(ctx, u, target); err != nil {
+		return err
 	}
 	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	tr, err := stepTransition(budget.Version, now.UTC())
