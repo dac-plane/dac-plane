@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"time"
 
@@ -176,6 +177,117 @@ type MigrationPass struct {
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
 }
+
+// MigrationItemState is the durable per-Attempt outcome of a tenant-wide
+// harness migration. A pass may complete only after every item completed;
+// failed and unresolved items deliberately keep the pass non-successful.
+type MigrationItemState string
+
+const (
+	MigrationItemQueued     MigrationItemState = "queued"
+	MigrationItemQuiescing  MigrationItemState = "quiescing"
+	MigrationItemStarting   MigrationItemState = "starting"
+	MigrationItemCutover    MigrationItemState = "cutover"
+	MigrationItemCleaningUp MigrationItemState = "cleaning_up"
+	MigrationItemAborting   MigrationItemState = "aborting"
+	MigrationItemCompleted  MigrationItemState = "completed"
+	MigrationItemFailed     MigrationItemState = "failed"
+	MigrationItemUnresolved MigrationItemState = "unresolved"
+)
+
+// MigrationItemStates lists every durable migration item state.
+func MigrationItemStates() []MigrationItemState {
+	return []MigrationItemState{
+		MigrationItemQueued, MigrationItemQuiescing, MigrationItemStarting,
+		MigrationItemCutover, MigrationItemCleaningUp, MigrationItemAborting, MigrationItemCompleted,
+		MigrationItemFailed, MigrationItemUnresolved,
+	}
+}
+
+// MigrationItem is one source Attempt captured when a tenant-wide pass
+// starts. TargetAttempt is allocated only after source quiescence and means
+// restart-from-artifacts; it never reuses a native source session.
+type MigrationItem struct {
+	Tenant                 ids.TenantID       `json:"tenant_id"`
+	Migration              ids.MigrationID    `json:"migration_id"`
+	SourceAttempt          ids.AttemptID      `json:"source_attempt_id"`
+	TargetAttempt          ids.AttemptID      `json:"target_attempt_id,omitzero"`
+	QuiesceOperation       ids.OperationID    `json:"quiesce_operation_id,omitzero"`
+	EnvironmentOperation   ids.OperationID    `json:"environment_operation_id,omitzero"`
+	RestartOperation       ids.OperationID    `json:"restart_operation_id,omitzero"`
+	CleanupOperation       ids.OperationID    `json:"cleanup_operation_id,omitzero"`
+	TargetCleanupOperation ids.OperationID    `json:"target_cleanup_operation_id,omitzero"`
+	ContextRefs            []string           `json:"context_refs,omitempty"`
+	EnvironmentRef         string             `json:"environment_ref,omitempty"`
+	Reason                 string             `json:"reason,omitempty"`
+	State                  MigrationItemState `json:"state"`
+	ClaimEpoch             uint64             `json:"claim_epoch"`
+	QuiesceEpoch           uint64             `json:"quiesce_epoch,omitzero"`
+	EnvironmentEpoch       uint64             `json:"environment_epoch,omitzero"`
+	RestartEpoch           uint64             `json:"restart_epoch,omitzero"`
+	CleanupEpoch           uint64             `json:"cleanup_epoch,omitzero"`
+	TargetCleanupEpoch     uint64             `json:"target_cleanup_epoch,omitzero"`
+	UpdatedAt              time.Time          `json:"updated_at"`
+}
+
+// Validate reports whether an item can be used as durable migration evidence.
+func (i MigrationItem) Validate() error {
+	if i.Tenant.IsZero() || i.Migration.IsZero() || i.SourceAttempt.IsZero() || i.ClaimEpoch == 0 || i.UpdatedAt.IsZero() {
+		return fmt.Errorf("%w: migration item requires tenant, pass, source, fence and time", ErrInvalid)
+	}
+	if !slices.Contains(MigrationItemStates(), i.State) {
+		return fmt.Errorf("%w: unknown migration item state", ErrInvalid)
+	}
+	if i.State != MigrationItemQueued && i.State != MigrationItemUnresolved && i.QuiesceOperation.IsZero() {
+		return fmt.Errorf("%w: active migration item requires a quiesce operation", ErrInvalid)
+	}
+	if (i.State == MigrationItemUnresolved) != (i.Reason != "") || len(i.Reason) > 128 {
+		return fmt.Errorf("%w: unresolved migration item requires a bounded reason", ErrInvalid)
+	}
+	for _, stage := range []struct {
+		operation ids.OperationID
+		epoch     uint64
+	}{{i.QuiesceOperation, i.QuiesceEpoch}, {i.EnvironmentOperation, i.EnvironmentEpoch}, {i.RestartOperation, i.RestartEpoch}, {i.CleanupOperation, i.CleanupEpoch}, {i.TargetCleanupOperation, i.TargetCleanupEpoch}} {
+		if stage.epoch > i.ClaimEpoch || stage.operation.IsZero() && stage.epoch != 0 {
+			return fmt.Errorf("%w: migration stage fence is invalid", ErrInvalid)
+		}
+	}
+	if i.TargetAttempt.IsZero() && (i.State == MigrationItemStarting || i.State == MigrationItemCutover || i.State == MigrationItemCleaningUp || i.State == MigrationItemCompleted) {
+		return fmt.Errorf("%w: cut over migration item requires a target attempt", ErrInvalid)
+	}
+	if !i.TargetAttempt.IsZero() && i.RestartOperation.IsZero() {
+		return fmt.Errorf("%w: target migration item requires a restart operation", ErrInvalid)
+	}
+	if !i.TargetAttempt.IsZero() && i.EnvironmentOperation.IsZero() {
+		return fmt.Errorf("%w: target migration requires an environment operation", ErrInvalid)
+	}
+	if !i.TargetAttempt.IsZero() && i.TargetCleanupOperation.IsZero() {
+		return fmt.Errorf("%w: target migration requires a target cleanup operation", ErrInvalid)
+	}
+	if i.EnvironmentRef != "" && !migrationContextReference.MatchString(i.EnvironmentRef) {
+		return fmt.Errorf("%w: migration environment reference is invalid", ErrInvalid)
+	}
+	if (i.State == MigrationItemCleaningUp || i.State == MigrationItemAborting || i.State == MigrationItemCompleted) && i.CleanupOperation.IsZero() {
+		return fmt.Errorf("%w: cleanup migration item requires a cleanup operation", ErrInvalid)
+	}
+	if i.State == MigrationItemCompleted && (i.QuiesceEpoch == 0 || i.EnvironmentEpoch == 0 || i.RestartEpoch == 0 || i.CleanupEpoch == 0) {
+		return fmt.Errorf("%w: completed migration requires stage fences", ErrInvalid)
+	}
+	if !i.TargetAttempt.IsZero() && i.TargetAttempt == i.SourceAttempt {
+		return fmt.Errorf("%w: migration target must be a new attempt", ErrInvalid)
+	}
+	if len(i.ContextRefs) > 32 {
+		return fmt.Errorf("%w: migration has too many context references", ErrInvalid)
+	}
+	for _, ref := range i.ContextRefs {
+		if !migrationContextReference.MatchString(ref) {
+			return fmt.Errorf("%w: migration context reference is invalid", ErrInvalid)
+		}
+	}
+	return nil
+}
+
+var migrationContextReference = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
 
 // NewMigrationPass returns a planned pass at version 1.
 func NewMigrationPass(id ids.MigrationID, tenant ids.TenantID, from, to ids.ProviderID, at time.Time) (MigrationPass, error) {

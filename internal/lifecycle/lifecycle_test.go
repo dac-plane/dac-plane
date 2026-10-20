@@ -125,6 +125,18 @@ func TestTaskApplyRejectsStaleVersionWithoutChange(t *testing.T) {
 	}
 }
 
+func TestMigratingAttemptCanFailWhenItsSuccessorCannotBeBudgeted(t *testing.T) {
+	attempt := newAttempt(t)
+	attempt = driveAttempt(t, attempt, AttemptProvision, AttemptStart, AttemptRuntimeStarted, AttemptMigrate)
+	if attempt.State != AttemptMigrating {
+		t.Fatalf("attempt state = %s, want migrating", attempt.State)
+	}
+	attempt = driveAttempt(t, attempt, AttemptFail)
+	if attempt.State != AttemptFailed {
+		t.Fatalf("attempt state = %s, want failed", attempt.State)
+	}
+}
+
 func TestLateResultOnCancellingTaskIsRejected(t *testing.T) {
 	task := driveTask(t, newTask(t), TaskSubmit, TaskState(""), TaskDispatch, TaskState(""), TaskCancel, TaskState(""))
 	_, _, err := task.Apply(TaskProposeResult, task.Version, "", testNow)

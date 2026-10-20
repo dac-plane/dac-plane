@@ -14,26 +14,27 @@ import (
 const schemaDir = "../../contracts/jsonschema/lifecycle"
 
 var (
-	taskContract      = schematest.GoContract[Task](filepath.Join(schemaDir, "task.schema.json"))
-	attemptContract   = schematest.GoContract[Attempt](filepath.Join(schemaDir, "attempt.schema.json"))
-	attentionContract = schematest.GoContract[AttentionRequest](filepath.Join(schemaDir, "attention-request.schema.json"))
-	decisionContract  = schematest.GoContract[Decision](filepath.Join(schemaDir, "decision.schema.json"))
-	auditContract     = schematest.GoContract[AuditEvent](filepath.Join(schemaDir, "audit-event.schema.json"))
-	bindingContract   = schematest.GoContract[Binding](filepath.Join(schemaDir, "binding.schema.json"))
-	operationContract = schematest.GoContract[ProviderOperation](filepath.Join(schemaDir, "provider-operation.schema.json"))
-	turnEndContract   = schematest.GoContract[TurnEnd](filepath.Join(schemaDir, "turn-end.schema.json"))
-	observeContract   = schematest.GoContract[EnvironmentObservation](filepath.Join(schemaDir, "environment-observation.schema.json"))
-	harnessContract   = schematest.GoContract[HarnessQualification](filepath.Join(schemaDir, "harness-qualification.schema.json"))
-	migrationContract = schematest.GoContract[MigrationPass](filepath.Join(schemaDir, "migration-pass.schema.json"))
-	claimContract     = schematest.GoContract[MaintenanceClaim](filepath.Join(schemaDir, "maintenance-claim.schema.json"))
-	budgetContract    = schematest.GoContract[Budget](filepath.Join(schemaDir, "budget.schema.json"))
-	reserveContract   = schematest.GoContract[Reservation](filepath.Join(schemaDir, "reservation.schema.json"))
-	spendContract     = schematest.GoContract[SpendChallenge](filepath.Join(schemaDir, "spend-challenge.schema.json"))
-	receiptContract   = schematest.GoContract[SpendReceipt](filepath.Join(schemaDir, "spend-receipt.schema.json"))
-	manifestContract  = schematest.GoContract[ArtifactManifest](filepath.Join(schemaDir, "artifact-manifest.schema.json"))
-	artifactContract  = schematest.GoContract[Artifact](filepath.Join(schemaDir, "artifact.schema.json"))
-	revisionContract  = schematest.GoContract[ResultRevision](filepath.Join(schemaDir, "result-revision.schema.json"))
-	reviewContract    = schematest.GoContract[ResultReview](filepath.Join(schemaDir, "result-review.schema.json"))
+	taskContract          = schematest.GoContract[Task](filepath.Join(schemaDir, "task.schema.json"))
+	attemptContract       = schematest.GoContract[Attempt](filepath.Join(schemaDir, "attempt.schema.json"))
+	attentionContract     = schematest.GoContract[AttentionRequest](filepath.Join(schemaDir, "attention-request.schema.json"))
+	decisionContract      = schematest.GoContract[Decision](filepath.Join(schemaDir, "decision.schema.json"))
+	auditContract         = schematest.GoContract[AuditEvent](filepath.Join(schemaDir, "audit-event.schema.json"))
+	bindingContract       = schematest.GoContract[Binding](filepath.Join(schemaDir, "binding.schema.json"))
+	operationContract     = schematest.GoContract[ProviderOperation](filepath.Join(schemaDir, "provider-operation.schema.json"))
+	turnEndContract       = schematest.GoContract[TurnEnd](filepath.Join(schemaDir, "turn-end.schema.json"))
+	observeContract       = schematest.GoContract[EnvironmentObservation](filepath.Join(schemaDir, "environment-observation.schema.json"))
+	harnessContract       = schematest.GoContract[HarnessQualification](filepath.Join(schemaDir, "harness-qualification.schema.json"))
+	migrationContract     = schematest.GoContract[MigrationPass](filepath.Join(schemaDir, "migration-pass.schema.json"))
+	migrationItemContract = schematest.GoContract[MigrationItem](filepath.Join(schemaDir, "migration-item.schema.json"))
+	claimContract         = schematest.GoContract[MaintenanceClaim](filepath.Join(schemaDir, "maintenance-claim.schema.json"))
+	budgetContract        = schematest.GoContract[Budget](filepath.Join(schemaDir, "budget.schema.json"))
+	reserveContract       = schematest.GoContract[Reservation](filepath.Join(schemaDir, "reservation.schema.json"))
+	spendContract         = schematest.GoContract[SpendChallenge](filepath.Join(schemaDir, "spend-challenge.schema.json"))
+	receiptContract       = schematest.GoContract[SpendReceipt](filepath.Join(schemaDir, "spend-receipt.schema.json"))
+	manifestContract      = schematest.GoContract[ArtifactManifest](filepath.Join(schemaDir, "artifact-manifest.schema.json"))
+	artifactContract      = schematest.GoContract[Artifact](filepath.Join(schemaDir, "artifact.schema.json"))
+	revisionContract      = schematest.GoContract[ResultRevision](filepath.Join(schemaDir, "result-revision.schema.json"))
+	reviewContract        = schematest.GoContract[ResultReview](filepath.Join(schemaDir, "result-review.schema.json"))
 )
 
 type record struct {
@@ -101,8 +102,17 @@ func validRecords(t *testing.T) map[string]record {
 	if err != nil {
 		t.Fatalf("NewResultRevision() error = %v", err)
 	}
+	abortingMigrationItem := MigrationItem{
+		Tenant: task.Tenant, Migration: newMigration(t).ID, SourceAttempt: attempt.ID,
+		TargetAttempt: newID[ids.Attempt](t), QuiesceOperation: newID[ids.Operation](t),
+		EnvironmentOperation: newID[ids.Operation](t), RestartOperation: newID[ids.Operation](t),
+		CleanupOperation: newID[ids.Operation](t), TargetCleanupOperation: newID[ids.Operation](t),
+		State: MigrationItemAborting, ClaimEpoch: 1, UpdatedAt: testNow,
+	}
 
 	return map[string]record{
+		"migration item":      {migrationItemContract, schematest.Marshal(t, MigrationItem{Tenant: task.Tenant, Migration: newMigration(t).ID, SourceAttempt: attempt.ID, State: MigrationItemQueued, ClaimEpoch: 1, UpdatedAt: testNow})},
+		"aborting item":       {migrationItemContract, schematest.Marshal(t, abortingMigrationItem)},
 		"manifest":            {manifestContract, schematest.Marshal(t, manifest)},
 		"artifact":            {artifactContract, schematest.Marshal(t, artifact)},
 		"first revision":      {revisionContract, schematest.Marshal(t, firstRevision)},
@@ -304,6 +314,7 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 		{"harness-qualification.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(HarnessEvents())},
 		{"migration-pass.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(MigrationStates())},
 		{"migration-pass.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(MigrationEvents())},
+		{"migration-item.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(MigrationItemStates())},
 		{"maintenance-claim.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(ClaimStates())},
 		{"budget.schema.json", []string{"$defs", "state", "enum"}, []string{string(BudgetOpen), string(BudgetExhausted)}},
 		{"reservation.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(ReservationStates())},

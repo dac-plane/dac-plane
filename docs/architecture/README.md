@@ -128,6 +128,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 - [ADR-0002: start with a modular-monolith control plane](../adr/0002-initial-application-boundary.md)
 - [ADR-0003: adopt provider-neutral execution contract semantics](../adr/0003-provider-contract-semantics.md)
 - [ADR-0004: restricted migration administration and transfer evidence](../adr/0004-restricted-migration-administration.md)
+- [ADR-0005: fenced harness migration restarts work with explicit evidence](../adr/0005-fenced-harness-migration.md)
 - [ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)
@@ -139,6 +140,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 - [Artifact admission, immutable results and review/rework (#26)](artifact-results-26.md)
 - [Recovery, replay, fencing and restart evidence (#27)](recovery-27.md)
 - [Security and lifecycle acceptance (#28)](security-28.md)
+- [Fenced harness migration execution (#60)](harness-migration-60.md)
 
 ## Change triggers
 

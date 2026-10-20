@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
@@ -40,6 +41,8 @@ func validRuntimeEffect(kind EffectKind) bool {
 // RuntimeScenario is the script a Runtime follows: one step per operation.
 type RuntimeScenario struct {
 	Operations map[ids.OperationID]RuntimeOp
+	// MigrationReceipts enables the simulator's explicit fenced stage protocol.
+	MigrationReceipts bool
 	// Decisions script distinct native steers on an existing runtime operation.
 	Decisions map[ids.DecisionID]RuntimeOp
 }
@@ -143,6 +146,31 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	}
 	r.ledger.recordRequest(request)
 	step, ok := r.scenario.Operations[request.Operation]
+	if r.scenario.MigrationReceipts {
+		var migration contracts.MigrationRequest
+		if json.Unmarshal(request.Arguments, &migration) == nil && migration.Validate() == nil && migration.Operation == request.Operation {
+			var effect EffectKind
+			switch migration.Stage {
+			case contracts.MigrationSourceQuiesced:
+				effect = TurnInterrupted
+			case contracts.MigrationTargetStarted:
+				effect = TurnStarted
+			default:
+				return contracts.Reply{}, fmt.Errorf("%w: runtime cannot perform migration stage %s", ErrInvalidScenario, migration.Stage)
+			}
+			receipt := contracts.MigrationReceipt{Migration: migration.Migration, Operation: migration.Operation, SourceAttempt: migration.SourceAttempt, TargetAttempt: migration.TargetAttempt, Stage: migration.Stage, ClaimEpoch: migration.ClaimEpoch, Recovery: migration.Recovery, ContextRefs: migration.ContextRefs, EnvironmentRef: migration.EnvironmentRef, RecordedAt: time.Now().UTC()}
+			if migration.Stage == contracts.MigrationSourceQuiesced {
+				receipt.ContextRefs = []string{"checkpoint:" + migration.SourceAttempt.String()}
+			} else if migration.Stage == contracts.MigrationTargetStarted {
+				receipt.SessionRef = "session:" + migration.TargetAttempt.String()
+			}
+			result, err := json.Marshal(receipt)
+			if err != nil {
+				return contracts.Reply{}, err
+			}
+			step, ok = RuntimeOp{Reply: Accepted(result), Effect: effect}, true
+		}
+	}
 	key := runtimeWork{operation: request.Operation}
 	if request.Method == contracts.MethodSteerTurn {
 		var body struct {

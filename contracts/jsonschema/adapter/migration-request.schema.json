@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["migration_id", "operation_id", "source_attempt_id", "stage", "claim_epoch"],
+  "properties": {
+    "migration_id": { "type": "string", "format": "uuid" },
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "source_attempt_id": { "type": "string", "format": "uuid" },
+    "target_attempt_id": { "type": "string", "format": "uuid" },
+    "stage": { "enum": ["source_quiesced", "target_environment_ready", "target_started", "source_cleaned", "target_environment_cleaned"] },
+    "claim_epoch": { "type": "integer", "minimum": 1 },
+    "recovery": { "const": "restart_from_artifacts" },
+    "context_refs": { "type": "array", "maxItems": 32, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" } },
+    "environment_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" }
+  },
+  "allOf": [
+    { "if": { "properties": { "stage": { "const": "target_started" } }, "required": ["stage"] }, "then": { "required": ["target_attempt_id", "recovery", "environment_ref"] } },
+    { "if": { "properties": { "stage": { "const": "target_environment_ready" } }, "required": ["stage"] }, "then": { "required": ["target_attempt_id", "recovery"] } },
+    { "if": { "properties": { "stage": { "const": "source_cleaned" } }, "required": ["stage"] }, "then": { "required": ["environment_ref"] } },
+    { "if": { "properties": { "stage": { "const": "target_environment_cleaned" } }, "required": ["stage"] }, "then": { "required": ["target_attempt_id", "environment_ref"] } }
+  ]
+}

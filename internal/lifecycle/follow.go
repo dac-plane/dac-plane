@@ -36,7 +36,7 @@ func AttemptFollowsOperation(operation OperationState, attempt AttemptState) (At
 // terminal Attempt ends its work, so follow rules and the budget release
 // (#15: unused reservation released exactly once at terminal completion)
 // need them without reaching into the machine.
-var attemptTerminalStates = []AttemptState{AttemptCompleted, AttemptFailed, AttemptTerminated}
+var attemptTerminalStates = []AttemptState{AttemptCompleted, AttemptFailed, AttemptTerminated, AttemptMigrated}
 
 // AttemptTerminalStates lists the Attempt machine's terminal states.
 func AttemptTerminalStates() []AttemptState {

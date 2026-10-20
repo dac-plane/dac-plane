@@ -178,6 +178,9 @@ func AdministerMigration(ctx context.Context, pool *pgxpool.Pool, cmd MigrationA
 		if err != nil {
 			return nil, err
 		}
+		if cmd.Event == lifecycle.MigrationCancel && pass.State == lifecycle.MigrationExecuting {
+			return nil, fmt.Errorf("%w: an executing migration cannot be cancelled after provider effects may have started", ErrInvalidCommand)
+		}
 		preview, err := store.GetMigrationPreview(ctx, u.uow, tenant, pass.ID)
 		if err != nil {
 			return nil, err
@@ -216,6 +219,19 @@ func AdministerMigration(ctx context.Context, pool *pgxpool.Pool, cmd MigrationA
 		}
 		if err := store.SetMigrationPreview(ctx, u.uow, tenant, pass.ID, preview); err != nil {
 			return nil, err
+		}
+		if cmd.Event == lifecycle.MigrationExecute {
+			claim, err := store.GetClaimForUpdate(ctx, u.uow, tenant, slot.Claim)
+			if err != nil {
+				return nil, err
+			}
+			epoch := claim.Epoch
+			if epoch == 0 {
+				epoch = 1
+			}
+			if _, err := store.SnapshotMigrationItems(ctx, u.uow, pass, epoch, u.at); err != nil {
+				return nil, err
+			}
 		}
 		if cmd.Event == lifecycle.MigrationCancel {
 			slot.Active = ids.MigrationID{}
