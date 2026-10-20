@@ -10,6 +10,7 @@ tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
 recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
+security_tests := "Security|EventForged|EventBindingOfAnother|GovernedAction|Cancel|EnvironmentStop|RuntimeStop|Artifact|Review|PersistenceTenantIsolation|PersistenceClaimFencing|Migration|Budget|Spend|Authority|Resource"
 
 # Some macOS Command Line Tools SDKs break the cgo linker used by the
 # integration tests; pointing SDKROOT at the active Xcode SDK avoids it.
@@ -84,6 +85,15 @@ test-recovery:
 [group('test')]
 test-recovery-race:
     {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/simulator/ -run '{{ recovery_tests }}'
+
+# Security/lifecycle acceptance; CI already runs these containing packages.
+[group('test')]
+test-security:
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/platform/migrations/ ./internal/simulator/ -run '{{ security_tests }}'
+
+[group('test')]
+test-security-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/platform/migrations/ ./internal/simulator/ -run '{{ security_tests }}'
 
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]
