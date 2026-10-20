@@ -53,7 +53,7 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 	if err := u.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
 		return lifecycle.MigrationItem{}, err
 	}
-	_, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
+	pass, items, err := store.SnapshotMigrationClaim(ctx, u, tenant, claim, w.owner, now.UTC())
 	if err != nil {
 		return lifecycle.MigrationItem{}, err
 	}
@@ -76,6 +76,20 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 	}
 	operation, err := ids.New[ids.Operation]()
 	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	providerOperation, err := lifecycle.NewProviderOperation(operation, tenant, current.SourceAttempt, pass.From, now.UTC())
+	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	if _, _, err := store.InsertOperation(ctx, u, providerOperation); err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	auditID, err := ids.New[ids.Audit]()
+	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	if _, _, err := store.ApplyOperation(ctx, u, tenant, operation, lifecycle.OperationDispatch, lifecycle.OperationDispatched, store.Transition{ExpectedVersion: providerOperation.Version, At: now.UTC(), Actor: SystemActor(), AuditID: auditID}); err != nil {
 		return lifecycle.MigrationItem{}, err
 	}
 	current.QuiesceOperation, current.State, current.UpdatedAt = operation, lifecycle.MigrationItemQuiescing, now.UTC()
