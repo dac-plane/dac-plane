@@ -100,8 +100,17 @@ Additional PR review regressions:
 - Both regressions failed before their respective fixes.
 - Race-enabled shadow reset regressions passed (23.669s), and the expanded
   decision recovery suite passed (158.568s), including the late-expiry rollback
-  and same-batch continuation test. The follow-up full-CI result is recorded
-  in PR #59.
+  and same-batch continuation test.
+- GitHub CI passed on `3dd0bc4`, including its full integration job (9m21s).
+  The corresponding local full run reported clock-sensitive artifact retry
+  failures and reached the application package's default ten-minute timeout
+  while starting PostgreSQL. It is not recorded as a local pass.
+- Two artifact fixtures now force retry timestamps explicitly into the past
+  rather than relying on database `now()` being no later than the worker's
+  host-clock poll. Both previously failing race-enabled tests passed after
+  the fixture correction: mismatch/exhaustion (11.074s) and lost commit reply
+  (6.002s). No artifact production code changed. CI reruns for this test-only
+  follow-up; the earlier successful run does not verify the later commit.
 
 The campaign adds 27 recovery test functions, retaining the existing replay,
 authority, artifact and fencing tests as complementary evidence. Local full CI
