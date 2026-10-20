@@ -395,15 +395,16 @@ func TestWorkerRestartRecovery(t *testing.T) {
 		t.Fatalf("Commit() error = %v", err)
 	}
 
-	// Restart: the tick reclaims at a bumped epoch and completes the send.
+	// A legacy processing claim has no proof that its owner stopped before
+	// sending. Restart reconciles that ambiguity instead of guessing no effect.
 	if err := w.Tick(ctx); err != nil {
 		t.Fatalf("Tick() error = %v", err)
 	}
-	if len(f.loopback.Sent()) != 1 {
-		t.Fatalf("Sent() = %d requests after restart, want the reclaimed send", len(f.loopback.Sent()))
+	if len(f.loopback.Sent()) != 0 {
+		t.Fatalf("Sent() = %d requests after restart, want reconciliation only", len(f.loopback.Sent()))
 	}
-	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationAccepted {
-		t.Fatalf("operation state = %s, want accepted", operation.State)
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationUncertain {
+		t.Fatalf("operation state = %s, want uncertain", operation.State)
 	}
 	if got := f.readyCount(t, ctx, pollAt.Add(time.Minute)); got != 0 {
 		t.Fatalf("OutboxReadyDispatch() = %d rows, want the row acked", got)
@@ -420,7 +421,8 @@ func TestWorkerExhaustionStopsDispatch(t *testing.T) {
 	w := testWorker(t, f, cfg)
 	f.loopback.ScriptSendError(opID, errTransportForTest)
 
-	// First failure burns the single attempt and reschedules with backoff.
+	// A transport failure may follow an effect. Park it immediately rather
+	// than spending the retry budget by repeating an uncertain start.
 	if err := w.Tick(ctx); err != nil {
 		t.Fatalf("Tick() error = %v", err)
 	}
@@ -428,15 +430,10 @@ func TestWorkerExhaustionStopsDispatch(t *testing.T) {
 		t.Fatalf("Sent() = %d requests, want the single attempt", len(f.loopback.Sent()))
 	}
 	ready, err := store.OutboxReadyDispatch(ctx, f.pool, f.tenant, now.Add(24*time.Hour), 10)
-	if err != nil || len(ready) != 1 || ready[0].Attempts != 1 {
-		t.Fatalf("OutboxReadyDispatch() = %v, %v, want the row with one attempt burned", ready, err)
+	if err != nil || len(ready) != 0 {
+		t.Fatalf("OutboxReadyDispatch() = %v, %v, want uncertain work removed from dispatch", ready, err)
 	}
-	// The backoff elapses without a real wait: move the row due directly.
-	if _, err := f.pool.Exec(ctx, `update outbox set next_attempt_at = now() - interval '1 second'
-		where tenant_id = $1 and outbox_id = $2`, f.tenant.String(), ready[0].ID.String()); err != nil {
-		t.Fatalf("force row due: %v", err)
-	}
-	// Second failure exhausts: inspectable, terminal, never spinning.
+	// Further ticks cannot retry the operation, even with a one-send policy.
 	if err := w.Tick(ctx); err != nil {
 		t.Fatalf("Tick() error = %v", err)
 	}

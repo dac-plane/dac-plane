@@ -226,6 +226,9 @@ func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row s
 		if _, _, err := w.moveAttention(ctx, uow, tenant, prepared.attention, lifecycle.AttentionSupersede, now); err != nil {
 			return err
 		}
+		if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, prepared.claim.Epoch); err != nil {
+			return err
+		}
 		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, reasonDecisionRejected, now); err != nil {
 			return err
 		}
@@ -233,9 +236,12 @@ func (w *Worker) resolveDecision(ctx context.Context, tenant ids.TenantID, row s
 		if _, _, err := w.moveAttention(ctx, uow, tenant, prepared.attention, lifecycle.AttentionDeliver, now); err != nil {
 			return err
 		}
-		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil {
+		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, time.Now().UTC()); err != nil {
 			return err
 		}
+	}
+	if err := store.CheckAttemptLease(ctx, uow, tenant, prepared.attention.Attempt, prepared.lease); err != nil {
+		return err
 	}
 	if err := w.releaseDecisionLease(ctx, uow, tenant, prepared, now); err != nil {
 		return err

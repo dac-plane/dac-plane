@@ -33,6 +33,7 @@ const (
 	reasonNoOperation       = "no_operation"
 	reasonDecisionRejected  = "decision_rejected"
 	reasonAttemptCancelling = "attempt_cancelling"
+	reasonSendStarted       = "send_started"
 )
 
 func (w *Worker) transition(expectedVersion uint64, at time.Time) (store.Transition, error) {
@@ -184,6 +185,13 @@ func (w *Worker) cancelRow(ctx context.Context, tenant ids.TenantID, row store.O
 // the transaction, then resolve. Every mutation presents the claim epoch;
 // losing a race releases the row instead of fighting.
 func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, body DispatchBody, now time.Time) error {
+	// Missing wiring is known before the durable send marker, not uncertainty.
+	if op, err := store.GetOperation(ctx, w.pool, tenant, body.Operation); err == nil {
+		if _, ok := w.ports[op.Provider]; !ok {
+			w.stats.SkippedNoPort.Add(1)
+			return nil
+		}
+	}
 	prepared, err := w.prepareDispatch(ctx, tenant, row, body, now)
 	if err != nil || prepared == nil {
 		return err
@@ -206,13 +214,18 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	if err := request.Validate(); err != nil {
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, false)
 	}
-	sendCtx, cancel := context.WithTimeout(ctx, w.cfg.SendTimeout)
+	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
 	defer cancel()
 	reply, err := port.Send(sendCtx, request)
 	if err != nil {
-		return w.retryPrepared(ctx, tenant, row, prepared, now, reasonTransportFailed)
+		reply = uncertainReply(request.Operation, delivery)
 	}
-	return w.resolveSend(ctx, tenant, row, prepared, delivery, reply, now)
+	return w.resolveSend(ctx, tenant, row, prepared, delivery, reply, time.Now().UTC())
+}
+
+func uncertainReply(operation ids.OperationID, delivery ids.DeliveryID) contracts.Reply {
+	return contracts.Reply{Operation: operation, Delivery: delivery, Outcome: contracts.OutcomeFailed, Durability: lifecycle.SendUnknown,
+		Failure: &contracts.Failure{Code: contracts.FailureTransportUnavailable, Message: "provider outcome requires reconciliation"}}
 }
 
 // preparedDispatch is a claimed row that passed the checklist, with the
@@ -265,7 +278,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return nil, commit()
 	}
 	ack := func(claim store.OutboxClaim) (*preparedDispatch, error) {
-		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, now); err != nil {
+		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
 			return nil, err
 		}
 		w.stats.Acks.Add(1)
@@ -302,12 +315,34 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	case lifecycle.OperationUncertain:
 		// The reconciler owns uncertain operations; the intent is recorded.
 		return ack(claim)
-	case lifecycle.OperationRecorded, lifecycle.OperationDispatched, lifecycle.OperationAccepted:
+	case lifecycle.OperationAccepted:
+		if row.Record == lifecycle.RecordOperation {
+			return ack(claim)
+		}
+	case lifecycle.OperationRecorded, lifecycle.OperationDispatched:
 		// Recorded operations promote to dispatched only at the end, once
 		// every checklist gate passed: an exhausted row must never leave
 		// behind a dispatched-never-sent operation.
 	default:
 		return exhaust(claim, reasonUnknownState)
+	}
+	if row.Record == lifecycle.RecordOperation && operation.State == lifecycle.OperationDispatched && (claim.Row.LastError != "" || row.Status == "processing") {
+		// A committed send marker survived its owner. No reply is not proof
+		// that the provider did nothing; takeover must inspect, not resend.
+		h, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
+		if err != nil {
+			return nil, err
+		}
+		if !h.Mode.Authoritative() {
+			return release(claim)
+		}
+		if err := w.abandonOperation(ctx, uow, tenant, operation.ID, false, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		return nil, commit()
 	}
 	if row.Record == lifecycle.RecordAuthorityUse && operation.State != lifecycle.OperationRecorded {
 		// A previous claim committed the send marker. Its effect is unknown
@@ -361,7 +396,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	if now.After(body.Deadline) {
 		return exhaust(claim, reasonDeadlineExceeded)
 	}
-	harness, err := store.GetHarness(ctx, uow, tenant, operation.Provider)
+	harness, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return exhaust(claim, reasonNoHarness)
@@ -409,6 +444,31 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			}
 			return nil, err
 		}
+	}
+	if row.Record == lifecycle.RecordOperation {
+		validationDelivery, err := ids.New[ids.Delivery]()
+		if err != nil {
+			return nil, err
+		}
+		if err := (contracts.Request{Operation: operation.ID, Delivery: validationDelivery, Tenant: tenant, Attempt: operation.Attempt,
+			Role: body.Role, Method: body.Method, Arguments: body.Arguments, Demand: row.Demand, Deadline: body.Deadline}).Validate(); err != nil {
+			return exhaust(claim, reasonInvalidBody)
+		}
+		// Submission already records OperationDispatched when enqueueing.
+		// This static outbox marker distinguishes an actual send attempt from
+		// earlier yielded claims without changing the public lifecycle/schema.
+		if _, err := uow.Exec(ctx, `update outbox set last_error=$3 where tenant_id=$1 and outbox_id=$2`, tenant.String(), row.ID.String(), reasonSendStarted); err != nil {
+			return nil, err
+		}
+	}
+	if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, claim.Epoch); err != nil {
+		return nil, err
+	}
+	if err := store.CheckAttemptLease(ctx, uow, tenant, operation.Attempt, lease); err != nil {
+		return nil, err
+	}
+	if !time.Now().Before(body.Deadline) {
+		return exhaust(claim, reasonDeadlineExceeded)
 	}
 	if err := commit(); err != nil {
 		return nil, err
@@ -525,14 +585,17 @@ func (w *Worker) recordShadow(ctx context.Context, uow *store.UnitOfWork, tenant
 
 // resolveSend applies a provider reply: accepted and rejected move the
 // operation terminal and ack the row; unknown parks the operation in
-// uncertain for the reconciler; pending leaves the row processing so the
-// lease lapse reclaims it.
+// uncertain for the reconciler. A pending or invalid reply also proves no
+// safe-to-repeat outcome and therefore enters uncertainty.
 func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, delivery ids.DeliveryID, reply contracts.Reply, now time.Time) error {
 	if reply.Operation != prepared.operation.ID || reply.Delivery != delivery {
-		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply, true)
+		reply = uncertainReply(prepared.operation.ID, delivery)
 	}
 	if err := reply.Validate(); err != nil {
-		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonMalformedReply, true)
+		reply = uncertainReply(prepared.operation.ID, delivery)
+	}
+	if reply.Durability == lifecycle.SendPending {
+		reply = uncertainReply(prepared.operation.ID, delivery)
 	}
 	uow, err := store.Begin(ctx, w.pool)
 	if err != nil {
@@ -550,6 +613,17 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 			return err
 		}
 		if _, _, err := store.LockResultScope(ctx, uow, tenant, prepared.operation.Attempt); err != nil {
+			return err
+		}
+		now = time.Now().UTC()
+		h, err := store.GetHarnessForUpdate(ctx, uow, tenant, prepared.operation.Provider)
+		if err != nil {
+			return err
+		}
+		if !h.Mode.Authoritative() {
+			return nil
+		}
+		if err := store.CheckAttemptLease(ctx, uow, tenant, prepared.operation.Attempt, prepared.lease); err != nil {
 			return err
 		}
 		event := reply.Durability.Event()
@@ -585,7 +659,10 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 			}
 			w.logger.Info("operation entered reconciliation", "operation", prepared.operation.ID.String())
 		}
-		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil {
+		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, time.Now().UTC()); err != nil {
+			return err
+		}
+		if err := store.CheckAttemptLease(ctx, uow, tenant, prepared.operation.Attempt, prepared.lease); err != nil {
 			return err
 		}
 		if err := w.releaseLease(ctx, uow, tenant, prepared, now); err != nil {
@@ -604,46 +681,6 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 		committed = true
 		return nil
 	}
-}
-
-// retryPrepared reschedules a claimed row with backoff, or exhausts it when
-// the budget is gone or the failure can never succeed.
-func (w *Worker) retryPrepared(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, now time.Time, code contracts.FailureCode) error {
-	retryIn, exhausted := w.cfg.Policy.Classify(row.Attempts, code)
-	uow, err := store.Begin(ctx, w.pool)
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = uow.Rollback(ctx)
-		}
-	}()
-	if exhausted {
-		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, string(code), now); err != nil {
-			return err
-		}
-		// The failed send may have reached the provider.
-		if err := w.abandonOperation(ctx, uow, tenant, prepared.operation.ID, false, now); err != nil {
-			return err
-		}
-	} else if err := store.ScheduleOutboxRetry(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now.Add(retryIn), string(code), now); err != nil {
-		return err
-	}
-	if err := w.releaseLease(ctx, uow, tenant, prepared, now); err != nil {
-		return err
-	}
-	if err := uow.Commit(ctx); err != nil {
-		return err
-	}
-	committed = true
-	if exhausted {
-		w.stats.Exhausts.Add(1)
-	} else {
-		w.stats.Retries.Add(1)
-	}
-	return nil
 }
 
 // retryClaim reschedules a row whose claim is still held (cancel path).
