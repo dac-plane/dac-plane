@@ -23,6 +23,10 @@ type migrationClaimSnapshot struct {
 	at    time.Time
 }
 
+func migrationItemMatchesClaim(current, claimed lifecycle.MigrationItem, state lifecycle.MigrationItemState) bool {
+	return !current.SourceAttempt.IsZero() && current.State == state && current.ClaimEpoch == claimed.ClaimEpoch
+}
+
 func (w *Worker) beginMigrationClaimSnapshot(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, source ids.AttemptID) (migrationClaimSnapshot, error) {
 	var snapshot migrationClaimSnapshot
 	u, err := store.Begin(ctx, w.pool)
@@ -367,7 +371,7 @@ func (w *Worker) settleSourceQuiesce(ctx context.Context, tenant ids.TenantID, c
 	}
 	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemQuiescing || current.QuiesceOperation != item.QuiesceOperation || current.ClaimEpoch != item.ClaimEpoch {
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemQuiescing) || current.QuiesceOperation != item.QuiesceOperation {
 		return store.ErrStaleVersion
 	}
 	if receipt.Migration != current.Migration || receipt.Operation != current.QuiesceOperation || receipt.SourceAttempt != current.SourceAttempt || receipt.ClaimEpoch != current.QuiesceEpoch || receipt.Stage != contracts.MigrationSourceQuiesced || len(receipt.ContextRefs) == 0 {
@@ -426,7 +430,7 @@ func (w *Worker) allocateMigrationTarget(ctx context.Context, tenant ids.TenantI
 			break
 		}
 	}
-	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemQuiescing || current.ClaimEpoch != item.ClaimEpoch {
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemQuiescing) {
 		return store.ErrStaleVersion
 	}
 	if lockedPass.ID != pass.ID || lockedPass.To != pass.To {
@@ -603,28 +607,13 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 		if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.EnvironmentOperation); err != nil {
 			return err
 		}
-		delivery, err := ids.New[ids.Delivery]()
+		receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.EnvironmentOperation, item.TargetAttempt, contracts.RoleEnvironment, contracts.MethodProvision,
+			contracts.MigrationRequest{Migration: item.Migration, Operation: item.EnvironmentOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetEnvironmentReady, ClaimEpoch: item.EnvironmentEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs}, contracts.MigrationTargetEnvironmentReady, contracts.MigrationRestartFromArtifacts)
 		if err != nil {
 			return err
 		}
-		body, err := json.Marshal(contracts.MigrationRequest{Migration: item.Migration, Operation: item.EnvironmentOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetEnvironmentReady, ClaimEpoch: item.EnvironmentEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs})
-		if err != nil {
-			return err
-		}
-		req := contracts.Request{Operation: item.EnvironmentOperation, Delivery: delivery, Tenant: tenant, Attempt: item.TargetAttempt, Role: contracts.RoleEnvironment, Method: contracts.MethodProvision, Arguments: body, Demand: contracts.DemandBackground, Deadline: time.Now().UTC().Add(w.cfg.SendTimeout)}
-		if err := req.Validate(); err != nil {
-			return err
-		}
-		reply, err := port.Send(ctx, req)
-		if err != nil {
-			return w.markMigrationUncertain(ctx, tenant, claim, item, item.EnvironmentOperation)
-		}
-		receipt, err := validateMigrationReceipt(reply, req, contracts.MigrationTargetEnvironmentReady, item.Migration, item.SourceAttempt, item.TargetAttempt, item.EnvironmentEpoch, contracts.MigrationRestartFromArtifacts)
-		if err != nil {
-			if markErr := w.markMigrationUncertain(ctx, tenant, claim, item, item.EnvironmentOperation); markErr != nil {
-				return markErr
-			}
-			return err
+		if !sent {
+			return nil
 		}
 		return w.settleMigrationEnvironment(ctx, tenant, claim, item, pass, receipt)
 	}
@@ -638,30 +627,45 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 	if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.RestartOperation); err != nil {
 		return err
 	}
+	receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.RestartOperation, item.TargetAttempt, contracts.RoleRuntime, contracts.MethodStartTurn,
+		contracts.MigrationRequest{Migration: item.Migration, Operation: item.RestartOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetStarted, ClaimEpoch: item.RestartEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs, EnvironmentRef: item.EnvironmentRef}, contracts.MigrationTargetStarted, contracts.MigrationRestartFromArtifacts)
+	if err != nil {
+		return err
+	}
+	if !sent {
+		return nil
+	}
+	return w.settleMigrationCutover(ctx, tenant, claim, item, receipt)
+}
+
+func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, port contracts.Port, operation ids.OperationID, attempt ids.AttemptID, role contracts.Role, method contracts.Method, payload contracts.MigrationRequest, stage contracts.MigrationStage, recovery contracts.MigrationRecoveryMode) (contracts.MigrationReceipt, bool, error) {
 	delivery, err := ids.New[ids.Delivery]()
 	if err != nil {
-		return err
+		return contracts.MigrationReceipt{}, false, err
 	}
-	body, err := json.Marshal(contracts.MigrationRequest{Migration: item.Migration, Operation: item.RestartOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetStarted, ClaimEpoch: item.RestartEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs, EnvironmentRef: item.EnvironmentRef})
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return contracts.MigrationReceipt{}, false, err
 	}
-	req := contracts.Request{Operation: item.RestartOperation, Delivery: delivery, Tenant: tenant, Attempt: item.TargetAttempt, Role: contracts.RoleRuntime, Method: contracts.MethodStartTurn, Arguments: body, Demand: contracts.DemandBackground, Deadline: time.Now().UTC().Add(w.cfg.SendTimeout)}
+	req := contracts.Request{Operation: operation, Delivery: delivery, Tenant: tenant, Attempt: attempt, Role: role, Method: method, Arguments: body, Demand: contracts.DemandBackground, Deadline: time.Now().UTC().Add(w.cfg.SendTimeout)}
 	if err := req.Validate(); err != nil {
-		return err
+		return contracts.MigrationReceipt{}, false, err
 	}
 	reply, err := port.Send(ctx, req)
 	if err != nil {
-		return w.markMigrationUncertain(ctx, tenant, claim, item, item.RestartOperation)
-	}
-	receipt, err := validateMigrationReceipt(reply, req, contracts.MigrationTargetStarted, item.Migration, item.SourceAttempt, item.TargetAttempt, item.RestartEpoch, contracts.MigrationRestartFromArtifacts)
-	if err != nil {
-		if markErr := w.markMigrationUncertain(ctx, tenant, claim, item, item.RestartOperation); markErr != nil {
-			return markErr
+		if markErr := w.markMigrationUncertain(ctx, tenant, claim, item, operation); markErr != nil {
+			return contracts.MigrationReceipt{}, false, markErr
 		}
-		return err
+		return contracts.MigrationReceipt{}, false, nil
 	}
-	return w.settleMigrationCutover(ctx, tenant, claim, item, receipt)
+	receipt, err := validateMigrationReceipt(reply, req, stage, item.Migration, item.SourceAttempt, item.TargetAttempt, payload.ClaimEpoch, recovery)
+	if err != nil {
+		if markErr := w.markMigrationUncertain(ctx, tenant, claim, item, operation); markErr != nil {
+			return contracts.MigrationReceipt{}, false, markErr
+		}
+		return contracts.MigrationReceipt{}, false, err
+	}
+	return receipt, true, nil
 }
 
 func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {
@@ -715,7 +719,7 @@ func (w *Worker) settleMigrationEnvironment(ctx context.Context, tenant ids.Tena
 	}
 	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemStarting || current.ClaimEpoch != item.ClaimEpoch || current.EnvironmentEpoch != receipt.ClaimEpoch {
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemStarting) || current.EnvironmentEpoch != receipt.ClaimEpoch {
 		return store.ErrStaleVersion
 	}
 	op, err := store.GetOperation(ctx, u, tenant, current.EnvironmentOperation)
@@ -776,7 +780,7 @@ func (w *Worker) settleMigrationCutover(ctx context.Context, tenant ids.TenantID
 	}
 	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemStarting || current.ClaimEpoch != item.ClaimEpoch || current.RestartEpoch != receipt.ClaimEpoch || current.EnvironmentRef != receipt.EnvironmentRef {
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemStarting) || current.RestartEpoch != receipt.ClaimEpoch || current.EnvironmentRef != receipt.EnvironmentRef {
 		return store.ErrStaleVersion
 	}
 	op, err := store.GetOperation(ctx, u, tenant, current.RestartOperation)
@@ -856,28 +860,13 @@ func (w *Worker) driveMigrationCleanup(ctx context.Context, tenant ids.TenantID,
 	if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.CleanupOperation); err != nil {
 		return err
 	}
-	delivery, err := ids.New[ids.Delivery]()
+	receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.CleanupOperation, item.SourceAttempt, contracts.RoleEnvironment, contracts.MethodStop,
+		contracts.MigrationRequest{Migration: item.Migration, Operation: item.CleanupOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationSourceCleaned, ClaimEpoch: item.CleanupEpoch, EnvironmentRef: sourceEnv.NativeRef}, contracts.MigrationSourceCleaned, "")
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(contracts.MigrationRequest{Migration: item.Migration, Operation: item.CleanupOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationSourceCleaned, ClaimEpoch: item.CleanupEpoch, EnvironmentRef: sourceEnv.NativeRef})
-	if err != nil {
-		return err
-	}
-	req := contracts.Request{Operation: item.CleanupOperation, Delivery: delivery, Tenant: tenant, Attempt: item.SourceAttempt, Role: contracts.RoleEnvironment, Method: contracts.MethodStop, Arguments: body, Demand: contracts.DemandBackground, Deadline: time.Now().UTC().Add(w.cfg.SendTimeout)}
-	if err := req.Validate(); err != nil {
-		return err
-	}
-	reply, err := port.Send(ctx, req)
-	if err != nil {
-		return w.markMigrationUncertain(ctx, tenant, claim, item, item.CleanupOperation)
-	}
-	receipt, err := validateMigrationReceipt(reply, req, contracts.MigrationSourceCleaned, item.Migration, item.SourceAttempt, item.TargetAttempt, item.CleanupEpoch, "")
-	if err != nil {
-		if markErr := w.markMigrationUncertain(ctx, tenant, claim, item, item.CleanupOperation); markErr != nil {
-			return markErr
-		}
-		return err
+	if !sent {
+		return nil
 	}
 	return w.settleMigrationCleanup(ctx, tenant, claim, item, receipt)
 }
@@ -889,7 +878,7 @@ func (w *Worker) settleMigrationCleanup(ctx context.Context, tenant ids.TenantID
 	}
 	u, pass, items, current, now := snapshot.uow, snapshot.pass, snapshot.items, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemCleaningUp || current.ClaimEpoch != item.ClaimEpoch || current.CleanupEpoch != receipt.ClaimEpoch {
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemCleaningUp) || current.CleanupEpoch != receipt.ClaimEpoch {
 		return store.ErrStaleVersion
 	}
 	op, err := store.GetOperation(ctx, u, tenant, current.CleanupOperation)
