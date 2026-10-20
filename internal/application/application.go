@@ -120,6 +120,12 @@ func (u *unit) transition(expectedVersion uint64, outbox *store.OutboxPayload) (
 // ErrPayloadMismatch. A domain refusal rolls everything back, then the
 // refusal evidence is recorded on its own, so nothing partial commits.
 func execute(ctx context.Context, pool *pgxpool.Pool, cmd Command, kind string, digest identity.Digest, at time.Time, work func(*unit) (json.RawMessage, error)) (json.RawMessage, error) {
+	return executeAuthorized(ctx, pool, cmd, kind, digest, at, nil, work)
+}
+
+// executeAuthorized supports boundaries whose current permission must also
+// authorize replay reads. The permission lock lasts through the transaction.
+func executeAuthorized(ctx context.Context, pool *pgxpool.Pool, cmd Command, kind string, digest identity.Digest, at time.Time, authorize func(*store.UnitOfWork) error, work func(*unit) (json.RawMessage, error)) (json.RawMessage, error) {
 	principal := cmd.Actor.Principal()
 	uow, err := store.Begin(ctx, pool)
 	if err != nil {
@@ -138,6 +144,11 @@ func execute(ctx context.Context, pool *pgxpool.Pool, cmd Command, kind string, 
 	case err != nil:
 		return nil, err
 	}
+	if authorize != nil {
+		if err := authorize(uow); err != nil {
+			return nil, err
+		}
+	}
 	switch inserted, err := store.InsertCommandRecord(ctx, uow, store.CommandRecord{
 		Tenant: principal.Tenant, Principal: principal.ID, Command: kind, Nonce: cmd.Nonce,
 		RequestDigest: digest, CreatedAt: at,
@@ -147,15 +158,17 @@ func execute(ctx context.Context, pool *pgxpool.Pool, cmd Command, kind string, 
 	case !inserted:
 		// The nonce is already bound: committed earlier, or by a concurrent
 		// duplicate this insert waited for. Replay it.
-		_ = uow.Rollback(ctx)
-		committed = true
-		record, err := store.GetCommandRecord(ctx, pool, principal.Tenant, principal.ID, kind, cmd.Nonce)
+		record, err := store.GetCommandRecord(ctx, uow, principal.Tenant, principal.ID, kind, cmd.Nonce)
 		if err != nil {
 			return nil, err
 		}
 		if record.RequestDigest != digest {
 			return nil, ErrPayloadMismatch
 		}
+		if err := uow.Commit(ctx); err != nil {
+			return nil, err
+		}
+		committed = true
 		return record.Result, nil
 	}
 

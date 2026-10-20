@@ -29,7 +29,6 @@ func (w *Worker) ReapClaims(ctx context.Context) error {
 }
 
 func (w *Worker) reapTenantClaims(ctx context.Context, tenant ids.TenantID) error {
-	now := time.Now().UTC()
 	claims, err := store.OpenClaims(ctx, w.pool, tenant)
 	if err != nil {
 		return err
@@ -37,6 +36,16 @@ func (w *Worker) reapTenantClaims(ctx context.Context, tenant ids.TenantID) erro
 	for _, claim := range claims {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		var now time.Time
+		if err := w.pool.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+			return err
+		}
+		if claim.State == lifecycle.ClaimScheduled {
+			if err := w.takeClaim(ctx, tenant, claim.ID, now); err != nil {
+				w.logger.Error("claim acquisition failed", "claim", claim.ID.String(), "error", err)
+			}
+			continue
 		}
 		if now.Before(claim.ExpiresAt) {
 			if claim.Claimant != w.owner || claim.ExpiresAt.Sub(now) > w.cfg.ClaimTTL/2 {
@@ -65,6 +74,16 @@ func (w *Worker) takeClaim(ctx context.Context, tenant ids.TenantID, id ids.Clai
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	ready, err := store.PrepareMaintenanceClaim(ctx, uow, tenant, id)
+	if err != nil || !ready {
+		return err
+	}
+	if _, err := store.GetClaimForUpdate(ctx, uow, tenant, id); err != nil {
+		return err
+	}
+	if err := uow.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		return err
+	}
 	auditID, err := ids.New[ids.Audit]()
 	if err != nil {
 		return err
@@ -93,6 +112,16 @@ func (w *Worker) renewClaim(ctx context.Context, tenant ids.TenantID, id ids.Cla
 			_ = uow.Rollback(ctx)
 		}
 	}()
+	ready, err := store.PrepareMaintenanceClaim(ctx, uow, tenant, id)
+	if err != nil || !ready {
+		return err
+	}
+	if _, err := store.GetClaimForUpdate(ctx, uow, tenant, id); err != nil {
+		return err
+	}
+	if err := uow.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		return err
+	}
 	auditID, err := ids.New[ids.Audit]()
 	if err != nil {
 		return err

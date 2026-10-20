@@ -17,11 +17,11 @@ func TestEmbeddedMigrationsHoldCurrentVersion(t *testing.T) {
 			names = append(names, entry.Name())
 		}
 	}
-	want := []string{"00001_product_schema.sql", "00002_dispatch.sql", "00003_command_record.sql", "00004_attention_native.sql", "00005_governed_actions.sql", "00006_artifact_results.sql"}
+	want := []string{"00001_product_schema.sql", "00002_dispatch.sql", "00003_command_record.sql", "00004_attention_native.sql", "00005_governed_actions.sql", "00006_artifact_results.sql", "00007_migration_administration.sql"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("embedded migrations = %v, want %v", names, want)
 	}
-	if CurrentVersion != 6 {
-		t.Fatalf("CurrentVersion = %d, want 6", CurrentVersion)
+	if CurrentVersion != 7 {
+		t.Fatalf("CurrentVersion = %d, want 7", CurrentVersion)
 	}
 }
