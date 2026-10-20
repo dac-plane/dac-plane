@@ -14,15 +14,16 @@ import (
 type MigrationStage string
 
 const (
-	MigrationSourceQuiesced         MigrationStage = "source_quiesced"
-	MigrationTargetEnvironmentReady MigrationStage = "target_environment_ready"
-	MigrationTargetStarted          MigrationStage = "target_started"
-	MigrationSourceCleaned          MigrationStage = "source_cleaned"
+	MigrationSourceQuiesced           MigrationStage = "source_quiesced"
+	MigrationTargetEnvironmentReady   MigrationStage = "target_environment_ready"
+	MigrationTargetStarted            MigrationStage = "target_started"
+	MigrationSourceCleaned            MigrationStage = "source_cleaned"
+	MigrationTargetEnvironmentCleaned MigrationStage = "target_environment_cleaned"
 )
 
 // MigrationStages lists every migration stage.
 func MigrationStages() []MigrationStage {
-	return []MigrationStage{MigrationSourceQuiesced, MigrationTargetEnvironmentReady, MigrationTargetStarted, MigrationSourceCleaned}
+	return []MigrationStage{MigrationSourceQuiesced, MigrationTargetEnvironmentReady, MigrationTargetStarted, MigrationSourceCleaned, MigrationTargetEnvironmentCleaned}
 }
 
 // MigrationRecoveryMode declares what continuity a target stage provides.
@@ -67,8 +68,12 @@ func (r MigrationRequest) Validate() error {
 			return fmt.Errorf("%w: target startup requires a distinct artifact restart and environment", ErrInvalid)
 		}
 	case MigrationSourceCleaned:
+		if r.TargetAttempt == r.SourceAttempt || r.Recovery != "" || !migrationContextRef.MatchString(r.EnvironmentRef) {
+			return fmt.Errorf("%w: source cleanup requires its bound environment", ErrInvalid)
+		}
+	case MigrationTargetEnvironmentCleaned:
 		if r.TargetAttempt.IsZero() || r.TargetAttempt == r.SourceAttempt || r.Recovery != "" || !migrationContextRef.MatchString(r.EnvironmentRef) {
-			return fmt.Errorf("%w: source cleanup requires its distinct target", ErrInvalid)
+			return fmt.Errorf("%w: target cleanup requires its distinct target", ErrInvalid)
 		}
 	case MigrationTargetEnvironmentReady:
 		if r.TargetAttempt.IsZero() || r.TargetAttempt == r.SourceAttempt || r.Recovery != MigrationRestartFromArtifacts || r.EnvironmentRef != "" {
@@ -103,7 +108,7 @@ func (r MigrationReceipt) Validate() error {
 	if r.RecordedAt.IsZero() {
 		return fmt.Errorf("%w: migration receipt requires its recorded time", ErrInvalid)
 	}
-	if r.Stage == MigrationTargetEnvironmentReady || r.Stage == MigrationSourceCleaned {
+	if r.Stage == MigrationTargetEnvironmentReady || r.Stage == MigrationSourceCleaned || r.Stage == MigrationTargetEnvironmentCleaned {
 		if !migrationContextRef.MatchString(r.EnvironmentRef) {
 			return fmt.Errorf("%w: migration environment reference is invalid", ErrInvalid)
 		}

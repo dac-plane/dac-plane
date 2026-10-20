@@ -128,7 +128,7 @@ func SnapshotMigrationClaim(ctx context.Context, u *UnitOfWork, tenant ids.Tenan
 
 // ListMigrationItems reads the frozen pass scope in source Attempt order.
 func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, migration ids.MigrationID) ([]lifecycle.MigrationItem, error) {
-	rows, err := q.Query(ctx, `select source_attempt_id::text,target_attempt_id::text,quiesce_operation_id::text,environment_operation_id::text,restart_operation_id::text,cleanup_operation_id::text,context_refs,environment_ref,reason,state,claim_epoch,quiesce_epoch,environment_epoch,restart_epoch,cleanup_epoch,updated_at from migration_item where tenant_id=$1 and migration_id=$2 order by source_attempt_id`, tenant.String(), migration.String())
+	rows, err := q.Query(ctx, `select source_attempt_id::text,target_attempt_id::text,quiesce_operation_id::text,environment_operation_id::text,restart_operation_id::text,cleanup_operation_id::text,target_cleanup_operation_id::text,context_refs,environment_ref,reason,state,claim_epoch,quiesce_epoch,environment_epoch,restart_epoch,cleanup_epoch,target_cleanup_epoch,updated_at from migration_item where tenant_id=$1 and migration_id=$2 order by source_attempt_id`, tenant.String(), migration.String())
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +137,12 @@ func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, mig
 	for rows.Next() {
 		var source string
 		var target *string
-		var quiesce, environment, restart, cleanup, environmentRef, reason *string
+		var quiesce, environment, restart, cleanup, targetCleanup, environmentRef, reason *string
 		var contextRefs []byte
 		var state string
-		var epoch, quiesceEpoch, environmentEpoch, restartEpoch, cleanupEpoch int64
+		var epoch, quiesceEpoch, environmentEpoch, restartEpoch, cleanupEpoch, targetCleanupEpoch int64
 		item := lifecycle.MigrationItem{Tenant: tenant, Migration: migration}
-		if err := rows.Scan(&source, &target, &quiesce, &environment, &restart, &cleanup, &contextRefs, &environmentRef, &reason, &state, &epoch, &quiesceEpoch, &environmentEpoch, &restartEpoch, &cleanupEpoch, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&source, &target, &quiesce, &environment, &restart, &cleanup, &targetCleanup, &contextRefs, &environmentRef, &reason, &state, &epoch, &quiesceEpoch, &environmentEpoch, &restartEpoch, &cleanupEpoch, &targetCleanupEpoch, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		var err error
@@ -174,6 +174,11 @@ func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, mig
 				return nil, err
 			}
 		}
+		if targetCleanup != nil {
+			if item.TargetCleanupOperation, err = parseID[ids.Operation]("migration_item.target_cleanup_operation_id", *targetCleanup); err != nil {
+				return nil, err
+			}
+		}
 		if err := json.Unmarshal(contextRefs, &item.ContextRefs); err != nil {
 			return nil, err
 		}
@@ -184,7 +189,7 @@ func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, mig
 			item.Reason = *reason
 		}
 		item.State, item.ClaimEpoch = lifecycle.MigrationItemState(state), uint64(epoch)
-		item.QuiesceEpoch, item.EnvironmentEpoch, item.RestartEpoch, item.CleanupEpoch = uint64(quiesceEpoch), uint64(environmentEpoch), uint64(restartEpoch), uint64(cleanupEpoch)
+		item.QuiesceEpoch, item.EnvironmentEpoch, item.RestartEpoch, item.CleanupEpoch, item.TargetCleanupEpoch = uint64(quiesceEpoch), uint64(environmentEpoch), uint64(restartEpoch), uint64(cleanupEpoch), uint64(targetCleanupEpoch)
 		if err := item.Validate(); err != nil {
 			return nil, err
 		}
@@ -215,5 +220,5 @@ func SetMigrationItem(ctx context.Context, u *UnitOfWork, item lifecycle.Migrati
 	if err != nil {
 		return err
 	}
-	return execVersionedUpdate(ctx, u, `update migration_item set target_attempt_id=$4,quiesce_operation_id=$5,environment_operation_id=$6,restart_operation_id=$7,cleanup_operation_id=$8,context_refs=$9,environment_ref=$10,reason=$11,state=$12,updated_at=$13,quiesce_epoch=$14,environment_epoch=$15,restart_epoch=$16,cleanup_epoch=$17 where tenant_id=$1 and migration_id=$2 and source_attempt_id=$3 and claim_epoch=$18`, item.Tenant.String(), item.Migration.String(), item.SourceAttempt.String(), textOrNil(item.TargetAttempt.String()), textOrNil(item.QuiesceOperation.String()), textOrNil(item.EnvironmentOperation.String()), textOrNil(item.RestartOperation.String()), textOrNil(item.CleanupOperation.String()), contextRefs, textOrNil(item.EnvironmentRef), textOrNil(item.Reason), string(item.State), item.UpdatedAt, int64(item.QuiesceEpoch), int64(item.EnvironmentEpoch), int64(item.RestartEpoch), int64(item.CleanupEpoch), int64(epoch))
+	return execVersionedUpdate(ctx, u, `update migration_item set target_attempt_id=$4,quiesce_operation_id=$5,environment_operation_id=$6,restart_operation_id=$7,cleanup_operation_id=$8,target_cleanup_operation_id=$9,context_refs=$10,environment_ref=$11,reason=$12,state=$13,updated_at=$14,quiesce_epoch=$15,environment_epoch=$16,restart_epoch=$17,cleanup_epoch=$18,target_cleanup_epoch=$19 where tenant_id=$1 and migration_id=$2 and source_attempt_id=$3 and claim_epoch=$20`, item.Tenant.String(), item.Migration.String(), item.SourceAttempt.String(), textOrNil(item.TargetAttempt.String()), textOrNil(item.QuiesceOperation.String()), textOrNil(item.EnvironmentOperation.String()), textOrNil(item.RestartOperation.String()), textOrNil(item.CleanupOperation.String()), textOrNil(item.TargetCleanupOperation.String()), contextRefs, textOrNil(item.EnvironmentRef), textOrNil(item.Reason), string(item.State), item.UpdatedAt, int64(item.QuiesceEpoch), int64(item.EnvironmentEpoch), int64(item.RestartEpoch), int64(item.CleanupEpoch), int64(item.TargetCleanupEpoch), int64(epoch))
 }

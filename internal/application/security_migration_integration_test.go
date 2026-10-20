@@ -450,13 +450,20 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 			return err
 		})
 	}}
-	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: quiescePort, cmd.To: targetRuntime}, worker.DefaultConfig(), "migration-exhausted",
-		worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := w.ReapClaims(f.ctx); err != nil {
-		t.Fatal(err)
+	for cycle := range 6 {
+		if cycle > 0 {
+			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: quiescePort, cmd.To: targetRuntime}, worker.DefaultConfig(), fmt.Sprintf("migration-exhausted-%d", cycle),
+			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.ReapClaims(f.ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
 	if err != nil || len(items) != 1 || items[0].State != lifecycle.MigrationItemFailed {
@@ -473,6 +480,15 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 	latest, err := store.GetAttemptByTask(f.ctx, f.pool, f.tenant, submission.Task.ID)
 	if err != nil || latest.ID != sourceAttempt.ID {
 		t.Fatalf("latest attempt=%s err=%v; want source %s and no orphan target", latest.ID, err, sourceAttempt.ID)
+	}
+	stops := 0
+	for _, request := range sourceEnvironment.Ledger().Sent() {
+		if request.Method == contracts.MethodStop {
+			stops++
+		}
+	}
+	if stops != 1 || sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 {
+		t.Fatalf("quiesced source cleanup requests=%d effects=%d; want one confirmed stop", stops, sourceEnvironment.Ledger().Effects(items[0].CleanupOperation))
 	}
 }
 
@@ -535,19 +551,68 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 		})
 	}}
 	var workerLog bytes.Buffer
-	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime}, worker.DefaultConfig(), "migration-budget-recheck",
-		worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: provision}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for pass := range 3 {
+	droppingTargetStop := &dropFirstMigrationStopReply{Port: provision}
+	droppingSourceStop := &dropFirstMigrationStopReply{Port: sourceEnvironment}
+	checkedLostCleanupReply := false
+	checkedLostSourceCleanupReply := false
+	for pass := range 10 {
 		if pass > 0 {
 			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
 				t.Fatal(err)
 			}
 		}
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime}, worker.DefaultConfig(), fmt.Sprintf("migration-budget-recheck-%d", pass),
+			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: droppingSourceStop, cmd.To: droppingTargetStop}))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := w.ReapClaims(f.ctx); err != nil {
 			t.Fatal(err)
+		}
+		if droppingTargetStop.dropped && !checkedLostCleanupReply {
+			checkedLostCleanupReply = true
+			items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
+			if err != nil || len(items) != 1 {
+				t.Fatalf("items after lost target cleanup reply=%+v err=%v", items, err)
+			}
+			pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, view.Pass.ID)
+			if err != nil || pass.State != lifecycle.MigrationExecuting {
+				t.Fatalf("pass after unconfirmed target cleanup=%s err=%v; slot must remain owned", pass.State, err)
+			}
+			slotUOW, err := store.Begin(f.ctx, f.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			slot, err := store.GetMigrationSlot(f.ctx, slotUOW, f.tenant)
+			_ = slotUOW.Rollback(f.ctx)
+			if err != nil || slot.Active != view.Pass.ID {
+				t.Fatalf("slot after unconfirmed target cleanup=%+v err=%v; want active pass", slot, err)
+			}
+			targetCleanup, err := store.GetOperation(f.ctx, f.pool, f.tenant, items[0].TargetCleanupOperation)
+			if err != nil || targetCleanup.State != lifecycle.OperationUncertain {
+				t.Fatalf("target cleanup operation=%s err=%v; want uncertain", targetCleanup.State, err)
+			}
+			if sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 0 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
+				t.Fatalf("cleanup effects before exact replay source=%d target=%d", sourceEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
+			}
+		}
+		if droppingSourceStop.dropped && !checkedLostSourceCleanupReply {
+			checkedLostSourceCleanupReply = true
+			items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
+			if err != nil || len(items) != 1 {
+				t.Fatalf("items after lost source cleanup reply=%+v err=%v", items, err)
+			}
+			pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, view.Pass.ID)
+			if err != nil || pass.State != lifecycle.MigrationExecuting {
+				t.Fatalf("pass after unconfirmed source cleanup=%s err=%v; slot must remain owned", pass.State, err)
+			}
+			sourceCleanup, err := store.GetOperation(f.ctx, f.pool, f.tenant, items[0].CleanupOperation)
+			if err != nil || sourceCleanup.State != lifecycle.OperationUncertain {
+				t.Fatalf("source cleanup operation=%s err=%v; want uncertain", sourceCleanup.State, err)
+			}
+			if sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
+				t.Fatalf("cleanup effects before exact source replay source=%d target=%d", sourceEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
+			}
 		}
 	}
 	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
@@ -563,6 +628,23 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 		if request.Method == contracts.MethodStartTurn {
 			t.Fatal("target runtime started after its budget coverage was lost")
 		}
+	}
+	if sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
+		t.Fatalf("budget-abort cleanup effects source=%d target=%d; want one confirmed stop each", sourceEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
+	}
+	if targetEnvironment.Ledger().Deliveries(items[0].TargetCleanupOperation) != 2 {
+		t.Fatalf("target cleanup deliveries=%d; want lost-reply replay under stable operation", targetEnvironment.Ledger().Deliveries(items[0].TargetCleanupOperation))
+	}
+	if sourceEnvironment.Ledger().Deliveries(items[0].CleanupOperation) != 2 {
+		t.Fatalf("source cleanup deliveries=%d; want lost-reply replay under stable operation", sourceEnvironment.Ledger().Deliveries(items[0].CleanupOperation))
+	}
+	reservationID, err := ids.Parse[ids.Reservation](items[0].TargetAttempt.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := store.GetReservation(f.ctx, f.pool, f.tenant, reservationID)
+	if err != nil || reservation.State != lifecycle.ReservationReleased {
+		t.Fatalf("failed target reservation=%+v err=%v; want released after cleanup", reservation, err)
 	}
 }
 
@@ -892,6 +974,25 @@ func (p *blockFirstMigrationReply) Send(ctx context.Context, request contracts.R
 type dropFirstMigrationReply struct {
 	contracts.Port
 	once sync.Once
+}
+
+type dropFirstMigrationStopReply struct {
+	contracts.Port
+	once    sync.Once
+	dropped bool
+}
+
+func (p *dropFirstMigrationStopReply) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if request.Method == contracts.MethodStop && err == nil {
+		var dropped bool
+		p.once.Do(func() { dropped = true })
+		if dropped {
+			p.dropped = true
+			return contracts.Reply{}, errors.New("simulated lost cleanup reply")
+		}
+	}
+	return reply, err
 }
 
 type corruptFirstMigrationReceipt struct {

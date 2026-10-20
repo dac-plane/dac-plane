@@ -189,6 +189,7 @@ const (
 	MigrationItemStarting   MigrationItemState = "starting"
 	MigrationItemCutover    MigrationItemState = "cutover"
 	MigrationItemCleaningUp MigrationItemState = "cleaning_up"
+	MigrationItemAborting   MigrationItemState = "aborting"
 	MigrationItemCompleted  MigrationItemState = "completed"
 	MigrationItemFailed     MigrationItemState = "failed"
 	MigrationItemUnresolved MigrationItemState = "unresolved"
@@ -198,7 +199,7 @@ const (
 func MigrationItemStates() []MigrationItemState {
 	return []MigrationItemState{
 		MigrationItemQueued, MigrationItemQuiescing, MigrationItemStarting,
-		MigrationItemCutover, MigrationItemCleaningUp, MigrationItemCompleted,
+		MigrationItemCutover, MigrationItemCleaningUp, MigrationItemAborting, MigrationItemCompleted,
 		MigrationItemFailed, MigrationItemUnresolved,
 	}
 }
@@ -207,24 +208,26 @@ func MigrationItemStates() []MigrationItemState {
 // starts. TargetAttempt is allocated only after source quiescence and means
 // restart-from-artifacts; it never reuses a native source session.
 type MigrationItem struct {
-	Tenant               ids.TenantID       `json:"tenant_id"`
-	Migration            ids.MigrationID    `json:"migration_id"`
-	SourceAttempt        ids.AttemptID      `json:"source_attempt_id"`
-	TargetAttempt        ids.AttemptID      `json:"target_attempt_id,omitzero"`
-	QuiesceOperation     ids.OperationID    `json:"quiesce_operation_id,omitzero"`
-	EnvironmentOperation ids.OperationID    `json:"environment_operation_id,omitzero"`
-	RestartOperation     ids.OperationID    `json:"restart_operation_id,omitzero"`
-	CleanupOperation     ids.OperationID    `json:"cleanup_operation_id,omitzero"`
-	ContextRefs          []string           `json:"context_refs,omitempty"`
-	EnvironmentRef       string             `json:"environment_ref,omitempty"`
-	Reason               string             `json:"reason,omitempty"`
-	State                MigrationItemState `json:"state"`
-	ClaimEpoch           uint64             `json:"claim_epoch"`
-	QuiesceEpoch         uint64             `json:"quiesce_epoch,omitzero"`
-	EnvironmentEpoch     uint64             `json:"environment_epoch,omitzero"`
-	RestartEpoch         uint64             `json:"restart_epoch,omitzero"`
-	CleanupEpoch         uint64             `json:"cleanup_epoch,omitzero"`
-	UpdatedAt            time.Time          `json:"updated_at"`
+	Tenant                 ids.TenantID       `json:"tenant_id"`
+	Migration              ids.MigrationID    `json:"migration_id"`
+	SourceAttempt          ids.AttemptID      `json:"source_attempt_id"`
+	TargetAttempt          ids.AttemptID      `json:"target_attempt_id,omitzero"`
+	QuiesceOperation       ids.OperationID    `json:"quiesce_operation_id,omitzero"`
+	EnvironmentOperation   ids.OperationID    `json:"environment_operation_id,omitzero"`
+	RestartOperation       ids.OperationID    `json:"restart_operation_id,omitzero"`
+	CleanupOperation       ids.OperationID    `json:"cleanup_operation_id,omitzero"`
+	TargetCleanupOperation ids.OperationID    `json:"target_cleanup_operation_id,omitzero"`
+	ContextRefs            []string           `json:"context_refs,omitempty"`
+	EnvironmentRef         string             `json:"environment_ref,omitempty"`
+	Reason                 string             `json:"reason,omitempty"`
+	State                  MigrationItemState `json:"state"`
+	ClaimEpoch             uint64             `json:"claim_epoch"`
+	QuiesceEpoch           uint64             `json:"quiesce_epoch,omitzero"`
+	EnvironmentEpoch       uint64             `json:"environment_epoch,omitzero"`
+	RestartEpoch           uint64             `json:"restart_epoch,omitzero"`
+	CleanupEpoch           uint64             `json:"cleanup_epoch,omitzero"`
+	TargetCleanupEpoch     uint64             `json:"target_cleanup_epoch,omitzero"`
+	UpdatedAt              time.Time          `json:"updated_at"`
 }
 
 // Validate reports whether an item can be used as durable migration evidence.
@@ -244,7 +247,7 @@ func (i MigrationItem) Validate() error {
 	for _, stage := range []struct {
 		operation ids.OperationID
 		epoch     uint64
-	}{{i.QuiesceOperation, i.QuiesceEpoch}, {i.EnvironmentOperation, i.EnvironmentEpoch}, {i.RestartOperation, i.RestartEpoch}, {i.CleanupOperation, i.CleanupEpoch}} {
+	}{{i.QuiesceOperation, i.QuiesceEpoch}, {i.EnvironmentOperation, i.EnvironmentEpoch}, {i.RestartOperation, i.RestartEpoch}, {i.CleanupOperation, i.CleanupEpoch}, {i.TargetCleanupOperation, i.TargetCleanupEpoch}} {
 		if stage.epoch > i.ClaimEpoch || stage.operation.IsZero() && stage.epoch != 0 {
 			return fmt.Errorf("%w: migration stage fence is invalid", ErrInvalid)
 		}
@@ -258,10 +261,13 @@ func (i MigrationItem) Validate() error {
 	if !i.TargetAttempt.IsZero() && i.EnvironmentOperation.IsZero() {
 		return fmt.Errorf("%w: target migration requires an environment operation", ErrInvalid)
 	}
+	if !i.TargetAttempt.IsZero() && i.TargetCleanupOperation.IsZero() {
+		return fmt.Errorf("%w: target migration requires a target cleanup operation", ErrInvalid)
+	}
 	if i.EnvironmentRef != "" && !migrationContextReference.MatchString(i.EnvironmentRef) {
 		return fmt.Errorf("%w: migration environment reference is invalid", ErrInvalid)
 	}
-	if (i.State == MigrationItemCleaningUp || i.State == MigrationItemCompleted) && i.CleanupOperation.IsZero() {
+	if (i.State == MigrationItemCleaningUp || i.State == MigrationItemAborting || i.State == MigrationItemCompleted) && i.CleanupOperation.IsZero() {
 		return fmt.Errorf("%w: cleanup migration item requires a cleanup operation", ErrInvalid)
 	}
 	if i.State == MigrationItemCompleted && (i.QuiesceEpoch == 0 || i.EnvironmentEpoch == 0 || i.RestartEpoch == 0 || i.CleanupEpoch == 0) {

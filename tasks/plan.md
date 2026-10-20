@@ -21,13 +21,16 @@ Keep migration in the existing product lifecycle and PostgreSQL worker. A previe
 - [x] Add focused and race-enabled migration recipes.
 - [x] Add explicit acceptance for malformed target-stage receipts, cancellation at each in-flight stage, concurrent stale-worker settlement, ineligible sources, and empty snapshots.
 - [x] Add ADR and architecture implementation evidence note; document remaining limits.
-- [x] Run migration race tests, contract guards, full `just ci`, review the diff, and update/push PR #62.
+- [x] Fix the reviewed budget-exhaustion path: keep the migration pass/claim active while exact stop receipts are recovered for the source and any provisioned target; only then fail Attempts and close the pass.
+- [x] Run migration acceptance and race tests, contract guards, full `just ci`, review the diff, and update PR #62.
 
 ## Observed evidence so far
 
 - Unit packages passed: contracts, lifecycle, simulator, worker, PostgreSQL and migration packages.
 - `just test-migration` passed uncached after implementation; the full path uses PostgreSQL, retained simulator ledgers, fresh workers/pools and forced claim takeover between stages. It asserts each stage effect is applied once, quiesce is replayed after a lost reply, and a malformed target receipt remains uncertain until exact replay.
 - `just test-migration-race`, `just test-contracts`, `just fmt-check`, and `just ci` passed. `just ci` includes unit/race tests, full integration race suites, vulnerability scanning and workflow linting.
+- `TestMigrationRechecksBudgetBeforeStartingTarget` exercises delayed source usage after target provisioning, worker restart, and lost acknowledgements for both stop stages. It requires the pass and slot to remain active until exact stop receipts are recovered, with each external stop effect applied once and no target runtime start.
+- On the final diff, `just test-contracts`, `just fmt-check`, `git diff --check`, `just test-migration-race`, and `just ci` passed. Full CI included uncached integration race suites, vulnerability scanning (`No vulnerabilities found`), and workflow linting.
 - `TestMigrationExecutionSnapshotsTenantSourceAttempts`, `TestEmptyMigrationCompletesAndReleasesTenantSlot`, and `TestMigrationStaleWorkerCannotSettleAfterTakeover` cover execute-time scope freezing, empty/ineligible sources, and stale settlement fencing.
 - The existing migration snapshot integration test passed alongside that path.
 - The Command Line Tools SDK link fails on this host; integration tests use the active Xcode SDK through the repository's existing `sdkroot` recipe.

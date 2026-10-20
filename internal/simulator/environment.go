@@ -138,7 +138,7 @@ func (e *Environment) Send(ctx context.Context, request contracts.Request) (cont
 			switch migration.Stage {
 			case contracts.MigrationTargetEnvironmentReady:
 				effect, environmentRef = EnvironmentProvisioned, "environment:"+migration.TargetAttempt.String()
-			case contracts.MigrationSourceCleaned:
+			case contracts.MigrationSourceCleaned, contracts.MigrationTargetEnvironmentCleaned:
 				effect, environmentRef = EnvironmentStopped, migration.EnvironmentRef
 			default:
 				return contracts.Reply{}, fmt.Errorf("%w: environment cannot perform migration stage %s", ErrInvalidScenario, migration.Stage)

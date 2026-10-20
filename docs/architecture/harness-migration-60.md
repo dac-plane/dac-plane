@@ -29,6 +29,16 @@ receipt. A stale worker cannot settle after claim takeover. Replaying an exact
 stage operation relies on the provider's stable-operation idempotency contract;
 the simulator retains its effect ledger across worker and pool restarts.
 
+If budget coverage is lost after source quiescence, the item enters a durable
+`aborting` state instead of failing the pass immediately. The worker stops the
+target environment when it was provisioned, then stops the source environment.
+Each stop has its own stable operation and exact receipt. The migration remains
+executing and retains the tenant slot while either result is uncertain or an
+environment adapter is unavailable. Only after all applicable stop receipts
+are accepted does the worker fail the Attempts and pass, release the target's
+unused reservation, and free the slot. This cleanup path applies both when
+budget is lost before target allocation and after target environment setup.
+
 ## Evidence
 
 `TestMigrationExecutesQuiescePrepareCutoverAndCleanup` runs the full path with
@@ -45,6 +55,13 @@ proves an Attempt outside the executing/running boundary is durably unresolved,
 fails the pass before a provider operation is created, and does not enroll late
 work. `TestEmptyMigrationCompletesAndReleasesTenantSlot` proves a pass with no
 source work completes without retaining the tenant slot.
+`TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce` proves the
+quiesced source is stopped before a source-only budget failure releases the
+slot. `TestMigrationRechecksBudgetBeforeStartingTarget` injects delayed source
+usage after target provisioning, loses each environment-stop reply across fresh
+workers, and proves the pass and slot remain active until both exact stop
+receipts are recovered; no target runtime start occurs and its reservation is
+released only after cleanup.
 `TestExecutingMigrationCannotBeCancelledWithoutCleanupEvidence` proves an
 executing pass remains visible and retains its tenant slot when cancellation is
 refused. The end-to-end test also rejects cancellation at each in-flight stage,
@@ -53,11 +70,10 @@ and proves a stale worker cannot mutate state after a new holder settles source
 quiescence. Existing migration administration tests cover preview/hold,
 permission, revocation, replay and downgrade boundaries.
 
-`just test-migration` and `just test-migration-race` passed uncached after the
-final implementation. `just test-contracts`, `just fmt-check`, the mutation
-check (the inverted source-state gate failed the expected acceptance test), and
-`just ci` passed. CI includes unit and race tests, both complete integration
-race sweeps, vulnerability scanning and workflow linting.
+The migration acceptance tests include recovery from lost stop replies under
+stable operation identities. Verification results for this cleanup correction
+are recorded in `tasks/plan.md` and the PR checks; older baseline runs above do
+not stand in for checks on the corrected head.
 
 ## Limits
 

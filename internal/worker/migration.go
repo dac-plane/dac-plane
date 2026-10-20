@@ -137,6 +137,8 @@ func (w *Worker) driveMigrationItems(ctx context.Context, tenant ids.TenantID, c
 			return w.driveMigrationTarget(ctx, tenant, claim, item, pass)
 		case lifecycle.MigrationItemCleaningUp:
 			return w.driveMigrationCleanup(ctx, tenant, claim, item)
+		case lifecycle.MigrationItemAborting:
+			return w.driveMigrationAbortCleanup(ctx, tenant, claim, item, pass)
 		}
 	}
 	return nil
@@ -276,6 +278,33 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 		committed = true
 		return lifecycle.MigrationItem{}, store.ErrStaleVersion
 	}
+	bindings, err := store.ListAttemptBindings(ctx, u, tenant, current.SourceAttempt)
+	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	var sourceEnvironment *lifecycle.Binding
+	for i := range bindings {
+		if bindings[i].Kind == lifecycle.ResourceEnvironmentResource {
+			if sourceEnvironment != nil {
+				return lifecycle.MigrationItem{}, store.ErrPayloadMismatch
+			}
+			sourceEnvironment = &bindings[i]
+		}
+	}
+	if sourceEnvironment == nil {
+		return lifecycle.MigrationItem{}, store.ErrNotFound
+	}
+	cleanupID, err := ids.New[ids.Operation]()
+	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	cleanupOp, err := lifecycle.NewProviderOperation(cleanupID, tenant, current.SourceAttempt, sourceEnvironment.Provider, now.UTC())
+	if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
+	if _, _, err := store.InsertOperation(ctx, u, cleanupOp); err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
 	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	if _, applied, _, err := step.Attempt(ctx, current.SourceAttempt, lifecycle.AttemptMigrate, lifecycle.AttemptMigrating); err != nil || !applied {
 		if err != nil {
@@ -301,7 +330,7 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 	if _, _, err := store.ApplyOperation(ctx, u, tenant, operation, lifecycle.OperationDispatch, lifecycle.OperationDispatched, store.Transition{ExpectedVersion: providerOperation.Version, At: now.UTC(), Actor: SystemActor(), AuditID: auditID}); err != nil {
 		return lifecycle.MigrationItem{}, err
 	}
-	current.QuiesceOperation, current.State, current.UpdatedAt = operation, lifecycle.MigrationItemQuiescing, now.UTC()
+	current.QuiesceOperation, current.CleanupOperation, current.State, current.UpdatedAt = operation, cleanupOp.ID, lifecycle.MigrationItemQuiescing, now.UTC()
 	current.QuiesceEpoch = current.ClaimEpoch
 	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
 		return lifecycle.MigrationItem{}, err
@@ -436,7 +465,6 @@ func (w *Worker) settleSourceQuiesce(ctx context.Context, tenant ids.TenantID, c
 	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
 		return err
 	}
-	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	current.ContextRefs = receipt.ContextRefs
 	current.UpdatedAt = now.UTC()
 	pass, err := store.GetMigrationPass(ctx, u, tenant, current.Migration)
@@ -445,16 +473,8 @@ func (w *Worker) settleSourceQuiesce(ctx context.Context, tenant ids.TenantID, c
 	}
 	if err := w.allocateMigrationTargetTx(ctx, u, tenant, current, pass, now.UTC()); err != nil {
 		if errors.Is(err, errMigrationBudgetExhausted) {
-			current.State, current.UpdatedAt = lifecycle.MigrationItemFailed, now.UTC()
-			if _, applied, _, stepErr := step.Attempt(ctx, current.SourceAttempt, lifecycle.AttemptFail, lifecycle.AttemptFailed); stepErr != nil {
-				return stepErr
-			} else if !applied {
-				return store.ErrStaleVersion
-			}
+			current.State, current.UpdatedAt = lifecycle.MigrationItemAborting, now.UTC()
 			if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
-				return err
-			}
-			if err := finishMigrationPass(ctx, u, tenant, pass, lifecycle.MigrationFail, now.UTC()); err != nil {
 				return err
 			}
 			return u.Commit(ctx)
@@ -584,6 +604,10 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if err != nil {
 		return err
 	}
+	targetCleanupID, err := ids.New[ids.Operation]()
+	if err != nil {
+		return err
+	}
 	envOp, err := lifecycle.NewProviderOperation(envOpID, tenant, target.ID, pass.To, now.UTC())
 	if err != nil {
 		return err
@@ -592,10 +616,17 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if err != nil {
 		return err
 	}
+	targetCleanupOp, err := lifecycle.NewProviderOperation(targetCleanupID, tenant, target.ID, pass.To, now.UTC())
+	if err != nil {
+		return err
+	}
 	if _, _, err := store.InsertOperation(ctx, u, envOp); err != nil {
 		return err
 	}
 	if _, _, err := store.InsertOperation(ctx, u, runtimeOp); err != nil {
+		return err
+	}
+	if _, _, err := store.InsertOperation(ctx, u, targetCleanupOp); err != nil {
 		return err
 	}
 	sourceBindings, err := store.ListAttemptBindings(ctx, u, tenant, source.ID)
@@ -623,24 +654,13 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if sourceRuntime == nil || sourceRuntime.Provider != pass.From {
 		return store.ErrPayloadMismatch
 	}
-	cleanupID, err := ids.New[ids.Operation]()
-	if err != nil {
-		return err
-	}
-	cleanupOp, err := lifecycle.NewProviderOperation(cleanupID, tenant, source.ID, sourceEnvironment.Provider, now.UTC())
-	if err != nil {
-		return err
-	}
-	if _, _, err := store.InsertOperation(ctx, u, cleanupOp); err != nil {
-		return err
-	}
 	step = progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
 	if _, applied, _, err := step.Attempt(ctx, target.ID, lifecycle.AttemptProvision, lifecycle.AttemptProvisioning); err != nil {
 		return err
 	} else if !applied {
 		return store.ErrStaleVersion
 	}
-	current.TargetAttempt, current.EnvironmentOperation, current.RestartOperation, current.CleanupOperation = target.ID, envOp.ID, runtimeOp.ID, cleanupOp.ID
+	current.TargetAttempt, current.EnvironmentOperation, current.RestartOperation, current.TargetCleanupOperation = target.ID, envOp.ID, runtimeOp.ID, targetCleanupOp.ID
 	current.State, current.UpdatedAt = lifecycle.MigrationItemStarting, now.UTC()
 	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
 		return err
@@ -742,7 +762,7 @@ func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.Te
 	}
 	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
-	if current.SourceAttempt.IsZero() || current.ClaimEpoch != item.ClaimEpoch || (current.State != lifecycle.MigrationItemStarting && current.State != lifecycle.MigrationItemCleaningUp) {
+	if current.SourceAttempt.IsZero() || current.ClaimEpoch != item.ClaimEpoch || (current.State != lifecycle.MigrationItemStarting && current.State != lifecycle.MigrationItemCleaningUp && current.State != lifecycle.MigrationItemAborting) {
 		return store.ErrStaleVersion
 	}
 	op, err := store.GetOperation(ctx, u, tenant, operation)
@@ -767,6 +787,9 @@ func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.Te
 	}
 	if operation == current.CleanupOperation {
 		stageEpoch = &current.CleanupEpoch
+	}
+	if operation == current.TargetCleanupOperation {
+		stageEpoch = &current.TargetCleanupEpoch
 	}
 	if *stageEpoch == 0 {
 		*stageEpoch = current.ClaimEpoch
@@ -793,7 +816,7 @@ func (w *Worker) failMigrationForBudget(ctx context.Context, tenant ids.TenantID
 	if err != nil {
 		return err
 	}
-	u, current, pass, now := snapshot.uow, snapshot.item, snapshot.pass, snapshot.at
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
 	defer func() { _ = u.Rollback(ctx) }()
 	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemStarting) {
 		return store.ErrStaleVersion
@@ -818,22 +841,8 @@ func (w *Worker) failMigrationForBudget(ctx context.Context, tenant ids.TenantID
 	if available {
 		return store.ErrStaleVersion
 	}
-	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
-	if _, applied, _, err := step.Attempt(ctx, current.SourceAttempt, lifecycle.AttemptFail, lifecycle.AttemptFailed); err != nil {
-		return err
-	} else if !applied {
-		return store.ErrStaleVersion
-	}
-	if _, applied, _, err := step.Attempt(ctx, current.TargetAttempt, lifecycle.AttemptFail, lifecycle.AttemptFailed); err != nil {
-		return err
-	} else if !applied {
-		return store.ErrStaleVersion
-	}
-	current.State, current.UpdatedAt = lifecycle.MigrationItemFailed, now.UTC()
+	current.State, current.UpdatedAt = lifecycle.MigrationItemAborting, now.UTC()
 	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
-		return err
-	}
-	if err := finishMigrationPass(ctx, u, tenant, pass, lifecycle.MigrationFail, now.UTC()); err != nil {
 		return err
 	}
 	return u.Commit(ctx)
@@ -939,6 +948,198 @@ func (w *Worker) settleMigrationCutover(ctx context.Context, tenant ids.TenantID
 	}
 	current.State, current.UpdatedAt = lifecycle.MigrationItemCleaningUp, now.UTC()
 	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+		return err
+	}
+	return u.Commit(ctx)
+}
+
+func (w *Worker) driveMigrationAbortCleanup(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, pass lifecycle.MigrationPass) error {
+	if !item.TargetAttempt.IsZero() && item.EnvironmentRef != "" {
+		op, err := store.GetOperation(ctx, w.pool, tenant, item.TargetCleanupOperation)
+		if err != nil {
+			return err
+		}
+		if op.State != lifecycle.OperationAccepted {
+			port := w.environments[pass.To]
+			if port == nil || port.Role() != contracts.RoleEnvironment {
+				return nil
+			}
+			if item.TargetCleanupEpoch == 0 {
+				item.TargetCleanupEpoch = item.ClaimEpoch
+			}
+			if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.TargetCleanupOperation); err != nil {
+				return err
+			}
+			receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.TargetCleanupOperation, item.TargetAttempt, contracts.RoleEnvironment, contracts.MethodStop,
+				contracts.MigrationRequest{Migration: item.Migration, Operation: item.TargetCleanupOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetEnvironmentCleaned, ClaimEpoch: item.TargetCleanupEpoch, EnvironmentRef: item.EnvironmentRef}, contracts.MigrationTargetEnvironmentCleaned, "")
+			if err != nil || !sent {
+				return err
+			}
+			return w.settleMigrationAbortTargetCleanup(ctx, tenant, claim, item, receipt)
+		}
+	}
+
+	sourceOperation, err := store.GetOperation(ctx, w.pool, tenant, item.CleanupOperation)
+	if err != nil {
+		return err
+	}
+	if sourceOperation.State != lifecycle.OperationAccepted {
+		bindings, err := store.ListAttemptBindings(ctx, w.pool, tenant, item.SourceAttempt)
+		if err != nil {
+			return err
+		}
+		var sourceEnvironment *lifecycle.Binding
+		for i := range bindings {
+			if bindings[i].Kind == lifecycle.ResourceEnvironmentResource && bindings[i].Provider == sourceOperation.Provider {
+				if sourceEnvironment != nil {
+					return store.ErrPayloadMismatch
+				}
+				sourceEnvironment = &bindings[i]
+			}
+		}
+		if sourceEnvironment == nil {
+			return store.ErrNotFound
+		}
+		port := w.environments[sourceOperation.Provider]
+		if port == nil || port.Role() != contracts.RoleEnvironment {
+			return nil
+		}
+		if item.CleanupEpoch == 0 {
+			item.CleanupEpoch = item.ClaimEpoch
+		}
+		if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.CleanupOperation); err != nil {
+			return err
+		}
+		receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.CleanupOperation, item.SourceAttempt, contracts.RoleEnvironment, contracts.MethodStop,
+			contracts.MigrationRequest{Migration: item.Migration, Operation: item.CleanupOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationSourceCleaned, ClaimEpoch: item.CleanupEpoch, EnvironmentRef: sourceEnvironment.NativeRef}, contracts.MigrationSourceCleaned, "")
+		if err != nil || !sent {
+			return err
+		}
+		return w.settleMigrationAbortSourceCleanup(ctx, tenant, claim, item, receipt)
+	}
+	return w.finishMigrationAbort(ctx, tenant, claim, item)
+}
+
+func (w *Worker) settleMigrationAbortTargetCleanup(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, receipt contracts.MigrationReceipt) error {
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
+	if err != nil {
+		return err
+	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
+	defer func() { _ = u.Rollback(ctx) }()
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemAborting) || current.TargetCleanupEpoch != receipt.ClaimEpoch || receipt.Stage != contracts.MigrationTargetEnvironmentCleaned || receipt.EnvironmentRef != current.EnvironmentRef {
+		return store.ErrStaleVersion
+	}
+	op, err := store.GetOperation(ctx, u, tenant, current.TargetCleanupOperation)
+	if err != nil {
+		return err
+	}
+	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
+		return err
+	}
+	return u.Commit(ctx)
+}
+
+func (w *Worker) settleMigrationAbortSourceCleanup(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, receipt contracts.MigrationReceipt) error {
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
+	if err != nil {
+		return err
+	}
+	u, current, now := snapshot.uow, snapshot.item, snapshot.at
+	defer func() { _ = u.Rollback(ctx) }()
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemAborting) || current.CleanupEpoch != receipt.ClaimEpoch || receipt.Stage != contracts.MigrationSourceCleaned {
+		return store.ErrStaleVersion
+	}
+	op, err := store.GetOperation(ctx, u, tenant, current.CleanupOperation)
+	if err != nil {
+		return err
+	}
+	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
+		return err
+	}
+	if err := u.Commit(ctx); err != nil {
+		return err
+	}
+	return w.finishMigrationAbort(ctx, tenant, claim, item)
+}
+
+func (w *Worker) finishMigrationAbort(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem) error {
+	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
+	if err != nil {
+		return err
+	}
+	u, current, pass, now := snapshot.uow, snapshot.item, snapshot.pass, snapshot.at
+	defer func() { _ = u.Rollback(ctx) }()
+	if !migrationItemMatchesClaim(current, item, lifecycle.MigrationItemAborting) {
+		return store.ErrStaleVersion
+	}
+	sourceCleanup, err := store.GetOperation(ctx, u, tenant, current.CleanupOperation)
+	if err != nil || sourceCleanup.State != lifecycle.OperationAccepted {
+		if err != nil {
+			return err
+		}
+		return store.ErrStaleVersion
+	}
+	if !current.TargetAttempt.IsZero() && current.EnvironmentRef != "" {
+		targetCleanup, err := store.GetOperation(ctx, u, tenant, current.TargetCleanupOperation)
+		if err != nil || targetCleanup.State != lifecycle.OperationAccepted {
+			if err != nil {
+				return err
+			}
+			return store.ErrStaleVersion
+		}
+	}
+	source, _, err := store.LockResultScope(ctx, u, tenant, current.SourceAttempt)
+	if err != nil {
+		return err
+	}
+	step := progress.Step{UOW: u, Tenant: tenant, Actor: SystemActor(), At: now.UTC()}
+	if source.State != lifecycle.AttemptFailed {
+		if _, applied, _, err := step.Attempt(ctx, source.ID, lifecycle.AttemptFail, lifecycle.AttemptFailed); err != nil {
+			return err
+		} else if !applied {
+			return store.ErrStaleVersion
+		}
+	}
+	if !current.TargetAttempt.IsZero() {
+		target, _, err := store.LockResultScope(ctx, u, tenant, current.TargetAttempt)
+		if err != nil {
+			return err
+		}
+		if target.State != lifecycle.AttemptFailed {
+			if _, applied, _, err := step.Attempt(ctx, target.ID, lifecycle.AttemptFail, lifecycle.AttemptFailed); err != nil {
+				return err
+			} else if !applied {
+				return store.ErrStaleVersion
+			}
+		}
+		reservationID, err := ids.Parse[ids.Reservation](current.TargetAttempt.String())
+		if err != nil {
+			return err
+		}
+		reservation, err := store.GetReservationForUpdate(ctx, u, tenant, reservationID)
+		if err != nil {
+			return err
+		}
+		if reservation.State == lifecycle.ReservationHeld {
+			budget, err := store.GetBudgetForUpdate(ctx, u, tenant, reservation.Budget)
+			if err != nil {
+				return err
+			}
+			tr, err := stepTransition(budget.Version, now.UTC())
+			if err != nil {
+				return err
+			}
+			if _, _, err := store.ReleaseBudget(ctx, u, tenant, budget.ID, reservation.ID, tr); err != nil {
+				return err
+			}
+		}
+	}
+	current.State, current.UpdatedAt = lifecycle.MigrationItemFailed, now.UTC()
+	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+		return err
+	}
+	if err := finishMigrationPass(ctx, u, tenant, pass, lifecycle.MigrationFail, now.UTC()); err != nil {
 		return err
 	}
 	return u.Commit(ctx)

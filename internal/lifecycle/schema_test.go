@@ -102,9 +102,17 @@ func validRecords(t *testing.T) map[string]record {
 	if err != nil {
 		t.Fatalf("NewResultRevision() error = %v", err)
 	}
+	abortingMigrationItem := MigrationItem{
+		Tenant: task.Tenant, Migration: newMigration(t).ID, SourceAttempt: attempt.ID,
+		TargetAttempt: newID[ids.Attempt](t), QuiesceOperation: newID[ids.Operation](t),
+		EnvironmentOperation: newID[ids.Operation](t), RestartOperation: newID[ids.Operation](t),
+		CleanupOperation: newID[ids.Operation](t), TargetCleanupOperation: newID[ids.Operation](t),
+		State: MigrationItemAborting, ClaimEpoch: 1, UpdatedAt: testNow,
+	}
 
 	return map[string]record{
 		"migration item":      {migrationItemContract, schematest.Marshal(t, MigrationItem{Tenant: task.Tenant, Migration: newMigration(t).ID, SourceAttempt: attempt.ID, State: MigrationItemQueued, ClaimEpoch: 1, UpdatedAt: testNow})},
+		"aborting item":       {migrationItemContract, schematest.Marshal(t, abortingMigrationItem)},
 		"manifest":            {manifestContract, schematest.Marshal(t, manifest)},
 		"artifact":            {artifactContract, schematest.Marshal(t, artifact)},
 		"first revision":      {revisionContract, schematest.Marshal(t, firstRevision)},
