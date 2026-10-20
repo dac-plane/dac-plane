@@ -19,17 +19,29 @@ demonstrated defects without adding a service or workflow engine.
 - [x] Add typed cumulative `usage.reported`, schema and agreement tests; derive
   budget/reservation identity from authenticated Attempt lineage. Prove terminal
   late usage, overshoot, replay, wrong-unit refusal and shadow/off isolation.
-- [ ] Extend tenant/operation forgery, authority denial/revocation/replay,
+- [x] Extend tenant/operation forgery, authority denial/revocation/replay,
   partial/lost/duplicate cancellation and serialized action acceptance tests.
-- [ ] Prove same-budget reservation races at the store boundary and competing
+- [x] Prove same-budget reservation races at the store boundary and competing
   rework commands through the application. No ceiling increases or additional
   reservations/receipts/dispatch from invalid assertion replay.
-- [ ] Add restricted authenticated migration administration, migration 00007
+- [x] Add restricted authenticated migration administration, migration 00007
   and ADR-0004. Prove permission, preview/hold invalidation and claim fencing.
-- [ ] Map artifact corruption and crash boundaries to existing evidence; add
+- [x] Map artifact corruption and crash boundaries to existing evidence; add
   only missing full-path restart cases, including after metadata admission.
-- [ ] Add `just test-security` / `just test-security-race` and an architecture
-  evidence note. Run focused, race, contracts and final `just ci` sequentially.
+- [x] Add `just test-security` / `just test-security-race` and an architecture
+  evidence note. Run focused, race and contract checks.
+- [x] Complete final `just ci`, record its result and prepare the focused PR.
+
+Implementation and evidence index are written. Final combined focused runs passed:
+plain application 245.576s, race application 268.913s, with worker, PostgreSQL,
+migration and simulator packages passing too. Final `just ci` passed, including
+uncached race-enabled application integration (580.825s), worker (59.995s),
+PostgreSQL (117.969s), migrations (28.374s) and all other packages. Module,
+format, vet, unit/race, schema and workflow checks passed. No vulnerabilities
+were found. This is not production-provider qualification or human verification.
+The focused administration review found a reaper clock inconsistency, now fixed
+by using database time both for selection and locked mutation. Its final review
+reported no actionable production-code findings. External review was declined.
 
 ## Migration administration boundary
 
