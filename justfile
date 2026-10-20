@@ -10,6 +10,7 @@ tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
 recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
+security_tests := "^Test[^/]*(Security|EventForged|EventBindingOfAnother|GovernedAction|Cancel|EnvironmentStop|RuntimeStop|Artifact|Review|PersistenceTenantIsolation|PersistenceClaimFencing|Migration|Budget|Spend|Authority|Resource)[^/]*$"
 
 # Some macOS Command Line Tools SDKs break the cgo linker used by the
 # integration tests; pointing SDKROOT at the active Xcode SDK avoids it.
@@ -21,7 +22,7 @@ default:
 
 # Run every check CI runs, in CI's order
 [group('ci')]
-ci: fmt-check mod-check vet vet-integration test test-race test-integration-race vuln lint-workflows
+ci: fmt-check mod-check vet vet-integration test test-race test-integration-other-race test-security-race vuln lint-workflows
 
 # Rewrite Go files into gofmt style
 [group('dev')]
@@ -76,6 +77,11 @@ test-integration *pkgs="./...":
 test-integration-race *pkgs="./...":
     {{ sdkroot }}go test -race -count=1 -tags=integration {{ pkgs }}
 
+# Complement of test-security-race; together they cover the complete suite.
+[group('test')]
+test-integration-other-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./... -skip '{{ security_tests }}'
+
 # Recovery acceptance and its existing command, cursor and fencing regressions.
 [group('test')]
 test-recovery:
@@ -84,6 +90,15 @@ test-recovery:
 [group('test')]
 test-recovery-race:
     {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/simulator/ -run '{{ recovery_tests }}'
+
+# Security/lifecycle acceptance, selected by complete top-level test names.
+[group('test')]
+test-security:
+    {{ sdkroot }}go test -count=1 -tags=integration ./... -run '{{ security_tests }}'
+
+[group('test')]
+test-security-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./... -run '{{ security_tests }}'
 
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]

@@ -89,30 +89,69 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 	if cmd.Assertion.Challenge != submission.Challenge.ID {
 		return nil, fmt.Errorf("%w: the assertion names another challenge", ErrInvalidCommand)
 	}
-
-	// The store audits an assertion at its assertion time.
+	// Serialize with cancellation and competing assertions before inspecting
+	// the challenge. Only the command executor may replay a consumed proof:
+	// its original nonce has already returned above, without running work.
+	if _, _, err := store.LockResultScope(ctx, u.uow, tenant, submission.Attempt.ID); err != nil {
+		return nil, err
+	}
+	challenge, err := store.GetSpendChallengeForUpdate(ctx, u.uow, tenant, submission.Challenge.ID)
+	if err != nil {
+		return nil, err
+	}
+	var now time.Time
+	if err := u.uow.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		return nil, err
+	}
+	u.at = now.UTC().Truncate(time.Microsecond)
 	tr, err := u.transition(cmd.ExpectedVersion, nil)
 	if err != nil {
 		return nil, err
 	}
+	refusal := func(code lifecycle.RejectionCode) error {
+		return &lifecycle.TransitionError{Code: code, Change: lifecycle.Change{
+			Tenant: tenant, Record: lifecycle.RecordSpend, RecordID: challenge.ID.Untyped(),
+			Event: "assert", From: string(challenge.State), Version: challenge.Version,
+		}}
+	}
+	if challenge.State != lifecycle.SpendPending {
+		return nil, refusal(lifecycle.RejectTerminalState)
+	}
+	if !u.at.Before(challenge.ExpiresAt) {
+		return nil, refusal(lifecycle.RejectRequestExpired)
+	}
+
+	// Cancellation may have committed while this command waited for scope.
+	// Reload scheduling under the lock rather than authorizing its old view.
+	submission, err = spendScheduling(ctx, u.uow, cmd)
+	if err != nil {
+		return nil, err
+	}
+	if submission.Task.State != lifecycle.TaskQueued || submission.Attempt.State != lifecycle.AttemptAllocated || submission.Operation.State != lifecycle.OperationRecorded {
+		return nil, fmt.Errorf("%w: the submission is no longer schedulable", ErrInvalidCommand)
+	}
+	if submission.Reservation.State != lifecycle.ReservationHeld {
+		return nil, fmt.Errorf("%w: the submission's reservation is no longer held for this amount", ErrInvalidCommand)
+	}
+
+	// Assertion time remains evidence, never the authorization clock.
 	u.lastAt = cmd.Assertion.AssertedAt
 	if _, _, _, err := store.AssertSpendChallenge(ctx, u.uow, tenant, submission.Challenge.ID, cmd.Assertion, cmd.ExpectedVersion, tr); err != nil {
 		return nil, err
 	}
-
-	// Receipt and reservation are both required before enqueue.
-	if submission.Reservation.State != lifecycle.ReservationHeld || submission.Reservation.Amount != cmd.Assertion.Terms.Amount {
+	// Keep proof mismatch validation ahead of the reservation amount check.
+	// Any failure rolls the provisional receipt back with this transaction.
+	if submission.Reservation.Amount != cmd.Assertion.Terms.Amount {
 		return nil, fmt.Errorf("%w: the submission's reservation is no longer held for this amount", ErrInvalidCommand)
 	}
-	// An assertion replayed after its dispatch was enqueued converges: the
-	// operation already left recorded, so nothing is enqueued twice.
-	if submission.Operation.State == lifecycle.OperationRecorded {
-		if err := enqueue(ctx, u, tenant, dispatchSpec{
-			operation: submission.Operation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
-			deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
-		}); err != nil {
-			return nil, err
-		}
+
+	// Only a recorded operation can create dispatch work. Exact command
+	// replay bypasses this callback and cannot enqueue another row.
+	if err := enqueue(ctx, u, tenant, dispatchSpec{
+		operation: submission.Operation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
+		deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
+	}); err != nil {
+		return nil, err
 	}
 	return json.Marshal(assertion{Submission: cmd.SubmissionNonce, Spend: submission.Challenge.ID.String()})
 }

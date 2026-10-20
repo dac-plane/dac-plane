@@ -208,13 +208,16 @@ func UncertainOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([
 	return out, rows.Err()
 }
 
-// OpenClaims returns claims currently held, so a restart can compare expiry
-// and take over lapsed ones. Expiry itself is evaluated by the pure
-// claim logic, not here.
+// OpenClaims returns held claims plus scheduled administrative claims linked
+// to executing migration passes. The worker rechecks linked scope and expiry
+// under locks before acquiring, renewing or taking over any claim.
 func OpenClaims(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.MaintenanceClaim, error) {
 	rows, err := q.Query(ctx, `
 		select claim_id::text from maintenance_claim
-		where tenant_id = $1 and state = 'claimed' order by updated_at`,
+		where tenant_id = $1 and (state = 'claimed' or (state='scheduled' and exists (
+		select 1 from migration_slot s join migration_pass p on p.tenant_id=s.tenant_id and p.migration_id=s.active_migration_id
+		where s.tenant_id=maintenance_claim.tenant_id and s.claim_id=maintenance_claim.claim_id and p.state='executing')))
+		order by updated_at`,
 		tenant.String(),
 	)
 	if err != nil {

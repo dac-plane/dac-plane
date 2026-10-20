@@ -317,7 +317,7 @@ func TestArtifactMigrationPreservesEvidenceAndRefusesDowngrade(t *testing.T) {
 	if _, err = p.ApplyVersion(g.ctx, 6, false); err == nil || !strings.Contains(err.Error(), "version 6 artifact evidence") {
 		t.Fatalf("downgrade=%v", err)
 	}
-	if v, err := p.GetDBVersion(g.ctx); err != nil || v != 6 {
+	if v, err := p.GetDBVersion(g.ctx); err != nil || v != migrations.CurrentVersion {
 		t.Fatalf("schema=%d %v", v, err)
 	}
 	if _, err = g.pool.Exec(g.ctx, `update artifact_work set manifest='{}' where tenant_id=$1`, g.tenant.String()); err == nil {

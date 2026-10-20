@@ -84,8 +84,8 @@ jobs:
       - name: Pre-pull PostgreSQL test image
         run: docker pull postgres:16.15-alpine || true
 
-      - name: Run PostgreSQL integration tests under race
-        run: just test-integration-race
+      - name: Run remaining PostgreSQL integration tests under race
+        run: just test-integration-other-race
 
   vulnerabilities:
     name: Go vulnerabilities

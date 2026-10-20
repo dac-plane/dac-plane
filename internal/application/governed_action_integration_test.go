@@ -272,6 +272,17 @@ func TestGovernedActionAuthorityDenials(t *testing.T) {
 			if v.Use.Reason != want {
 				t.Fatalf("denial=%+v want %s", v.Use, want)
 			}
+			// Drain the real dispatch and reconciliation paths: interception
+			// denial must not leave executable work for a later worker tick.
+			if err := recoveryWorker(t, g.fixture, e).Tick(g.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := recoveryWorker(t, g.fixture, e).Reconcile(g.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if g.count(t, "outbox", "record_id=$2", g.cmd.Request.Operation.String()) != 0 || g.count(t, "provider_operation", "operation_id=$2", g.cmd.Request.Operation.String()) != 0 {
+				t.Fatal("denial left executable operation")
+			}
 			if g.resource.Ledger().Effects(g.cmd.Request.Operation) != 0 {
 				t.Fatal("denial executed")
 			}

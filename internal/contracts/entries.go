@@ -34,6 +34,7 @@ const (
 	EntryDecisionConsumed    = "decision.consumed"
 	EntryRuntimeStopped      = "runtime.stopped"
 	EntryResultProposed      = "result.proposed"
+	EntryUsageReported       = "usage.reported"
 )
 
 // progressKinds are known observations that carry no product state.
@@ -41,7 +42,7 @@ var progressKinds = []string{"progress", "message.delta", "tool.proposed", "tool
 
 // stateChangingPrefixes name entry families that carry lifecycle or
 // permission semantics; an unknown kind in one of them is refused.
-var stateChangingPrefixes = []string{"task.", "attempt.", "attention.", "decision.", "action.", "result.", "environment."}
+var stateChangingPrefixes = []string{"task.", "attempt.", "attention.", "decision.", "action.", "result.", "environment.", "usage."}
 
 // EntryClass is how the product treats an entry kind.
 type EntryClass string
@@ -63,6 +64,7 @@ func ClassifyEntry(kind string) EntryClass {
 	case slices.Contains([]string{
 		EntryRuntimeStarted, EntryTurnStarted, EntryTurnFinished, EntryEnvironmentObserved,
 		EntryOperationOutcome, EntryAttentionRequested, EntryDecisionConsumed, EntryRuntimeStopped, EntryResultProposed,
+		EntryUsageReported,
 	}, kind):
 		return EntryApply
 	case slices.Contains(progressKinds, kind):
@@ -84,6 +86,43 @@ func ClassifyEntry(kind string) EntryClass {
 
 func validRef(ref string) bool {
 	return ref != "" && len(ref) <= maxRefLength
+}
+
+// UsageReported reports cumulative usage for the bound Attempt, not a delta.
+// Budget and reservation identities are resolved by the product; providers
+// cannot name another Task's accounting records.
+type UsageReported struct {
+	Unit       lifecycle.Unit `json:"unit"`
+	Cumulative uint64         `json:"cumulative"`
+}
+
+// Validate bounds usage to amounts that JSON consumers can represent exactly.
+func (u UsageReported) Validate() error {
+	if err := u.Unit.Validate(); err != nil {
+		return fmt.Errorf("%w: usage requires a valid unit", ErrInvalid)
+	}
+	if u.Cumulative > lifecycle.MaxAmount {
+		return fmt.Errorf("%w: usage exceeds the representable bound", ErrInvalid)
+	}
+	return nil
+}
+
+// UnmarshalJSON distinguishes an explicit zero from missing usage evidence.
+func (u *UsageReported) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Unit       lifecycle.Unit `json:"unit"`
+		Cumulative *uint64        `json:"cumulative"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&wire); err != nil {
+		return err
+	}
+	if wire.Cumulative == nil {
+		return ErrInvalid
+	}
+	*u = UsageReported{Unit: wire.Unit, Cumulative: *wire.Cumulative}
+	return u.Validate()
 }
 
 // RuntimeStarted reports a runtime session starting for the event's Attempt.

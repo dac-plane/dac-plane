@@ -9,6 +9,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
 const reconcileStream = "dispatch"
@@ -186,15 +187,32 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 	}
 	settled := false
 	for _, entry := range ingested.Entries {
-		if current.State != lifecycle.OperationUncertain {
-			break
+		// Usage belongs to the runtime, not a governed action. Account every
+		// accepted total, including entries after the settling outcome, before
+		// advancing the cursor past this frame.
+		if action == nil && entry.Kind == contracts.EntryUsageReported && !entry.PayloadOmitted {
+			step := progress.Step{UOW: u, Tenant: current.Tenant, At: time.Now().UTC(), Actor: lifecycle.Actor{Kind: lifecycle.ActorProvider, Provider: current.Provider}}
+			_, refusal, err := step.Usage(ctx, current.Attempt, entry)
+			if err != nil {
+				return contracts.Ingestion{}, false, err
+			}
+			if refusal != nil {
+				auditID, err := ids.New[ids.Audit]()
+				if err != nil {
+					return contracts.Ingestion{}, false, err
+				}
+				if err = store.RecordRefusal(ctx, u, refusal.Audit(auditID, step.Actor, step.At)); err != nil {
+					return contracts.Ingestion{}, false, err
+				}
+			}
+			continue
+		}
+		if settled || current.State != lifecycle.OperationUncertain {
+			continue
 		}
 		settled, err = w.applyReconciledEntry(ctx, u, current, entry, action)
 		if err != nil {
 			return contracts.Ingestion{}, false, err
-		}
-		if settled {
-			break
 		}
 	}
 	durable, err := store.AdvanceCursor(ctx, u, ingested.Cursor)

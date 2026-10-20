@@ -234,8 +234,24 @@ func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOu
 		outcome, err = applyDecoded(ctx, a, entry, a.runtimeStopped)
 	case contracts.EntryResultProposed:
 		outcome, err = applyDecoded(ctx, a, entry, a.resultProposed)
+	case contracts.EntryUsageReported:
+		outcome, err = a.usageReported(ctx, entry)
 	}
 	return outcome, err
+}
+
+func (a entryApplier) usageReported(ctx context.Context, entry contracts.Entry) (entryOutcome, error) {
+	applied, refusal, err := a.step.Usage(ctx, a.event.Attempt, entry)
+	if err != nil {
+		return 0, err
+	}
+	if refusal != nil {
+		return entryRefused, a.record(ctx, refusal)
+	}
+	if applied {
+		return entryApplied, nil
+	}
+	return entryProgress, nil
 }
 
 // applyDecoded decodes an entry's payload and applies it; a payload that
