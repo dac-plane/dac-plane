@@ -296,6 +296,35 @@ func TestSecurityMigrationStalePreviewAndClaimTakeover(t *testing.T) {
 	}
 }
 
+func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	s := f.submit(t, f.submitCommand("migration-source"))
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-execute")
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "migration-snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ReapClaims(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].SourceAttempt != s.Attempt.ID || items[0].State != lifecycle.MigrationItemQueued || items[0].TargetAttempt != (ids.AttemptID{}) {
+		t.Fatalf("migration snapshot = %+v, want one queued source attempt", items)
+	}
+	claim, err := store.GetClaim(f.ctx, f.pool, f.tenant, v.Claim)
+	if err != nil || claim.State != lifecycle.ClaimClaimed || claim.Claimant != "migration-snapshot" || items[0].ClaimEpoch != claim.Epoch {
+		t.Fatalf("claim/fence = %+v / %+v / %v", claim, items, err)
+	}
+}
+
 func TestSecurityMigrationDowngradePreservesAdministration(t *testing.T) {
 	f, cmd := migrationFixture(t)
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)

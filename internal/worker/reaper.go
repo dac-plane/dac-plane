@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -97,6 +98,9 @@ func (w *Worker) takeClaim(ctx context.Context, tenant ids.TenantID, id ids.Clai
 		return err
 	}
 	committed = true
+	if err := w.snapshotMigrationClaim(ctx, tenant, id); err != nil {
+		return err
+	}
 	w.stats.Reaped.Add(1)
 	return nil
 }
@@ -136,5 +140,28 @@ func (w *Worker) renewClaim(ctx context.Context, tenant ids.TenantID, id ids.Cla
 		return err
 	}
 	committed = true
-	return nil
+	return w.snapshotMigrationClaim(ctx, tenant, id)
+}
+
+// snapshotMigrationClaim freezes the tenant-wide source scope only after the
+// lease-owning claim committed. It is intentionally separate from ordinary
+// claim maintenance: unlinked claims retain their existing semantics.
+func (w *Worker) snapshotMigrationClaim(ctx context.Context, tenant ids.TenantID, id ids.ClaimID) error {
+	uow, err := store.Begin(ctx, w.pool)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = uow.Rollback(ctx) }()
+	var now time.Time
+	if err := uow.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		return err
+	}
+	_, _, err = store.SnapshotMigrationClaim(ctx, uow, tenant, id, w.owner, now.UTC())
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrStaleVersion) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return uow.Commit(ctx)
 }
