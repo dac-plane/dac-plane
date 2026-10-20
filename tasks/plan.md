@@ -94,3 +94,31 @@ do not establish the unfinished campaign or full-CI completion.
 Demonstrate defects before accepting fixes. Integration runs are uncached and
 use the repository's macOS SDK setup. Do not run competing heavy test campaigns
 or execute focused recipes twice in CI, which already covers their packages.
+
+## Dedicated security pipeline follow-up
+
+User requested the missing pipeline on this branch. Inspection confirmed that
+`ci / Integration tests` already covers the security cases but does not expose
+a dedicated acceptance check. Tavily and Context7 verified GitHub Actions event,
+permission and concurrency guidance against official GitHub documentation:
+https://docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions
+
+Plan: add `.github/workflows/security.yml` for pull requests, main pushes and
+manual runs using the shared setup and `just test-security-race`. Partition the
+race-enabled integration campaign with the same top-level test-name expression:
+security runs matching tests across all packages; CI runs the complement. Keep
+`test-integration-race` available as the complete suite and make `just ci` run
+both partitions. Anchor selection to whole top-level names so subtest names
+cannot create coverage gaps. Preserve the existing vulnerability job.
+
+Verify workflow lint, formatting, disjoint/exhaustive top-level selection, then
+`just ci` with real Docker and uncached integration tests. Update acceptance
+notes with observed results. No application code or provider integration changes.
+
+Follow-up verification passed: workflow lint, formatting, `git diff --check`,
+and selection inventory (412 targets = 147 security + 265 complementary, no
+intersection or omissions). `just ci` passed with uncached race-enabled
+integration partitions: application 315.247s complementary and 284.120s security;
+PostgreSQL 58.635s and 34.118s; migrations 2.051s and 32.830s. Unit/race, vet,
+module checks and workflow lint passed; govulncheck found no vulnerabilities.
+GitHub execution of the new workflow remains to be observed after pushing.

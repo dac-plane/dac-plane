@@ -111,8 +111,14 @@ artifact downgrade was refused. The assertion now uses `CurrentVersion`; its
 focused race-enabled regression passed (4.954s). Released migrations were not
 changed. This failure is not attributed to production migration behavior.
 
-Run `just test-security` and `just test-security-race` for this campaign. Full CI
-already runs their containing packages and does not execute the campaign twice.
+Run `just test-security` and `just test-security-race` for this campaign.
+The `security` workflow runs the race-enabled recipe on pull requests, main
+pushes and manual dispatch. The `ci` workflow uses
+`just test-integration-other-race` for the complementary top-level tests.
+Both selectors share one expression across all packages, so integration tests
+run once across the two workflows. `just ci` runs both partitions locally;
+`just test-integration-race` remains the complete standalone suite.
+Go vulnerability scanning remains a separate check in `ci`.
 
 Final focused runs passed after the downgrade assertion correction:
 
@@ -130,3 +136,10 @@ integration tests passed application (580.825s), worker (59.995s), PostgreSQL
 verification, vet, unit/race tests, schema guards and workflow lint passed.
 The vulnerability scan found no vulnerabilities. This records local checks,
 not unobserved GitHub checks or human verification.
+
+Pipeline follow-up verification: `just ci` passed with the new split, including
+uncached race-enabled application tests (315.247s complementary, 284.120s
+security), PostgreSQL and migrations. Workflow lint and formatting passed;
+govulncheck found no vulnerabilities. An inventory of all 412 top-level targets
+confirmed 147 security and 265 complementary targets with no overlap or omission.
+These are local results; GitHub execution is verified separately after pushing.
