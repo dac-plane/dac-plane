@@ -66,7 +66,27 @@ Observed implementation results:
   schema guards, module verification, vet and workflow lint passed. The
   vulnerability scan found no vulnerabilities.
 
-The campaign adds 22 recovery test functions, retaining the existing replay,
+PR architecture-review follow-up:
+
+- Added decision-delivery regressions for queued shadow/off qualification,
+  in-flight demotion and transport/unknown/malformed replies after outbox or
+  Attempt expiry/takeover. The regressions exposed both reviewed gaps before
+  the corrections.
+- Post-send decision handlers now share scope, qualification and fresh-fence
+  checks. Non-live queued decisions retain their intent for later live delivery.
+- `just test-integration-race ./internal/application/ -run TestRecoveryDecision`
+  passed (53.108s). The worker delivery regressions passed under race (10.397s)
+  after their fixture explicitly registered its live harness; the worker
+  decision retry regressions also passed under race (7.667s).
+- Inverting the new settlement qualification gate in a temporary Go overlay
+  caused the demotion regression to fail. The tracked source was unchanged
+  throughout that mutation check.
+- Final follow-up `just ci` passed, including uncached race-enabled application
+  (450.449s), worker (58.867s), PostgreSQL (99.715s) and migration (27.004s)
+  integration suites. Vulnerability scanning found no vulnerabilities and
+  workflow lint passed.
+
+The campaign adds 25 recovery test functions, retaining the existing replay,
 authority, artifact and fencing tests as complementary evidence. Local full CI
 is not a claim about unrun GitHub checks or production-provider qualification.
 

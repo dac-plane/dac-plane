@@ -72,6 +72,13 @@ independently of batching, replay flags and delivery timestamps. Off observation
 apply nothing. A demoted uncertain operation remains unresolved until authoritative
 reconciliation is permitted; shadow evidence is not silently promoted.
 
+Decision delivery uses the same qualification boundary. A queued decision in
+shadow/off mode retains its pending delivery intent without steering the runtime
+or changing the attention state. If qualification changes during an in-flight
+steer, settlement leaves its result unresolved. Every post-send decision path,
+including retry, malformed-reply exhaustion and lease release, locks Outbox →
+Attempt → Task → harness and rechecks both fences using current server time.
+
 ## Acceptance index
 
 Tests live beside the owning application, worker, simulator and repository suites.
@@ -91,6 +98,7 @@ survive. Direct SQL is limited to qualification and precise crash/fault boundari
 | Artifact replay preserves exact admission | `TestRecoveryArtifactRetryAndFencedAdmission`; existing artifact lost-commit-reply, stale/future-writer and post-commit crash tests |
 | Shadow restart preserves primary authority | `TestRecoveryShadowObservationsCannotSettlePrimary`, `TestRecoveryShadowGovernedReceiptPreservesPrimary`, `TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent`, `TestRecoveryOffObservationsDoNotMutate` |
 | Outcome/cursor transaction is all-or-nothing | `TestRecoveryOutcomeAndCursorRollbackTogether` |
+| Decision dispatch and settlement respect qualification and expiry | `TestRecoveryDecisionQualificationBeforeSend`, `TestRecoveryDecisionDemotionBeforeSettlement`, `TestRecoveryDecisionErrorsRespectFences` |
 
 Run `just test-recovery`, `just test-recovery-race`, `just test-contracts` and
 `just ci`. Focused integration recipes bypass the cache and use the same macOS
@@ -101,7 +109,7 @@ The completed local `just ci` run passed, including uncached race-enabled
 application, worker, PostgreSQL and migration tests. Contract guards, module
 checks, vet, vulnerability scanning and workflow lint passed. A temporary inverted
 outcome-entry gate was caught by its recovery regression and restored before
-commit. The campaign adds 22 recovery test functions alongside existing evidence.
+commit. The campaign adds 25 recovery test functions alongside existing evidence.
 
 ## Limits and remaining gates
 
