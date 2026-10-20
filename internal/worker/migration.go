@@ -22,16 +22,16 @@ func (w *Worker) driveMigrationItems(ctx context.Context, tenant ids.TenantID, c
 		if item.State != lifecycle.MigrationItemQueued {
 			continue
 		}
+		port := w.ports[pass.From]
+		if port == nil || port.Role() != contracts.RoleRuntime {
+			return nil
+		}
 		prepared, err := w.prepareSourceQuiesce(ctx, tenant, claim, item)
 		if errors.Is(err, store.ErrStaleVersion) || errors.Is(err, store.ErrNotFound) {
 			return nil
 		}
 		if err != nil {
 			return err
-		}
-		port := w.ports[pass.From]
-		if port == nil || port.Role() != contracts.RoleRuntime {
-			return nil
 		}
 		return w.sendSourceQuiesce(ctx, port, pass, prepared)
 	}
