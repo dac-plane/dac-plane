@@ -10,6 +10,9 @@
     "migration_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "source_attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "target_attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "quiesce_operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "restart_operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "cleanup_operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "state": { "enum": ["queued", "quiescing", "starting", "cutover", "cleaning_up", "completed", "failed", "unresolved"] },
     "claim_epoch": { "$ref": "../identity/common.schema.json#/$defs/generation" },
     "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }

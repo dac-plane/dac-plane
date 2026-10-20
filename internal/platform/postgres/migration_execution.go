@@ -105,7 +105,7 @@ func SnapshotMigrationClaim(ctx context.Context, u *UnitOfWork, tenant ids.Tenan
 
 // ListMigrationItems reads the frozen pass scope in source Attempt order.
 func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, migration ids.MigrationID) ([]lifecycle.MigrationItem, error) {
-	rows, err := q.Query(ctx, `select source_attempt_id::text,target_attempt_id::text,state,claim_epoch,updated_at from migration_item where tenant_id=$1 and migration_id=$2 order by source_attempt_id`, tenant.String(), migration.String())
+	rows, err := q.Query(ctx, `select source_attempt_id::text,target_attempt_id::text,quiesce_operation_id::text,restart_operation_id::text,cleanup_operation_id::text,state,claim_epoch,updated_at from migration_item where tenant_id=$1 and migration_id=$2 order by source_attempt_id`, tenant.String(), migration.String())
 	if err != nil {
 		return nil, err
 	}
@@ -114,10 +114,11 @@ func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, mig
 	for rows.Next() {
 		var source string
 		var target *string
+		var quiesce, restart, cleanup *string
 		var state string
 		var epoch int64
 		item := lifecycle.MigrationItem{Tenant: tenant, Migration: migration}
-		if err := rows.Scan(&source, &target, &state, &epoch, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&source, &target, &quiesce, &restart, &cleanup, &state, &epoch, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		var err error
@@ -126,6 +127,21 @@ func ListMigrationItems(ctx context.Context, q Querier, tenant ids.TenantID, mig
 		}
 		if target != nil {
 			if item.TargetAttempt, err = parseID[ids.Attempt]("migration_item.target_attempt_id", *target); err != nil {
+				return nil, err
+			}
+		}
+		if quiesce != nil {
+			if item.QuiesceOperation, err = parseID[ids.Operation]("migration_item.quiesce_operation_id", *quiesce); err != nil {
+				return nil, err
+			}
+		}
+		if restart != nil {
+			if item.RestartOperation, err = parseID[ids.Operation]("migration_item.restart_operation_id", *restart); err != nil {
+				return nil, err
+			}
+		}
+		if cleanup != nil {
+			if item.CleanupOperation, err = parseID[ids.Operation]("migration_item.cleanup_operation_id", *cleanup); err != nil {
 				return nil, err
 			}
 		}
@@ -156,5 +172,5 @@ func SetMigrationItem(ctx context.Context, u *UnitOfWork, item lifecycle.Migrati
 	if uint64(current) != epoch {
 		return ErrStaleVersion
 	}
-	return execVersionedUpdate(ctx, u, `update migration_item set target_attempt_id=$4,state=$5,updated_at=$6 where tenant_id=$1 and migration_id=$2 and source_attempt_id=$3 and claim_epoch=$7`, item.Tenant.String(), item.Migration.String(), item.SourceAttempt.String(), textOrNil(item.TargetAttempt.String()), string(item.State), item.UpdatedAt, int64(epoch))
+	return execVersionedUpdate(ctx, u, `update migration_item set target_attempt_id=$4,quiesce_operation_id=$5,restart_operation_id=$6,cleanup_operation_id=$7,state=$8,updated_at=$9 where tenant_id=$1 and migration_id=$2 and source_attempt_id=$3 and claim_epoch=$10`, item.Tenant.String(), item.Migration.String(), item.SourceAttempt.String(), textOrNil(item.TargetAttempt.String()), textOrNil(item.QuiesceOperation.String()), textOrNil(item.RestartOperation.String()), textOrNil(item.CleanupOperation.String()), string(item.State), item.UpdatedAt, int64(epoch))
 }

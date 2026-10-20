@@ -210,13 +210,16 @@ func MigrationItemStates() []MigrationItemState {
 // starts. TargetAttempt is allocated only after source quiescence and means
 // restart-from-artifacts; it never reuses a native source session.
 type MigrationItem struct {
-	Tenant        ids.TenantID       `json:"tenant_id"`
-	Migration     ids.MigrationID    `json:"migration_id"`
-	SourceAttempt ids.AttemptID      `json:"source_attempt_id"`
-	TargetAttempt ids.AttemptID      `json:"target_attempt_id,omitzero"`
-	State         MigrationItemState `json:"state"`
-	ClaimEpoch    uint64             `json:"claim_epoch"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	Tenant           ids.TenantID       `json:"tenant_id"`
+	Migration        ids.MigrationID    `json:"migration_id"`
+	SourceAttempt    ids.AttemptID      `json:"source_attempt_id"`
+	TargetAttempt    ids.AttemptID      `json:"target_attempt_id,omitzero"`
+	QuiesceOperation ids.OperationID    `json:"quiesce_operation_id,omitzero"`
+	RestartOperation ids.OperationID    `json:"restart_operation_id,omitzero"`
+	CleanupOperation ids.OperationID    `json:"cleanup_operation_id,omitzero"`
+	State            MigrationItemState `json:"state"`
+	ClaimEpoch       uint64             `json:"claim_epoch"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 // Validate reports whether an item can be used as durable migration evidence.
@@ -227,8 +230,17 @@ func (i MigrationItem) Validate() error {
 	if !slices.Contains(MigrationItemStates(), i.State) {
 		return fmt.Errorf("%w: unknown migration item state", ErrInvalid)
 	}
-	if i.TargetAttempt.IsZero() && (i.State == MigrationItemCutover || i.State == MigrationItemCleaningUp || i.State == MigrationItemCompleted) {
+	if i.State != MigrationItemQueued && i.QuiesceOperation.IsZero() {
+		return fmt.Errorf("%w: active migration item requires a quiesce operation", ErrInvalid)
+	}
+	if i.TargetAttempt.IsZero() && (i.State == MigrationItemStarting || i.State == MigrationItemCutover || i.State == MigrationItemCleaningUp || i.State == MigrationItemCompleted) {
 		return fmt.Errorf("%w: cut over migration item requires a target attempt", ErrInvalid)
+	}
+	if !i.TargetAttempt.IsZero() && i.RestartOperation.IsZero() {
+		return fmt.Errorf("%w: target migration item requires a restart operation", ErrInvalid)
+	}
+	if (i.State == MigrationItemCleaningUp || i.State == MigrationItemCompleted) && i.CleanupOperation.IsZero() {
+		return fmt.Errorf("%w: cleanup migration item requires a cleanup operation", ErrInvalid)
 	}
 	if !i.TargetAttempt.IsZero() && i.TargetAttempt == i.SourceAttempt {
 		return fmt.Errorf("%w: migration target must be a new attempt", ErrInvalid)

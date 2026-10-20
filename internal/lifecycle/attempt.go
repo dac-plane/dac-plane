@@ -20,6 +20,7 @@ const (
 	AttemptFinalizing            AttemptState = "finalizing"
 	AttemptCancellationRequested AttemptState = "cancellation_requested"
 	AttemptReconciling           AttemptState = "reconciling"
+	AttemptMigrating             AttemptState = "migrating"
 	AttemptCompleted             AttemptState = "completed"
 	AttemptFailed                AttemptState = "failed"
 	AttemptTerminated            AttemptState = "terminated"
@@ -29,7 +30,7 @@ const (
 func AttemptStates() []AttemptState {
 	return []AttemptState{
 		AttemptAllocated, AttemptProvisioning, AttemptStarting, AttemptExecuting, AttemptWaitingInput,
-		AttemptFinalizing, AttemptCancellationRequested, AttemptReconciling, AttemptCompleted,
+		AttemptFinalizing, AttemptCancellationRequested, AttemptReconciling, AttemptMigrating, AttemptCompleted,
 		AttemptFailed, AttemptTerminated,
 	}
 }
@@ -52,6 +53,7 @@ const (
 	AttemptOutcomeUnknown     AttemptEvent = "outcome_unknown"
 	AttemptLeaseExpired       AttemptEvent = "lease_expired"
 	AttemptReconciled         AttemptEvent = "reconciled"
+	AttemptMigrate            AttemptEvent = "migrate"
 )
 
 // AttemptEvents lists every AttemptEvent.
@@ -59,7 +61,7 @@ func AttemptEvents() []AttemptEvent {
 	return []AttemptEvent{
 		AttemptProvision, AttemptStart, AttemptRuntimeStarted, AttemptAwaitInput, AttemptResume,
 		AttemptFinalize, AttemptComplete, AttemptFail, AttemptRequestCancel, AttemptRuntimeStopped,
-		AttemptEnvironmentStopped, AttemptOutcomeUnknown, AttemptLeaseExpired, AttemptReconciled,
+		AttemptEnvironmentStopped, AttemptOutcomeUnknown, AttemptLeaseExpired, AttemptReconciled, AttemptMigrate,
 	}
 }
 
@@ -94,8 +96,10 @@ var attemptMachine = newMachine(AttemptStates(), AttemptEvents(),
 		AttemptExecuting: active(map[AttemptEvent][]AttemptState{
 			AttemptAwaitInput: {AttemptWaitingInput},
 			AttemptFinalize:   {AttemptFinalizing},
+			AttemptMigrate:    {AttemptMigrating},
 		}),
 		AttemptWaitingInput: active(map[AttemptEvent][]AttemptState{AttemptResume: {AttemptExecuting}}),
+		AttemptMigrating:    active(map[AttemptEvent][]AttemptState{}),
 		AttemptFinalizing:   active(map[AttemptEvent][]AttemptState{AttemptComplete: {AttemptCompleted}}),
 		// Cancellation is intent: the attempt terminates only after both the
 		// runtime and the environment stop are observed, or reconciliation

@@ -7,6 +7,10 @@ CREATE TABLE migration_item (
  migration_id uuid NOT NULL,
  source_attempt_id uuid NOT NULL,
  target_attempt_id uuid,
+
+ quiesce_operation_id uuid,
+ restart_operation_id uuid,
+ cleanup_operation_id uuid,
  state text NOT NULL CHECK (state IN ('queued','quiescing','starting','cutover','cleaning_up','completed','failed','unresolved')),
  claim_epoch bigint NOT NULL CHECK (claim_epoch > 0),
  updated_at timestamptz NOT NULL,
@@ -16,7 +20,10 @@ CREATE TABLE migration_item (
  FOREIGN KEY (tenant_id,source_attempt_id) REFERENCES attempt(tenant_id,attempt_id),
  FOREIGN KEY (tenant_id,target_attempt_id) REFERENCES attempt(tenant_id,attempt_id),
  CHECK (target_attempt_id IS NULL OR target_attempt_id <> source_attempt_id),
- CHECK ((state IN ('cutover','cleaning_up','completed')) = (target_attempt_id IS NOT NULL))
+ CHECK ((state = 'queued') = (quiesce_operation_id IS NULL)),
+ CHECK ((state IN ('starting','cutover','cleaning_up','completed')) = (target_attempt_id IS NOT NULL)),
+ CHECK ((state IN ('starting','cutover','cleaning_up','completed')) = (restart_operation_id IS NOT NULL)),
+ CHECK ((state IN ('cleaning_up','completed')) = (cleanup_operation_id IS NOT NULL))
 );
 
 -- +goose Down
