@@ -182,7 +182,9 @@ func OutboxReadyDispatch(ctx context.Context, q Querier, tenant ids.TenantID, no
 func UncertainOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {
 	rows, err := q.Query(ctx, `
 		select operation_id::text from provider_operation
-		where tenant_id = $1 and state = 'uncertain' order by updated_at`,
+		where tenant_id = $1 and state = 'uncertain'
+		and not exists (select 1 from migration_item m where m.tenant_id=provider_operation.tenant_id and provider_operation.operation_id in (m.quiesce_operation_id,m.restart_operation_id,m.cleanup_operation_id))
+		order by updated_at`,
 		tenant.String(),
 	)
 	if err != nil {

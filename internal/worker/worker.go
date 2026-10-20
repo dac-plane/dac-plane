@@ -89,14 +89,15 @@ type Stats struct {
 // no registered port keep their rows pending; the worker never invents
 // operations, budgets or authority.
 type Worker struct {
-	pool        *pgxpool.Pool
-	logger      *slog.Logger
-	ports       map[ids.ProviderID]contracts.Port
-	enforcement map[ids.ProviderID]contracts.Port
-	artifacts   map[ids.ProviderID]ArtifactStorePort
-	owner       string
-	cfg         Config
-	stats       Stats
+	pool         *pgxpool.Pool
+	logger       *slog.Logger
+	ports        map[ids.ProviderID]contracts.Port
+	environments map[ids.ProviderID]contracts.Port
+	enforcement  map[ids.ProviderID]contracts.Port
+	artifacts    map[ids.ProviderID]ArtifactStorePort
+	owner        string
+	cfg          Config
+	stats        Stats
 }
 
 // New builds a worker. ports maps provider identities to their ports and

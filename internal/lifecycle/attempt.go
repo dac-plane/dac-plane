@@ -21,6 +21,7 @@ const (
 	AttemptCancellationRequested AttemptState = "cancellation_requested"
 	AttemptReconciling           AttemptState = "reconciling"
 	AttemptMigrating             AttemptState = "migrating"
+	AttemptMigrated              AttemptState = "migrated"
 	AttemptCompleted             AttemptState = "completed"
 	AttemptFailed                AttemptState = "failed"
 	AttemptTerminated            AttemptState = "terminated"
@@ -30,7 +31,7 @@ const (
 func AttemptStates() []AttemptState {
 	return []AttemptState{
 		AttemptAllocated, AttemptProvisioning, AttemptStarting, AttemptExecuting, AttemptWaitingInput,
-		AttemptFinalizing, AttemptCancellationRequested, AttemptReconciling, AttemptMigrating, AttemptCompleted,
+		AttemptFinalizing, AttemptCancellationRequested, AttemptReconciling, AttemptMigrating, AttemptMigrated, AttemptCompleted,
 		AttemptFailed, AttemptTerminated,
 	}
 }
@@ -39,21 +40,22 @@ func AttemptStates() []AttemptState {
 type AttemptEvent string
 
 const (
-	AttemptProvision          AttemptEvent = "provision"
-	AttemptStart              AttemptEvent = "start"
-	AttemptRuntimeStarted     AttemptEvent = "runtime_started"
-	AttemptAwaitInput         AttemptEvent = "await_input"
-	AttemptResume             AttemptEvent = "resume"
-	AttemptFinalize           AttemptEvent = "finalize"
-	AttemptComplete           AttemptEvent = "complete"
-	AttemptFail               AttemptEvent = "fail"
-	AttemptRequestCancel      AttemptEvent = "request_cancel"
-	AttemptRuntimeStopped     AttemptEvent = "runtime_stopped"
-	AttemptEnvironmentStopped AttemptEvent = "environment_stopped"
-	AttemptOutcomeUnknown     AttemptEvent = "outcome_unknown"
-	AttemptLeaseExpired       AttemptEvent = "lease_expired"
-	AttemptReconciled         AttemptEvent = "reconciled"
-	AttemptMigrate            AttemptEvent = "migrate"
+	AttemptProvision           AttemptEvent = "provision"
+	AttemptStart               AttemptEvent = "start"
+	AttemptRuntimeStarted      AttemptEvent = "runtime_started"
+	AttemptAwaitInput          AttemptEvent = "await_input"
+	AttemptResume              AttemptEvent = "resume"
+	AttemptFinalize            AttemptEvent = "finalize"
+	AttemptComplete            AttemptEvent = "complete"
+	AttemptFail                AttemptEvent = "fail"
+	AttemptRequestCancel       AttemptEvent = "request_cancel"
+	AttemptRuntimeStopped      AttemptEvent = "runtime_stopped"
+	AttemptEnvironmentStopped  AttemptEvent = "environment_stopped"
+	AttemptOutcomeUnknown      AttemptEvent = "outcome_unknown"
+	AttemptLeaseExpired        AttemptEvent = "lease_expired"
+	AttemptReconciled          AttemptEvent = "reconciled"
+	AttemptMigrate             AttemptEvent = "migrate"
+	AttemptMigrationSuperseded AttemptEvent = "migration_superseded"
 )
 
 // AttemptEvents lists every AttemptEvent.
@@ -61,7 +63,7 @@ func AttemptEvents() []AttemptEvent {
 	return []AttemptEvent{
 		AttemptProvision, AttemptStart, AttemptRuntimeStarted, AttemptAwaitInput, AttemptResume,
 		AttemptFinalize, AttemptComplete, AttemptFail, AttemptRequestCancel, AttemptRuntimeStopped,
-		AttemptEnvironmentStopped, AttemptOutcomeUnknown, AttemptLeaseExpired, AttemptReconciled, AttemptMigrate,
+		AttemptEnvironmentStopped, AttemptOutcomeUnknown, AttemptLeaseExpired, AttemptReconciled, AttemptMigrate, AttemptMigrationSuperseded,
 	}
 }
 
@@ -83,7 +85,7 @@ var stopTargets = []AttemptState{AttemptCancellationRequested, AttemptTerminated
 // resolve to an observed state but never back to a pre-dispatch state, so an
 // unknown outcome is never redispatched.
 var attemptMachine = newMachine(AttemptStates(), AttemptEvents(),
-	[]AttemptState{AttemptCompleted, AttemptFailed, AttemptTerminated},
+	[]AttemptState{AttemptCompleted, AttemptFailed, AttemptTerminated, AttemptMigrated},
 	map[AttemptState]map[AttemptEvent][]AttemptState{
 		// Nothing has been started, so cancelling needs no stop observation.
 		AttemptAllocated: {
@@ -99,7 +101,7 @@ var attemptMachine = newMachine(AttemptStates(), AttemptEvents(),
 			AttemptMigrate:    {AttemptMigrating},
 		}),
 		AttemptWaitingInput: active(map[AttemptEvent][]AttemptState{AttemptResume: {AttemptExecuting}}),
-		AttemptMigrating:    active(map[AttemptEvent][]AttemptState{}),
+		AttemptMigrating:    {AttemptMigrationSuperseded: {AttemptMigrated}},
 		AttemptFinalizing:   active(map[AttemptEvent][]AttemptState{AttemptComplete: {AttemptCompleted}}),
 		// Cancellation is intent: the attempt terminates only after both the
 		// runtime and the environment stop are observed, or reconciliation

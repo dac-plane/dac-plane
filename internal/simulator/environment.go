@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -37,6 +38,8 @@ func validEnvironmentEffect(kind EffectKind) bool {
 // operation.
 type EnvironmentScenario struct {
 	Operations map[ids.OperationID]EnvironmentOp
+	// MigrationReceipts enables explicit fenced environment stage receipts.
+	MigrationReceipts bool
 }
 
 // EnvironmentOp is one operation's script. Reply answers provision and stop.
@@ -127,6 +130,27 @@ func (e *Environment) Send(ctx context.Context, request contracts.Request) (cont
 	}
 	e.ledger.recordRequest(request)
 	step, ok := e.scenario.Operations[request.Operation]
+	if e.scenario.MigrationReceipts {
+		var migration contracts.MigrationRequest
+		if json.Unmarshal(request.Arguments, &migration) == nil && migration.Validate() == nil && migration.Operation == request.Operation {
+			var effect EffectKind
+			var environmentRef string
+			switch migration.Stage {
+			case contracts.MigrationTargetEnvironmentReady:
+				effect, environmentRef = EnvironmentProvisioned, "environment:"+migration.TargetAttempt.String()
+			case contracts.MigrationSourceCleaned:
+				effect, environmentRef = EnvironmentStopped, migration.EnvironmentRef
+			default:
+				return contracts.Reply{}, fmt.Errorf("%w: environment cannot perform migration stage %s", ErrInvalidScenario, migration.Stage)
+			}
+			receipt := contracts.MigrationReceipt{Migration: migration.Migration, Operation: migration.Operation, SourceAttempt: migration.SourceAttempt, TargetAttempt: migration.TargetAttempt, Stage: migration.Stage, ClaimEpoch: migration.ClaimEpoch, Recovery: migration.Recovery, ContextRefs: migration.ContextRefs, EnvironmentRef: environmentRef, RecordedAt: time.Now().UTC()}
+			result, err := json.Marshal(receipt)
+			if err != nil {
+				return contracts.Reply{}, err
+			}
+			step, ok = EnvironmentOp{Reply: Accepted(result), Effect: effect}, true
+		}
+	}
 	if !ok {
 		return contracts.Reply{}, fmt.Errorf("%w: %s", ErrUnscripted, request.Operation)
 	}

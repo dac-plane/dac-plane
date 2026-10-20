@@ -10,8 +10,8 @@ import (
 
 func TestContractConformanceMigrationProtocol(t *testing.T) {
 	source, target := newID[ids.Attempt](t), newID[ids.Attempt](t)
-	request := MigrationRequest{Migration: newID[ids.Migration](t), SourceAttempt: source, TargetAttempt: target, Stage: MigrationTargetStarted, ClaimEpoch: 2, Recovery: MigrationRestartFromArtifacts}
-	receipt := MigrationReceipt{Migration: request.Migration, SourceAttempt: source, TargetAttempt: target, Stage: request.Stage, ClaimEpoch: request.ClaimEpoch, Recovery: request.Recovery, RecordedAt: testNow}
+	request := MigrationRequest{Migration: newID[ids.Migration](t), Operation: newID[ids.Operation](t), SourceAttempt: source, TargetAttempt: target, Stage: MigrationTargetStarted, ClaimEpoch: 2, Recovery: MigrationRestartFromArtifacts, EnvironmentRef: "environment:target"}
+	receipt := MigrationReceipt{Migration: request.Migration, Operation: request.Operation, SourceAttempt: source, TargetAttempt: target, Stage: request.Stage, ClaimEpoch: request.ClaimEpoch, Recovery: request.Recovery, EnvironmentRef: request.EnvironmentRef, SessionRef: "session:target", RecordedAt: testNow}
 	for _, tc := range []struct {
 		c schematest.Contract
 		v any

@@ -26,6 +26,18 @@ func WithEnforcementPorts(ports map[ids.ProviderID]contracts.Port) func(*Worker)
 	}
 }
 
+// WithEnvironmentPorts registers environment-role ports by harness identity.
+// Runtime and environment adapters remain distinct even when they share a
+// provider identity.
+func WithEnvironmentPorts(ports map[ids.ProviderID]contracts.Port) func(*Worker) {
+	return func(w *Worker) {
+		w.environments = make(map[ids.ProviderID]contracts.Port, len(ports))
+		for id, p := range ports {
+			w.environments[id] = p
+		}
+	}
+}
+
 func (w *Worker) governedRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, body DispatchBody, now time.Time) error {
 	a, err := store.GetGovernedAction(ctx, w.pool, tenant, body.Operation)
 	if err != nil {

@@ -192,6 +192,40 @@ func ListBindings(ctx context.Context, q Querier, tenant ids.TenantID, provider 
 	return out, rows.Err()
 }
 
+// ListAttemptBindings returns all native resources currently bound to an
+// Attempt, in deterministic provider/kind/resource order.
+func ListAttemptBindings(ctx context.Context, q Querier, tenant ids.TenantID, attempt ids.AttemptID) ([]lifecycle.Binding, error) {
+	rows, err := q.Query(ctx, `select provider_id::text,operation_id::text,kind,native_ref,session_ref,bound_at from binding where tenant_id=$1 and attempt_id=$2 order by provider_id,kind,native_ref`, tenant.String(), attempt.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []lifecycle.Binding
+	for rows.Next() {
+		var binding lifecycle.Binding
+		var providerText, operationText, kind string
+		var session *string
+		if err := rows.Scan(&providerText, &operationText, &kind, &binding.NativeRef, &session, &binding.BoundAt); err != nil {
+			return nil, err
+		}
+		binding.Tenant, binding.Attempt, binding.Kind = tenant, attempt, lifecycle.ResourceKind(kind)
+		if binding.Provider, err = parseID[ids.Provider]("binding.provider_id", providerText); err != nil {
+			return nil, err
+		}
+		if binding.Operation, err = parseID[ids.Operation]("binding.operation_id", operationText); err != nil {
+			return nil, err
+		}
+		if session != nil {
+			binding.SessionRef = *session
+		}
+		if err := binding.Validate(); err != nil {
+			return nil, err
+		}
+		out = append(out, binding)
+	}
+	return out, rows.Err()
+}
+
 // InsertBinding persists a binding. The natural key is the native resource:
 // a conflict loads the stored row for replay comparison, so a resource bound
 // to another attempt surfaces as a mismatch, never a silent rebind.

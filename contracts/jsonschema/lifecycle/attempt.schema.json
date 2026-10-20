@@ -15,7 +15,7 @@
     "state": {
       "enum": [
         "allocated", "provisioning", "starting", "executing", "waiting_input", "finalizing",
-        "cancellation_requested", "reconciling", "migrating", "completed", "failed", "terminated"
+        "cancellation_requested", "reconciling", "migrating", "migrated", "completed", "failed", "terminated"
       ]
     },
     "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
@@ -36,7 +36,7 @@
       "enum": [
         "provision", "start", "runtime_started", "await_input", "resume", "finalize", "complete",
         "fail", "request_cancel", "runtime_stopped", "environment_stopped", "outcome_unknown",
-        "lease_expired", "reconciled", "migrate"
+        "lease_expired", "reconciled", "migrate", "migration_superseded"
       ]
     }
   }

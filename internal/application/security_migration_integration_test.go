@@ -3,21 +3,28 @@
 package application_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/application"
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -197,6 +204,22 @@ func TestSecurityMigrationPermissionReplayAndPreviewHold(t *testing.T) {
 
 func TestSecurityMigrationStalePreviewAndClaimTakeover(t *testing.T) {
 	f, cmd := migrationFixture(t)
+	s := f.submit(t, f.submitCommand("migration-takeover-source"))
+	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{s.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, runtime)
+	frame := simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "takeover-session"}),
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "takeover-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
+	)
+	if got := f.ingest(t, f.event(runtime, s, 1, frame)); got.Applied != 2 {
+		t.Fatalf("takeover source bindings=%+v", got)
+	}
+	outboxBefore, bindingsBefore := f.count(t, "outbox", "true"), f.count(t, "binding", "true")
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +295,7 @@ func TestSecurityMigrationStalePreviewAndClaimTakeover(t *testing.T) {
 	if err != nil || after.Pass != before.Pass || after.Preview != before.Preview {
 		t.Fatalf("takeover changed administration=%+v %v", after, err)
 	}
-	if f.count(t, "outbox", "true") != 0 || f.count(t, "binding", "true") != 0 {
+	if f.count(t, "outbox", "true") != outboxBefore || f.count(t, "binding", "true") != bindingsBefore {
 		t.Fatal("claim maintenance fabricated migration effects")
 	}
 	// A subsequently demoted target cannot acquire or renew administrative
@@ -305,6 +328,7 @@ func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
 	}
 	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-preview")
 	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-execute")
+	lateBeforeWorker := f.submit(t, f.submitCommand("migration-after-execute-before-worker"))
 	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "migration-snapshot")
 	if err != nil {
 		t.Fatal(err)
@@ -316,13 +340,362 @@ func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].SourceAttempt != s.Attempt.ID || items[0].State != lifecycle.MigrationItemQueued || items[0].TargetAttempt != (ids.AttemptID{}) {
-		t.Fatalf("migration snapshot = %+v, want one queued source attempt", items)
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].SourceAttempt != s.Attempt.ID || items[0].SourceAttempt == lateBeforeWorker.Attempt.ID || items[0].State != lifecycle.MigrationItemUnresolved || items[0].Reason != "source_attempt_not_executing" || items[0].TargetAttempt != (ids.AttemptID{}) || pass.State != lifecycle.MigrationFailed {
+		t.Fatalf("migration snapshot = %+v, pass=%s; want ineligible source durably unresolved and pass failed", items, pass.State)
 	}
 	claim, err := store.GetClaim(f.ctx, f.pool, f.tenant, v.Claim)
 	if err != nil || claim.State != lifecycle.ClaimClaimed || claim.Claimant != "migration-snapshot" || items[0].ClaimEpoch != claim.Epoch {
 		t.Fatalf("claim/fence = %+v / %+v / %v", claim, items, err)
 	}
+	late := f.submit(t, f.submitCommand("migration-after-snapshot"))
+	if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ReapClaims(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err = store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil || len(items) != 1 || items[0].SourceAttempt != s.Attempt.ID || items[0].SourceAttempt == late.Attempt.ID {
+		t.Fatalf("frozen migration snapshot enrolled later attempt: %+v, late=%s, err=%v", items, late.Attempt.ID, err)
+	}
+}
+
+func TestEmptyMigrationCompletesAndReleasesTenantSlot(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "empty-migration-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "empty-migration-execute")
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "empty-migration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ReapClaims(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil || pass.State != lifecycle.MigrationCompleted {
+		t.Fatalf("empty pass=%+v err=%v", pass, err)
+	}
+	u, err := store.Begin(f.ctx, f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := store.GetMigrationSlot(f.ctx, u, f.tenant)
+	_ = u.Rollback(f.ctx)
+	if err != nil || !slot.Active.IsZero() {
+		t.Fatalf("empty pass retained slot=%+v err=%v", slot, err)
+	}
+}
+
+func TestExecutingMigrationCannotBeCancelledWithoutCleanupEvidence(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-cancel-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-cancel-execute")
+	_, err = application.AdministerMigration(f.ctx, f.pool, application.MigrationAdministration{Command: application.Command{Actor: f.actor, Nonce: "migration-cancel-executing", ExpectedVersion: v.Pass.Version}, Migration: v.Pass.ID, Event: lifecycle.MigrationCancel})
+	if err == nil || !strings.Contains(err.Error(), "cannot be cancelled") {
+		t.Fatalf("cancel executing pass=%v; want explicit safe refusal", err)
+	}
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil || pass.State != lifecycle.MigrationExecuting {
+		t.Fatalf("pass after refused cancellation=%+v %v", pass, err)
+	}
+	u, err := store.Begin(f.ctx, f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := store.GetMigrationSlot(f.ctx, u, f.tenant)
+	_ = u.Rollback(f.ctx)
+	if err != nil || slot.Active != v.Pass.ID {
+		t.Fatalf("migration slot after refused cancellation=%+v %v", slot, err)
+	}
+}
+
+func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	s := f.submit(t, f.submitCommand("migration-e2e-source"))
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{s.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	droppingRuntime := &dropFirstMigrationReply{Port: sourceRuntime}
+	f.tick(t, sourceRuntime)
+	frame := simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "source-session"}),
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
+	)
+	if got := f.ingest(t, f.event(sourceRuntime, s, 1, frame)); got.Applied != 2 {
+		t.Fatalf("source binding ingestion=%+v", got)
+	}
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-e2e-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-e2e-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corruptingEnvironment := &corruptFirstMigrationReceipt{Port: targetEnvironment}
+	var workerLog bytes.Buffer
+	for passIndex := range 6 {
+		if passIndex > 0 {
+			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		restartedPool, err := store.Open(f.ctx, f.pool.Config().ConnConfig.ConnString())
+		if err != nil {
+			t.Fatal(err)
+		}
+		w, err := worker.New(restartedPool, slog.New(slog.NewTextHandler(&workerLog, nil)), map[ids.ProviderID]contracts.Port{f.provider: droppingRuntime, cmd.To: targetRuntime}, worker.DefaultConfig(), "migration-e2e",
+			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: corruptingEnvironment}))
+		if err != nil {
+			restartedPool.Close()
+			t.Fatal(err)
+		}
+		corruptedBefore := corruptingEnvironment.corrupted
+		reapErr := w.ReapClaims(f.ctx)
+		restartedPool.Close()
+		if !corruptedBefore && corruptingEnvironment.corrupted {
+			items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
+			if err != nil || len(items) != 1 {
+				t.Fatalf("migration item after malformed target receipt=%+v err=%v", items, err)
+			}
+			op, err := store.GetOperation(f.ctx, f.pool, f.tenant, items[0].EnvironmentOperation)
+			if err != nil || op.State != lifecycle.OperationUncertain {
+				t.Fatalf("malformed receipt operation=%s err=%v; want uncertain", op.State, err)
+			}
+			bindings, err := store.ListAttemptBindings(f.ctx, f.pool, f.tenant, items[0].TargetAttempt)
+			if err != nil || len(bindings) != 0 {
+				t.Fatalf("malformed receipt admitted target bindings=%+v err=%v", bindings, err)
+			}
+		} else if reapErr != nil {
+			t.Fatal(reapErr)
+		}
+		pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pass.State == lifecycle.MigrationExecuting {
+			_, cancelErr := application.AdministerMigration(f.ctx, f.pool, application.MigrationAdministration{
+				Command:   application.Command{Actor: f.actor, Nonce: fmt.Sprintf("cancel-stage-%d", passIndex), ExpectedVersion: pass.Version},
+				Migration: pass.ID, Event: lifecycle.MigrationCancel,
+			})
+			if cancelErr == nil || !strings.Contains(cancelErr.Error(), "cannot be cancelled") {
+				t.Fatalf("cancel during migration stage %d = %v; want safe refusal", passIndex, cancelErr)
+			}
+		}
+	}
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pass.State != lifecycle.MigrationCompleted || len(items) != 1 || items[0].State != lifecycle.MigrationItemCompleted {
+		t.Fatalf("migration=%s items=%+v; want completed pass and item; worker log: %s; source sent=%+v effects=%+v", pass.State, items, workerLog.String(), sourceRuntime.Ledger().Sent(), sourceRuntime.Ledger().Applied())
+	}
+	if items[0].QuiesceEpoch != 1 || items[0].EnvironmentEpoch != 3 || items[0].RestartEpoch != 5 || items[0].CleanupEpoch != 6 || items[0].ClaimEpoch != 6 {
+		t.Fatalf("migration stage fences=%d/%d/%d/%d current=%d; want each original send epoch retained across takeover", items[0].QuiesceEpoch, items[0].EnvironmentEpoch, items[0].RestartEpoch, items[0].CleanupEpoch, items[0].ClaimEpoch)
+	}
+	source, err := store.GetAttempt(f.ctx, f.pool, f.tenant, s.Attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.GetAttempt(f.ctx, f.pool, f.tenant, items[0].TargetAttempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.State != lifecycle.AttemptMigrated || target.State != lifecycle.AttemptExecuting {
+		t.Fatalf("attempt states source/target=%s/%s", source.State, target.State)
+	}
+	targetBindings, err := store.ListAttemptBindings(f.ctx, f.pool, f.tenant, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hasRuntime, hasEnvironment bool
+	for _, binding := range targetBindings {
+		hasRuntime = hasRuntime || binding.Kind == lifecycle.ResourceRuntimeSession
+		hasEnvironment = hasEnvironment || binding.Kind == lifecycle.ResourceEnvironmentResource
+	}
+	if !hasRuntime || !hasEnvironment {
+		t.Fatalf("target bindings=%+v; want runtime session and environment resource", targetBindings)
+	}
+	if sourceRuntime.Ledger().Effects(items[0].QuiesceOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].EnvironmentOperation) != 1 || targetRuntime.Ledger().Effects(items[0].RestartOperation) != 1 || sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 {
+		t.Fatalf("migration effects source-quiesce=%d target-env=%d target-runtime=%d source-cleanup=%d", sourceRuntime.Ledger().Effects(items[0].QuiesceOperation), targetEnvironment.Ledger().Effects(items[0].EnvironmentOperation), targetRuntime.Ledger().Effects(items[0].RestartOperation), sourceEnvironment.Ledger().Effects(items[0].CleanupOperation))
+	}
+	if sourceRuntime.Ledger().Deliveries(items[0].QuiesceOperation) != 2 {
+		t.Fatalf("quiesce deliveries=%d; want lost-reply replay under stable operation identity", sourceRuntime.Ledger().Deliveries(items[0].QuiesceOperation))
+	}
+}
+
+func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	s := f.submit(t, f.submitCommand("migration-stale-worker-source"))
+	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{s.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, runtime)
+	frame := simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "stale-worker-session"}),
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "stale-worker-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
+	)
+	if got := f.ingest(t, f.event(runtime, s, 1, frame)); got.Applied != 2 {
+		t.Fatalf("source bindings=%+v", got)
+	}
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-stale-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-stale-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := &blockFirstMigrationReply{Port: runtime, started: make(chan struct{}), release: make(chan struct{})}
+	newWorker := func(owner string, source contracts.Port) *worker.Worker {
+		t.Helper()
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: source, cmd.To: targetRuntime}, worker.DefaultConfig(), owner,
+			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	oldDone := make(chan error, 1)
+	go func() { oldDone <- newWorker("migration-old", blocked).ReapClaims(f.ctx) }()
+	select {
+	case <-blocked.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("old worker did not reach the post-send boundary")
+	}
+	if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := newWorker("migration-new", runtime).ReapClaims(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	passBefore, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemsBefore, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil || len(itemsBefore) != 1 || itemsBefore[0].State != lifecycle.MigrationItemStarting {
+		t.Fatalf("winner state=%+v err=%v", itemsBefore, err)
+	}
+	countBefore, auditBefore := f.count(t, "attempt", "true"), f.count(t, "audit_event", "true")
+	close(blocked.release)
+	if err := <-oldDone; err != nil {
+		t.Fatal(err)
+	}
+	passAfter, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemsAfter, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passAfter != passBefore || len(itemsAfter) != 1 || !reflect.DeepEqual(itemsAfter[0], itemsBefore[0]) || f.count(t, "attempt", "true") != countBefore || f.count(t, "audit_event", "true") != auditBefore {
+		t.Fatalf("stale worker changed durable winner: pass %s->%s items %+v->%+v attempts=%d->%d audit=%d->%d", passBefore.State, passAfter.State, itemsBefore, itemsAfter, countBefore, f.count(t, "attempt", "true"), auditBefore, f.count(t, "audit_event", "true"))
+	}
+}
+
+type blockFirstMigrationReply struct {
+	contracts.Port
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *blockFirstMigrationReply) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if request.Method == contracts.MethodInterrupt && err == nil {
+		blocked := false
+		p.once.Do(func() { blocked = true; close(p.started) })
+		if blocked {
+			select {
+			case <-p.release:
+			case <-ctx.Done():
+				return contracts.Reply{}, ctx.Err()
+			}
+		}
+	}
+	return reply, err
+}
+
+type dropFirstMigrationReply struct {
+	contracts.Port
+	once sync.Once
+}
+
+type corruptFirstMigrationReceipt struct {
+	contracts.Port
+	once      sync.Once
+	corrupted bool
+}
+
+func (p *corruptFirstMigrationReceipt) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if err != nil {
+		return reply, err
+	}
+	corrupt := false
+	p.once.Do(func() { corrupt = true })
+	if !corrupt {
+		return reply, nil
+	}
+	p.corrupted = true
+	reply.Result = json.RawMessage(`{}`)
+	return reply, nil
+}
+
+func (p *dropFirstMigrationReply) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if request.Method == contracts.MethodInterrupt && err == nil {
+		var dropped bool
+		p.once.Do(func() { dropped = true })
+		if dropped {
+			return contracts.Reply{}, errors.New("simulated lost migration reply")
+		}
+	}
+	return reply, err
 }
 
 func TestSecurityMigrationDowngradePreservesAdministration(t *testing.T) {
