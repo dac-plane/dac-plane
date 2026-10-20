@@ -156,12 +156,15 @@ func (w *Worker) snapshotMigrationClaim(ctx context.Context, tenant ids.TenantID
 	if err := uow.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
 		return err
 	}
-	_, _, err = store.SnapshotMigrationClaim(ctx, uow, tenant, id, w.owner, now.UTC())
+	pass, items, err := store.SnapshotMigrationClaim(ctx, uow, tenant, id, w.owner, now.UTC())
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrStaleVersion) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return uow.Commit(ctx)
+	if err := uow.Commit(ctx); err != nil {
+		return err
+	}
+	return w.driveMigrationItems(ctx, tenant, id, pass, items)
 }
