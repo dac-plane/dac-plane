@@ -149,7 +149,21 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 		return contracts.Ingestion{}, false, err
 	}
 	if !authoritative {
-		return contracts.Ingestion{Cursor: cursor}, false, u.Commit(ctx)
+		ingested := contracts.Ingestion{Cursor: cursor}
+		// ObserveHarness holds qualification locked. Shadow replay uses only
+		// the subscription's local cursor: no primary cursor is created or
+		// advanced, and replayed outcomes remain comparison evidence only.
+		h, err := store.GetHarness(ctx, u, operation.Tenant, operation.Provider)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return contracts.Ingestion{}, false, err
+		}
+		if err == nil && h.Mode == lifecycle.HarnessShadow {
+			ingested, failure = contracts.Ingest(cursor, bound)
+			if failure != nil {
+				return contracts.Ingestion{}, false, failure
+			}
+		}
+		return ingested, false, u.Commit(ctx)
 	}
 	current, err := store.GetOperation(ctx, u, operation.Tenant, operation.ID)
 	if err != nil {
