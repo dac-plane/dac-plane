@@ -63,8 +63,8 @@
         "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store"] },
         "method": {
           "enum": [
-            "start_turn", "steer_turn", "interrupt", "export_artifacts",
-            "provision", "stop", "observe",
+            "start_turn", "steer_turn", "interrupt", "export_artifacts", "quiesce_turn", "restart_turn",
+            "provision", "stop", "observe", "cleanup",
             "pre_action", "post_action", "action_failed", "execute_action",
             "authorize_upload", "stat_object", "commit_manifest"
           ]
@@ -76,11 +76,11 @@
       "allOf": [
         {
           "if": { "properties": { "role": { "const": "runtime" } } },
-          "then": { "properties": { "method": { "enum": ["start_turn", "steer_turn", "interrupt", "export_artifacts"] } } }
+          "then": { "properties": { "method": { "enum": ["start_turn", "steer_turn", "interrupt", "export_artifacts", "quiesce_turn", "restart_turn"] } } }
         },
         {
           "if": { "properties": { "role": { "const": "environment" } } },
-          "then": { "properties": { "method": { "enum": ["provision", "stop", "observe"] } } }
+          "then": { "properties": { "method": { "enum": ["provision", "stop", "observe", "cleanup"] } } }
         },
         {
           "if": { "properties": { "role": { "const": "enforcement" } } },

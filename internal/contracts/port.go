@@ -25,10 +25,16 @@ const (
 	MethodSteerTurn       Method = "steer_turn"
 	MethodInterrupt       Method = "interrupt"
 	MethodExportArtifacts Method = "export_artifacts"
+	// Migration stages are explicit provider evidence. They never claim that a
+	// native session was resumed; the only supported recovery is a new target
+	// turn restarted from durable artifacts.
+	MethodQuiesceTurn Method = "quiesce_turn"
+	MethodRestartTurn Method = "restart_turn"
 
 	MethodProvision Method = "provision"
 	MethodStop      Method = "stop"
 	MethodObserve   Method = "observe"
+	MethodCleanup   Method = "cleanup"
 
 	MethodPreAction     Method = "pre_action"
 	MethodExecuteAction Method = "execute_action"
@@ -45,9 +51,9 @@ const (
 func Methods(role Role) []Method {
 	switch role {
 	case RoleRuntime:
-		return []Method{MethodStartTurn, MethodSteerTurn, MethodInterrupt, MethodExportArtifacts}
+		return []Method{MethodStartTurn, MethodSteerTurn, MethodInterrupt, MethodExportArtifacts, MethodQuiesceTurn, MethodRestartTurn}
 	case RoleEnvironment:
-		return []Method{MethodProvision, MethodStop, MethodObserve}
+		return []Method{MethodProvision, MethodStop, MethodObserve, MethodCleanup}
 	case RoleEnforcement:
 		return []Method{MethodPreAction, MethodPostAction, MethodActionFailed, MethodExecuteAction}
 	case RoleArtifactStore:

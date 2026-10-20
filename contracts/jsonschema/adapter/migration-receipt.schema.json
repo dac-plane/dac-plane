@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["migration_id", "source_attempt_id", "stage", "claim_epoch", "recorded_at"],
+  "properties": {
+    "migration_id": { "type": "string", "format": "uuid" },
+    "source_attempt_id": { "type": "string", "format": "uuid" },
+    "target_attempt_id": { "type": "string", "format": "uuid" },
+    "stage": { "enum": ["source_quiesced", "target_started", "source_cleaned"] },
+    "claim_epoch": { "type": "integer", "minimum": 1 },
+    "recovery": { "const": "restart_from_artifacts" },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  }
+}
