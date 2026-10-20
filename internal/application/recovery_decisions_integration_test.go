@@ -4,7 +4,6 @@ package application_test
 
 import (
 	"context"
-	"errors"
 	"io"
 	"reflect"
 	"testing"
@@ -56,7 +55,7 @@ func TestRecoveryDecisionErrorsRespectFences(t *testing.T) {
 					}
 					return reply, nil
 				}}
-				if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil && !errors.Is(err, store.ErrStaleVersion) {
+				if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil {
 					t.Fatal(err)
 				}
 				if before == nil || !reflect.DeepEqual(before, f.recoverySnapshot(t)) {
@@ -149,6 +148,95 @@ func TestRecoveryDecisionDemotionBeforeSettlement(t *testing.T) {
 				}
 				if steer.Ledger().Effects(s.Operation.ID) != 1 {
 					t.Fatal("decision effect count changed")
+				}
+			})
+		}
+	}
+}
+
+func TestRecoveryLostDecisionFenceKeepsBatchMoving(t *testing.T) {
+	for _, outcome := range []string{"accepted", "transport", "malformed"} {
+		for _, fence := range []string{"outbox_expiry", "attempt_expiry", "outbox_takeover", "attempt_takeover", "late_attempt_expiry"} {
+			if fence == "late_attempt_expiry" && outcome != "accepted" {
+				continue
+			}
+			t.Run(outcome+"/"+fence, func(t *testing.T) {
+				f := newFixture(t, lifecycle.HarnessLive)
+				s, rt := f.executing(t, "batch-decision")
+				f.raise(t, rt, s, 2, question("question", f.at.Add(time.Hour)))
+				cmd := f.decideCommand("answer", f.attention(t, s), lifecycle.DecisionDeny)
+				cmd.At = f.at
+				view := f.decide(t, cmd)
+				nextCommand := f.submitCommand("next-in-batch")
+				nextCommand.Demand = contracts.DemandBackground
+				next := f.submit(t, nextCommand)
+				steer := f.steer(t, s)
+				if fence == "late_attempt_expiry" {
+					// Expire after the initial fence check, inside the same
+					// settlement transaction. Its final check must roll it all back.
+					if _, err := f.pool.Exec(f.ctx, `create function recovery_expire_decision_lease() returns trigger language plpgsql as $$
+						begin update attempt set lease_expires_at=clock_timestamp()-interval '1 second'
+						where tenant_id=NEW.tenant_id and attempt_id=NEW.attempt_id; return NEW; end $$;
+						create trigger recovery_expire_decision_lease after update on attention_request
+						for each row when (NEW.state='delivered') execute function recovery_expire_decision_lease()`); err != nil {
+						t.Fatal(err)
+					}
+				}
+				snapshot := func() string {
+					var raw string
+					if err := f.pool.QueryRow(f.ctx, `select jsonb_build_object(
+						'outbox',(select to_jsonb(o) from outbox o where tenant_id=$1 and outbox_id=$2),
+						'attempt',(select to_jsonb(a) from attempt a where tenant_id=$1 and attempt_id=$3))::text`,
+						f.tenant.String(), view.DecisionID, s.Attempt.ID.String()).Scan(&raw); err != nil {
+						t.Fatal(err)
+					}
+					return raw
+				}
+				var before string
+				nextEffects := 0
+				p := &recoveryPort{Port: steer, send: func(ctx context.Context, r contracts.Request) (contracts.Reply, error) {
+					if r.Operation == next.Operation.ID {
+						if before == "" {
+							t.Fatal("follow-up dispatched before the person-demand decision")
+						}
+						nextEffects++
+						return contracts.Reply{Operation: r.Operation, Delivery: r.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted}, nil
+					}
+					reply, err := steer.Send(ctx, r)
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch fence {
+					case "outbox_expiry":
+						_, err = f.pool.Exec(ctx, `update outbox set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), view.DecisionID)
+					case "attempt_expiry":
+						_, err = f.pool.Exec(ctx, `update attempt set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and attempt_id=$2`, f.tenant.String(), s.Attempt.ID.String())
+					case "outbox_takeover":
+						_, err = f.pool.Exec(ctx, `update outbox set lease_epoch=lease_epoch+1,claimed_by='replacement' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), view.DecisionID)
+					case "attempt_takeover":
+						_, err = f.pool.Exec(ctx, `update attempt set lease_epoch=lease_epoch+1,lease_owner='replacement' where tenant_id=$1 and attempt_id=$2`, f.tenant.String(), s.Attempt.ID.String())
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					before = snapshot()
+					if outcome == "transport" {
+						return contracts.Reply{}, io.ErrUnexpectedEOF
+					}
+					if outcome == "malformed" {
+						reply.Outcome = "invalid"
+					}
+					return reply, nil
+				}}
+				if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil {
+					t.Fatal(err)
+				}
+				op, err := store.GetOperation(f.ctx, f.pool, f.tenant, next.Operation.ID)
+				if err != nil || op.State != lifecycle.OperationAccepted || nextEffects != 1 {
+					t.Fatalf("following row state=%s effects=%d err=%v", op.State, nextEffects, err)
+				}
+				if before == "" || snapshot() != before || steer.Ledger().Effects(s.Operation.ID) != 1 {
+					t.Fatal("stale settlement changed its records or repeated its effect")
 				}
 			})
 		}

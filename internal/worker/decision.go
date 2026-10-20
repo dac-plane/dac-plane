@@ -20,7 +20,15 @@ import (
 // same identity. A spent retry budget leaves the request dispatching and the
 // row exhausted: inspectable evidence, never the assumption that the runtime
 // resumed.
-func (w *Worker) decisionRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, now time.Time) error {
+func (w *Worker) decisionRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, now time.Time) (err error) {
+	defer func() {
+		// The inner handler has already rolled back. A lost fence is a
+		// no-fault race, including expiry at a final settlement check; it
+		// must not prevent the next row in this tenant's batch from running.
+		if errors.Is(err, store.ErrStaleVersion) {
+			err = nil
+		}
+	}()
 	body, err := ParseDecisionBody(row.Payload)
 	if err != nil {
 		return w.poison(ctx, tenant, row, now, reasonInvalidBody)
