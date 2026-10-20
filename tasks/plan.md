@@ -1,125 +1,84 @@
-# Issue #27 — recovery, replay, fencing and restart safety
+# Issue #28 — security and lifecycle acceptance
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/27
-Branch: `feature/27-recovery-safety`, from merged #26 (`3a52451`).
+Tracker: https://github.com/dac-plane/dac-plane/issues/28
+Branch: `feature/28-security-lifecycle`, from merged #27 (`77a79f6`).
 
 ## Direction
 
-The active architecture and ADR-0003 govern this acceptance campaign. Keep
-PostgreSQL/outbox and one product lifecycle owner. Exploration stays read-only.
-Uncertainty is not permission to resend. Artifact stages and decision delivery
-retain their explicit, identity-bound replay protocols.
+Active architecture and ADR-0003 govern implementation; exploration supplies
+supporting evidence only. Preserve one product-owned lifecycle, PostgreSQL/
+outbox and replaceable providers. Extend existing acceptance evidence and fix
+demonstrated defects without adding a service or workflow engine.
 
-## Ordered work
+## Ordered implementation
 
-- [x] Reproduce runtime send, frame-validation, cursor recovery and shadow gaps.
-- [x] Fence ordinary runtime send uncertainty and stale settlement.
-- [x] Reconcile accepted observations atomically; reopen bounded cursor recovery.
-- [x] Gate shadow/off observations and persist deduplicated safe comparisons.
-- [x] Make simulator decisions independently replayable on one runtime operation.
-- [x] Prove restart, handshake, takeover and transaction-failure boundaries.
-- [x] Add focused recovery recipes and an acceptance/evidence implementation note.
-- [x] Run focused/race/contract checks, a restored mutation, and final `just ci`.
+- [x] Create #60 for actual simulator-backed harness migration execution and
+  link it to #11, #28 and #30 without removing existing requirements.
+- [x] Reproduce expired/backdated and cross-command spend assertion defects.
+  Require fresh server time under locks, preserving exact command-nonce replay.
+- [x] Add typed cumulative `usage.reported`, schema and agreement tests; derive
+  budget/reservation identity from authenticated Attempt lineage. Prove terminal
+  late usage, overshoot, replay, wrong-unit refusal and shadow/off isolation.
+- [ ] Extend tenant/operation forgery, authority denial/revocation/replay,
+  partial/lost/duplicate cancellation and serialized action acceptance tests.
+- [ ] Prove same-budget reservation races at the store boundary and competing
+  rework commands through the application. No ceiling increases or additional
+  reservations/receipts/dispatch from invalid assertion replay.
+- [ ] Add restricted authenticated migration administration, migration 00007
+  and ADR-0004. Prove permission, preview/hold invalidation and claim fencing.
+- [ ] Map artifact corruption and crash boundaries to existing evidence; add
+  only missing full-path restart cases, including after metadata admission.
+- [ ] Add `just test-security` / `just test-security-race` and an architecture
+  evidence note. Run focused, race, contracts and final `just ci` sequentially.
 
-## Acceptance
+## Migration administration boundary
 
-Map command replay, restart while waiting, lost runtime reply, stream recovery,
-stale claimant, governed recovery, artifact recovery, shadow restart and atomic
-transaction failure to executable tests. Reuse already-sufficient tests. New
-tests exercise application commands/ingestion and workers, with direct store
-setup limited to qualification and precise crash/fault boundaries.
+Actual source quiescence, target preparation/cutover and cleanup belong to
+[#60](https://github.com/dac-plane/dac-plane/issues/60). Administrative execute
+records intent only. No method may mark a migration completed without that
+engine's execution evidence, and #28 does not change active provider bindings.
 
-Use fresh workers and database pools against the same database. Keep provider
-effect ledgers alive across product restart. Synchronize on bounded channels
-and explicit claim expiry, not arbitrary sleeps. Assert record versions,
-audit/events, outbox, receipts and external effects, not only final state.
+Use a narrow persisted tenant/principal administrator permission provisioned
+by trusted setup, not caller allowlists, self-grant commands or general RBAC.
+Current permission is required even for replay reads; lock it to serialize
+revocation with mutation. Commands use the existing nonce/expected-version
+envelope: create, preview, hold, release, execute and cancel.
 
-## Boundaries
+Preview captures source/target qualification versions under deterministic
+locks and server time. Require distinct live providers, a bounded five-minute
+preview lifetime, and invalidate on hold/release. Execute rechecks the snapshot.
+Define initial claim acquisition explicitly: the existing reaper only selects
+claimed work and cannot start scheduled work. Serialize migration intent per
+tenant with one reusable maintenance resource, fence prior holders, and check
+the linked executing pass before claim settlement. Hold/cancel prevents
+settlement. Claim ownership alone never proves a provider transfer completed.
 
-No dependency, public wire field, lifecycle state, migration, transport, cloud
-provider or workflow engine is planned. #28 owns broader security coverage;
-#29 evaluates SQL/outbox evidence; post-action/failure hooks remain a #30 gate.
+Add migration 00007 without editing released migrations. Historical records
+remain readable; do not fabricate permission/preview evidence. Refuse downgrade
+that would discard new administration data. Exploration and accepted ADRs stay
+unchanged. Review this design before implementing the new boundary.
 
-## Verification
+## Evidence and verification
 
-Observed implementation results:
+Record test names, layer, observed results and external effects for every
+acceptance criterion. Reuse sufficient #25–#27 tests. Safe refusal audits and
+denial records are permitted; refused actions change no authoritative lifecycle,
+accounting or executable dispatch and cause no external effects.
 
-- The initial recovery regressions failed on lost-send retry, raw malformed/
-  duplicate outcome acceptance, missing cursor reopen and shadow mutation.
-- A separate Attempt-takeover regression failed before the settlement fence fix.
-- Expanded application recovery tests passed under the race detector (84.853s).
-- `just test-recovery` passed: application 161.489s, worker 23.720s,
-  PostgreSQL 19.257s and simulator 0.492s.
-- A temporary inversion of the operation-outcome entry gate made
-  `TestRecoveryRuntimeTransportLossNeverResends` fail, leaving the operation
-  uncertain instead of proving recovery. The exact gate was restored.
-- `just test-recovery-race` passed: application 180.083s, worker 26.388s,
-  PostgreSQL 23.149s and simulator 1.492s. The selector also includes the
-  `Reconciliation` phase guards, separately observed passing under race (5.977s).
-- The queued stale-policy-generation restart test passed under race (4.871s).
-- Final review added a decision-parent rebinding assertion: it failed before
-  the cache-key correction and passed afterward, including simulator race tests.
-- `just test-contracts`, format checks and integration vet passed.
-- Final `just ci` passed on the completed implementation: uncached race-enabled
-  integration tests passed application (403.945s), worker (64.853s), PostgreSQL
-  (108.863s), migrations (31.930s) and every other package. Unit/race tests,
-  schema guards, module verification, vet and workflow lint passed. The
-  vulnerability scan found no vulnerabilities.
+Use bounded synchronization and explicit expiry rather than correctness sleeps.
+Keep provider effect ledgers across fresh worker/pool restarts. Distinguish
+lower-layer budget proofs from complete command/adapter acceptance. Shadow/off
+observations must not advance primary cursors or lifecycle. No HTTP/UI, cloud
+provider, production identity ceremony, penetration-test or DR campaign.
+Post-action/failure hooks stay #30; SQL/outbox sufficiency stays #29.
 
-PR architecture-review follow-up:
+Observed first-slice results: both spend defects and ignored late usage failed
+new regressions before fixes. The expanded security tests passed under race
+(20.548s); existing spend integration regressions passed under race (18.790s).
+Contract schemas and coverage guards passed. Inverting the cumulative-usage
+guard made the late-usage regression fail; the guard was restored. These results
+do not establish the unfinished campaign or full-CI completion.
 
-- Added decision-delivery regressions for queued shadow/off qualification,
-  in-flight demotion and transport/unknown/malformed replies after outbox or
-  Attempt expiry/takeover. The regressions exposed both reviewed gaps before
-  the corrections.
-- Post-send decision handlers now share scope, qualification and fresh-fence
-  checks. Non-live queued decisions retain their intent for later live delivery.
-- `just test-integration-race ./internal/application/ -run TestRecoveryDecision`
-  passed (53.108s). The worker delivery regressions passed under race (10.397s)
-  after their fixture explicitly registered its live harness; the worker
-  decision retry regressions also passed under race (7.667s).
-- Inverting the new settlement qualification gate in a temporary Go overlay
-  caused the demotion regression to fail. The tracked source was unchanged
-  throughout that mutation check.
-- Final follow-up `just ci` passed, including uncached race-enabled application
-  (450.449s), worker (58.867s), PostgreSQL (99.715s) and migration (27.004s)
-  integration suites. Vulnerability scanning found no vulnerabilities and
-  workflow lint passed.
-
-Additional PR review regressions:
-
-- Shadow cursor resets originally left replay closed. Local-only shadow
-  ingestion now opens bounded replay without creating/advancing primary cursors
-  or settling operations. Tests cover cleared/expired cursors, unavailable
-  replay, reset loops, restart deduplication and off mode.
-- Lost decision fences originally aborted the rest of the tenant batch.
-  Decision delivery now treats stale-version races as no-ops after the inner
-  transaction rolls back. Batch tests cover accepted, transport-error and
-  malformed replies across expiry/takeover, including expiry injected after
-  the initial settlement check.
-- Both regressions failed before their respective fixes.
-- Race-enabled shadow reset regressions passed (23.669s), and the expanded
-  decision recovery suite passed (158.568s), including the late-expiry rollback
-  and same-batch continuation test.
-- GitHub CI passed on `3dd0bc4`, including its full integration job (9m21s).
-  The corresponding local full run reported clock-sensitive artifact retry
-  failures and reached the application package's default ten-minute timeout
-  while starting PostgreSQL. It is not recorded as a local pass.
-- Two artifact fixtures now force retry timestamps explicitly into the past
-  rather than relying on database `now()` being no later than the worker's
-  host-clock poll. Both previously failing race-enabled tests passed after
-  the fixture correction: mismatch/exhaustion (11.074s) and lost commit reply
-  (6.002s). No artifact production code changed. CI reruns for this test-only
-  follow-up; the earlier successful run does not verify the later commit.
-
-The campaign adds 27 recovery test functions, retaining the existing replay,
-authority, artifact and fencing tests as complementary evidence. Local full CI
-is not a claim about unrun GitHub checks or production-provider qualification.
-
-Implementation detail refined after tracing submission: `dispatched` already
-means enqueued. The existing outbox metadata carries a static `send_started`
-marker committed just before sending. Historical processing claims remain
-conservatively uncertain; missing older markers never prove no effect.
-
-The evidence index and boundaries are in
-[`docs/architecture/recovery-27.md`](../docs/architecture/recovery-27.md).
+Demonstrate defects before accepting fixes. Integration runs are uncached and
+use the repository's macOS SDK setup. Do not run competing heavy test campaigns
+or execute focused recipes twice in CI, which already covers their packages.
