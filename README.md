@@ -4,8 +4,9 @@
 lifecycle—tasks, attempts, attention, decisions, budgets, artifacts, audit, result revisions and
 reviews—while agent runtimes and execution environments remain replaceable integrations.
 
-The product lifecycle is not implemented yet. The repository contains the initial Go process and
-PostgreSQL test foundation; the reviewed implementation baseline is in
+The repository implements the transport-neutral lifecycle through application commands, PostgreSQL
+persistence, fenced workers and deterministic provider simulators. There is no HTTP surface or
+qualified production provider yet. The reviewed implementation baseline is in
 [`docs/architecture/`](docs/architecture/README.md). The earlier candidate research, experiments and
 TypeScript/PostgreSQL prototypes are retained under [`architecture-explore/`](architecture-explore/README.md)
 as evidence, not as the active product implementation.
@@ -41,4 +42,5 @@ Checks are recipes in the root `justfile`, which CI also calls; it needs
 
 The current process requires `DAC_DATABASE_URL` and accepts an optional positive Go duration in
 `DAC_DATABASE_CONNECT_TIMEOUT` (default `10s`). It connects to PostgreSQL, waits for SIGINT or SIGTERM,
-and shuts down cleanly. No HTTP surface or product lifecycle behavior exists yet.
+and shuts down cleanly. Lifecycle commands and worker behavior are exercised by the application and
+integration suites; the process does not yet expose them over HTTP.

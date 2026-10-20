@@ -2,9 +2,12 @@ package simulator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 )
 
@@ -37,6 +40,8 @@ func validRuntimeEffect(kind EffectKind) bool {
 // RuntimeScenario is the script a Runtime follows: one step per operation.
 type RuntimeScenario struct {
 	Operations map[ids.OperationID]RuntimeOp
+	// Decisions script distinct native steers on an existing runtime operation.
+	Decisions map[ids.DecisionID]RuntimeOp
 }
 
 // RuntimeOp is one operation's script. Reply answers Send. Effect is applied
@@ -59,6 +64,14 @@ type Runtime struct {
 	scenario       RuntimeScenario
 	ledger         *Ledger
 	deliveries     *deliveries
+	mu             sync.Mutex
+	decisions      map[ids.DecisionID]*deliveries
+	fingerprints   map[runtimeWork]identity.Digest
+}
+
+type runtimeWork struct {
+	operation ids.OperationID
+	decision  ids.DecisionID
 }
 
 // NewRuntime validates the config and the scenario and returns the simulator.
@@ -72,11 +85,18 @@ func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
 			return nil, fmt.Errorf("%w: %s is not a runtime effect", ErrInvalidScenario, step.Effect)
 		}
 	}
+	for _, step := range scenario.Decisions {
+		if step.Effect != "" && step.Effect != TurnSteered {
+			return nil, fmt.Errorf("%w: decision requires a steer effect", ErrInvalidScenario)
+		}
+	}
 	return &Runtime{
-		config:     config,
-		scenario:   scenario,
-		ledger:     newLedger(),
-		deliveries: newDeliveries(),
+		config:       config,
+		scenario:     scenario,
+		ledger:       newLedger(),
+		deliveries:   newDeliveries(),
+		decisions:    map[ids.DecisionID]*deliveries{},
+		fingerprints: map[runtimeWork]identity.Digest{},
 	}, nil
 }
 
@@ -123,6 +143,19 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	}
 	r.ledger.recordRequest(request)
 	step, ok := r.scenario.Operations[request.Operation]
+	key := runtimeWork{operation: request.Operation}
+	if request.Method == contracts.MethodSteerTurn {
+		var body struct {
+			Decision ids.DecisionID `json:"decision_id"`
+		}
+		if json.Unmarshal(request.Arguments, &body) != nil || body.Decision.IsZero() {
+			return contracts.Reply{}, fmt.Errorf("%w: steer requires its decision identity", ErrMalformedRequest)
+		}
+		key.decision = body.Decision
+		if decision, exists := r.scenario.Decisions[body.Decision]; exists {
+			step, ok = decision, true
+		}
+	}
 	if !ok {
 		return contracts.Reply{}, fmt.Errorf("%w: %s", ErrUnscripted, request.Operation)
 	}
@@ -130,7 +163,11 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		return contracts.Reply{}, fmt.Errorf("%w: %s applies no %s", ErrInvalidScenario, request.Method, step.Effect)
 	}
 
-	recorded, done, release, err := r.deliveries.claim(ctx, request)
+	deliveries, err := r.deliveryScope(key, request)
+	if err != nil {
+		return contracts.Reply{}, err
+	}
+	recorded, done, release, err := deliveries.claim(ctx, request)
 	if err != nil {
 		return contracts.Reply{}, err
 	}
@@ -150,7 +187,7 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		r.ledger.recordEffect(Effect{
 			Role: contracts.RoleRuntime, Operation: request.Operation, Method: request.Method, Kind: step.Effect,
 		})
-		r.deliveries.finish(request.Operation, request.Method, reply)
+		deliveries.finish(request.Operation, request.Method, reply)
 		if err := r.config.Control.reach(ctx, request.Operation, AfterEffect); err != nil {
 			return contracts.Reply{}, err
 		}
@@ -159,6 +196,41 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		return contracts.Reply{}, step.SendError
 	}
 	return reply, nil
+}
+
+// deliveryScope keeps decision idempotency separate from the parent turn and
+// refuses changed work even when the provider already has a cached reply.
+func (r *Runtime) deliveryScope(key runtimeWork, request contracts.Request) (*deliveries, error) {
+	if !key.decision.IsZero() {
+		// A decision identity cannot be rebound to a different parent operation.
+		key.operation = ids.OperationID{}
+	}
+	raw, err := json.Marshal(struct {
+		Operation ids.OperationID
+		Tenant    ids.TenantID
+		Attempt   ids.AttemptID
+		Method    contracts.Method
+		Arguments identity.Digest
+	}{request.Operation, request.Tenant, request.Attempt, request.Method, identity.DigestOf(request.Arguments)})
+	if err != nil {
+		return nil, err
+	}
+	fingerprint := identity.DigestOf(raw)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if prior, ok := r.fingerprints[key]; ok && prior != fingerprint {
+		return nil, fmt.Errorf("%w: operation reused with changed payload", ErrMalformedRequest)
+	}
+	r.fingerprints[key] = fingerprint
+	if key.decision.IsZero() {
+		return r.deliveries, nil
+	}
+	d, ok := r.decisions[key.decision]
+	if !ok {
+		d = newDeliveries()
+		r.decisions[key.decision] = d
+	}
+	return d, nil
 }
 
 // Cancel records the cancellation intent. Cancellation is confirmed by

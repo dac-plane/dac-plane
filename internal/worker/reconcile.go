@@ -2,47 +2,18 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
-// reconcileStream is the per-operation stream the reconciler follows.
 const reconcileStream = "dispatch"
 
-// outcomeEntryKind is the stream entry kind that carries an operation
-// outcome. Producers (loopback in tests, providers in production) report
-// terminal movement through it; every other entry only advances the cursor.
-const outcomeEntryKind = "operation_outcome"
-
-// outcomeEntryBody is the outcome entry payload: the reconciled state.
-type outcomeEntryBody struct {
-	State lifecycle.OperationState `json:"state"`
-}
-
-// reconcileOutcomeStates are the only states reconciliation may land on.
-// Uncertain never returns to recorded or dispatched: an unknown effect is
-// reconciled, never resent.
-func reconcileOutcomeStates() map[lifecycle.OperationState]bool {
-	return map[lifecycle.OperationState]bool{
-		lifecycle.OperationAccepted:  true,
-		lifecycle.OperationSucceeded: true,
-		lifecycle.OperationFailed:    true,
-		lifecycle.OperationRejected:  true,
-	}
-}
-
-// Reconcile resolves uncertain operations from bound provider observations.
-// Operations with no provider, no outcome, or an unparsable stream stay
-// uncertain; reconciliation never redispatches.
+// Reconcile inspects uncertain effects. It never dispatches them again.
 func (w *Worker) Reconcile(ctx context.Context) error {
 	tenants, err := store.ListTenants(ctx, w.pool)
 	if err != nil {
@@ -52,24 +23,17 @@ func (w *Worker) Reconcile(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := w.reconcileTenant(ctx, tenant); err != nil {
-			w.logger.Error("reconcile failed", "tenant", tenant.String(), "error", err)
-		}
-	}
-	return nil
-}
-
-func (w *Worker) reconcileTenant(ctx context.Context, tenant ids.TenantID) error {
-	operations, err := store.UncertainOperations(ctx, w.pool, tenant)
-	if err != nil {
-		return err
-	}
-	for _, operation := range operations {
-		if err := ctx.Err(); err != nil {
+		operations, err := store.UncertainOperations(ctx, w.pool, tenant)
+		if err != nil {
 			return err
 		}
-		if err := w.reconcileOperation(ctx, tenant, operation); err != nil {
-			w.logger.Error("operation reconcile failed", "operation", operation.ID.String(), "error", err)
+		for _, op := range operations {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := w.reconcileOperation(ctx, tenant, op); err != nil {
+				w.logger.Error("operation reconcile failed", "operation", op.ID.String(), "error", err)
+			}
 		}
 	}
 	return nil
@@ -82,24 +46,32 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 		return nil
 	}
 	if action, err := store.GetGovernedAction(ctx, w.pool, tenant, operation.ID); err == nil {
-		return w.reconcileGoverned(ctx, tenant, operation, action)
+		return w.reconcileStreamOperation(ctx, tenant, operation, &action)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	return w.reconcileStreamOperation(ctx, tenant, operation, nil)
+}
+
+func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, action *store.GovernedAction) error {
 	port, ok := w.ports[operation.Provider]
+	if action != nil {
+		if enforcement := w.enforcement[operation.Provider]; enforcement != nil {
+			port, ok = enforcement, true
+		}
+		if port != nil && port.Role() != contracts.RoleEnforcement {
+			return nil
+		}
+	}
 	if !ok {
 		w.stats.SkippedNoPort.Add(1)
 		return nil
 	}
 	cursor, err := store.GetCursor(ctx, w.pool, tenant, operation.ID, reconcileStream)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-		cursor = contracts.Cursor{
-			Tenant: tenant, Attempt: operation.Attempt, Operation: operation.ID,
-			Stream: reconcileStream, Generation: 1,
-		}
+	if errors.Is(err, store.ErrNotFound) {
+		cursor = contracts.Cursor{Tenant: tenant, Attempt: operation.Attempt, Operation: operation.ID, Stream: reconcileStream, Generation: 1}
+	} else if err != nil {
+		return err
 	}
 	sctx, cancel := context.WithTimeout(ctx, w.cfg.StreamTimeout)
 	defer cancel()
@@ -107,168 +79,136 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 	if err != nil {
 		return nil
 	}
-	defer func() { _ = stream.Close() }()
+	defer func() {
+		if stream != nil {
+			_ = stream.Close()
+		}
+	}()
+	// Replay may start below the durable high-water mark after cursor loss.
+	// Keep that watermark separate and reject a concurrent change to it.
+	var replayWatermark *contracts.Cursor
 	for {
 		frame, err := stream.Next(sctx)
 		if err != nil {
-			if errors.Is(err, io.EOF) || sctx.Err() != nil {
-				break
-			}
-			// A broken stream ends this pass; the next tick resumes
-			// from the persisted cursor.
-			break
-		}
-		resolved, err := w.ingestFrame(sctx, tenant, operation, cursor, frame)
+			return nil
+		} // The next pass resumes from durable progress.
+		ingested, settled, err := w.reconcileFrame(sctx, operation, cursor, frame, replayWatermark, action)
 		if err != nil {
 			return err
 		}
-		cursor = resolved
-		if outcome, ok := outcomeOf(frame); ok {
-			// The cursor advance commits atomically with the outcome:
-			// persisting it first would mark the entry consumed while
-			// the operation stays uncertain if the apply then fails.
-			return w.applyOutcome(ctx, tenant, operation, outcome, cursor)
+		if settled {
+			return nil
 		}
-		if err := w.persistCursor(ctx, tenant, cursor); err != nil {
-			return err
+		if ingested.Stale {
+			// This subscription still belongs to its original generation.
+			// Do not relabel subsequent old frames with the newer stored cursor.
+			return nil
 		}
-	}
-	return w.persistCursor(ctx, tenant, cursor)
-}
-
-// ingestFrame binds one stream frame to the recorded operation and advances
-// the cursor through the contract path, so dedupe, staleness and rehydrate
-// behave exactly as ingestion elsewhere.
-func (w *Worker) ingestFrame(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, cursor contracts.Cursor, frame contracts.StreamFrame) (contracts.Cursor, error) {
-	event := contracts.Event{
-		Tenant: tenant, Attempt: operation.Attempt, Provider: operation.Provider,
-		Operation: operation.ID, Stream: cursor.Stream, Generation: cursor.Generation,
-		Body: frame,
-	}
-	bound, failure := contracts.BindEvent(contracts.Peer{Tenant: tenant, Provider: operation.Provider}, event, operation)
-	if failure != nil {
-		w.logger.Error("reconcile frame not bound", "operation", operation.ID.String(), "failure", failure)
-		return cursor, nil
-	}
-	ingested, failure := contracts.Ingest(cursor, bound)
-	if failure != nil {
-		w.logger.Error("reconcile ingest failed", "operation", operation.ID.String(), "failure", failure)
-		return cursor, nil
-	}
-	return ingested.Cursor, nil
-}
-
-// outcomeOf extracts a reconciled terminal state from a rows frame. Unknown
-// entries are ignored: they advance the cursor but resolve nothing.
-func outcomeOf(frame contracts.StreamFrame) (lifecycle.OperationState, bool) {
-	if frame.Kind != contracts.StreamRows || frame.Rows == nil {
-		return "", false
-	}
-	for _, entry := range frame.Rows.Entries {
-		if entry.Kind != outcomeEntryKind {
-			continue
-		}
-		var body outcomeEntryBody
-		if err := json.Unmarshal(entry.Payload, &body); err != nil {
-			continue
-		}
-		if reconcileOutcomeStates()[body.State] {
-			return body.State, true
-		}
-	}
-	return "", false
-}
-
-// applyOutcome reconciles an uncertain operation to its observed terminal
-// state and records shadow evidence when the harness runs in shadow.
-func (w *Worker) applyOutcome(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, outcome lifecycle.OperationState, cursor contracts.Cursor) error {
-	uow, err := store.Begin(ctx, w.pool)
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = uow.Rollback(ctx)
-		}
-	}()
-	if _, _, err := store.LockResultScope(ctx, uow, tenant, operation.Attempt); err != nil {
-		return err
-	}
-	current, err := store.GetOperation(ctx, uow, tenant, operation.ID)
-	if err != nil {
-		return err
-	}
-	resolved := false
-	if current.State == lifecycle.OperationUncertain {
-		tr, err := w.transition(current.Version, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		reconciled, _, err := store.ApplyOperation(ctx, uow, tenant, current.ID, lifecycle.OperationReconcile, outcome, tr)
-		if err != nil {
-			if errors.Is(err, store.ErrStaleVersion) {
+		cursor = ingested.Cursor
+		if ingested.Rehydrate {
+			if replayWatermark != nil {
+				return nil
+			} // One reset per pass, never a busy loop.
+			watermark := cursor
+			replayWatermark = &watermark
+			cursor.After = 0
+			_ = stream.Close()
+			stream = nil
+			stream, err = port.Subscribe(sctx, cursor)
+			if err != nil {
 				return nil
 			}
-			return err
 		}
-		// The reconciled outcome resolves the Attempt the uncertainty stopped.
-		step := progress.Step{UOW: uow, Tenant: tenant, Actor: SystemActor(), At: tr.At}
-		if err := step.FollowOperation(ctx, reconciled); err != nil {
-			return err
-		}
-		if harness, err := store.GetHarness(ctx, uow, tenant, current.Provider); err == nil && harness.Mode == lifecycle.HarnessShadow {
-			shadowID, err := ids.New[ids.Any]()
-			if err != nil {
-				return err
-			}
-			if _, _, err := store.RecordShadowResult(ctx, uow, store.ShadowResult{
-				ID: shadowID, Tenant: tenant, Attempt: current.Attempt, CapturedAt: tr.At,
-				Summary: "reconciled " + string(outcome), Comparison: "observed",
-				Digest: identity.DigestOf([]byte(current.ID.String() + ":" + string(outcome))),
-			}); err != nil {
-				return err
-			}
-		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-		resolved = true
 	}
-	// Someone else may have resolved the operation first; either way the
-	// entry is consumed, so the cursor advances in the same commit.
-	if _, err := store.AdvanceCursor(ctx, uow, cursor); err != nil {
-		return err
-	}
-	if err := uow.Commit(ctx); err != nil {
-		return err
-	}
-	committed = true
-	if resolved {
-		w.stats.Reconciled.Add(1)
-	}
-	return nil
 }
 
-// persistCursor stores ingestion progress so the next tick resumes where
-// this one stopped, even mid-stream. It never moves the stream behind an
-// ingest that committed after this pass read its cursor.
-func (w *Worker) persistCursor(ctx context.Context, tenant ids.TenantID, cursor contracts.Cursor) error {
-	uow, err := store.Begin(ctx, w.pool)
+// reconcileFrame validates and applies one observation under the durable
+// scope/cursor locks. Outcomes come only from accepted entries, never the raw
+// frame. Cursor and lifecycle movement share one transaction.
+func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.ProviderOperation, cursor contracts.Cursor, frame contracts.StreamFrame, replayWatermark *contracts.Cursor, action *store.GovernedAction) (contracts.Ingestion, bool, error) {
+	event := contracts.Event{Tenant: operation.Tenant, Attempt: operation.Attempt, Provider: operation.Provider, Operation: operation.ID, Stream: cursor.Stream, Generation: cursor.Generation, Body: frame}
+	bound, failure := contracts.BindEvent(contracts.Peer{Tenant: operation.Tenant, Provider: operation.Provider}, event, operation)
+	if failure != nil {
+		return contracts.Ingestion{}, false, failure
+	}
+	u, err := store.Begin(ctx, w.pool)
 	if err != nil {
-		return err
+		return contracts.Ingestion{}, false, err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = uow.Rollback(ctx)
+	defer func() { _ = u.Rollback(context.WithoutCancel(ctx)) }()
+	if action != nil {
+		if err = store.LockGovernedAction(ctx, u, operation.Tenant, operation.ID); err != nil {
+			return contracts.Ingestion{}, false, err
 		}
-	}()
-	if _, err := store.AdvanceCursor(ctx, uow, cursor); err != nil {
-		return err
 	}
-	if err := uow.Commit(ctx); err != nil {
-		return err
+	if _, _, err = store.LockResultScope(ctx, u, operation.Tenant, operation.Attempt); err != nil {
+		return contracts.Ingestion{}, false, err
 	}
-	committed = true
-	return nil
+	authoritative, err := store.ObserveHarness(ctx, u, bound, time.Now().UTC())
+	if err != nil {
+		return contracts.Ingestion{}, false, err
+	}
+	if !authoritative {
+		ingested := contracts.Ingestion{Cursor: cursor}
+		// ObserveHarness holds qualification locked. Shadow replay uses only
+		// the subscription's local cursor: no primary cursor is created or
+		// advanced, and replayed outcomes remain comparison evidence only.
+		h, err := store.GetHarness(ctx, u, operation.Tenant, operation.Provider)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return contracts.Ingestion{}, false, err
+		}
+		if err == nil && h.Mode == lifecycle.HarnessShadow {
+			ingested, failure = contracts.Ingest(cursor, bound)
+			if failure != nil {
+				return contracts.Ingestion{}, false, failure
+			}
+		}
+		return ingested, false, u.Commit(ctx)
+	}
+	current, err := store.GetOperation(ctx, u, operation.Tenant, operation.ID)
+	if err != nil {
+		return contracts.Ingestion{}, false, err
+	}
+	stored, err := store.LockCursor(ctx, u, cursor)
+	if err != nil {
+		return contracts.Ingestion{}, false, err
+	}
+	base := stored
+	if replayWatermark != nil {
+		if stored != *replayWatermark || current.Version != operation.Version {
+			return contracts.Ingestion{}, false, store.ErrStaleVersion
+		}
+		base = cursor
+	}
+	ingested, failure := contracts.Ingest(base, bound)
+	if failure != nil {
+		return contracts.Ingestion{}, false, failure
+	}
+	settled := false
+	for _, entry := range ingested.Entries {
+		if current.State != lifecycle.OperationUncertain {
+			break
+		}
+		settled, err = w.applyReconciledEntry(ctx, u, current, entry, action)
+		if err != nil {
+			return contracts.Ingestion{}, false, err
+		}
+		if settled {
+			break
+		}
+	}
+	durable, err := store.AdvanceCursor(ctx, u, ingested.Cursor)
+	if err != nil {
+		return contracts.Ingestion{}, false, err
+	}
+	if err = u.Commit(ctx); err != nil {
+		return contracts.Ingestion{}, false, err
+	}
+	if replayWatermark != nil {
+		*replayWatermark = durable
+	}
+	if settled {
+		w.stats.Reconciled.Add(1)
+	}
+	return ingested, settled, nil
 }

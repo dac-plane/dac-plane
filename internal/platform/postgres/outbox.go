@@ -38,6 +38,18 @@ func LockDispatchResult(ctx context.Context, u *UnitOfWork, tenant ids.TenantID,
 	return lockRow(ctx, u, "outbox", "outbox_id", tenant.String(), id.String())
 }
 
+// CheckOutboxClaim validates a still-locked claim after preparation lock waits.
+func CheckOutboxClaim(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AnyID, epoch int64) error {
+	var current bool
+	if err := u.QueryRow(ctx, `select exists(select 1 from outbox where tenant_id=$1 and outbox_id=$2 and status='processing' and lease_epoch=$3 and lease_expires_at>clock_timestamp())`, tenant.String(), id.String(), epoch).Scan(&current); err != nil {
+		return err
+	}
+	if !current {
+		return ErrStaleVersion
+	}
+	return nil
+}
+
 // RenewArtifactClaim renews only a still-live, exactly owned claim.
 func RenewArtifactClaim(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AnyID, epoch int64, ttl time.Duration, now time.Time) error {
 	return execVersionedUpdate(ctx, u, `update outbox set lease_expires_at=$5,updated_at=$4 where tenant_id=$1 and outbox_id=$2 and status='processing' and lease_epoch=$3 and lease_expires_at>$4`, tenant.String(), id.String(), epoch, now, now.Add(ttl))

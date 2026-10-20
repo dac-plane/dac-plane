@@ -2,12 +2,86 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
+
+// RecordShadowObservation records only a digest of a bound observation, never
+// its potentially secret-bearing payload. The caller holds the Attempt lock,
+// serializing identity allocation and replay across ingestion and recovery.
+func RecordShadowObservation(ctx context.Context, u *UnitOfWork, bound contracts.BoundEvent, at time.Time) error {
+	event := bound.Event()
+	if event.Body.Rows != nil {
+		// Replay flags, batching and delivery timestamps are not new logical
+		// observations. Hash each entry/tombstone with its authenticated scope.
+		rows := event.Body.Rows
+		for _, entry := range rows.Entries {
+			event.Body = contracts.StreamFrame{Kind: contracts.StreamRows, Rows: &contracts.Rows{Entries: []contracts.Entry{entry}}}
+			if err := recordShadowObservation(ctx, u, event, at); err != nil {
+				return err
+			}
+		}
+		for _, tombstone := range rows.Tombstones {
+			event.Body = contracts.StreamFrame{Kind: contracts.StreamRows, Rows: &contracts.Rows{Tombstones: []contracts.Tombstone{tombstone}}}
+			if err := recordShadowObservation(ctx, u, event, at); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if event.Body.Kind == contracts.StreamHeartbeat || event.Body.Kind == contracts.StreamConnected {
+		return nil
+	}
+	return recordShadowObservation(ctx, u, event, at)
+}
+
+func recordShadowObservation(ctx context.Context, u *UnitOfWork, event contracts.Event, at time.Time) error {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	digest := identity.DigestOf(raw)
+	var existing string
+	err = u.QueryRow(ctx, `select shadow_id::text from shadow_result where tenant_id=$1 and attempt_id=$2 and summary='provider observation' and evidence_digest=$3 limit 1`,
+		event.Tenant.String(), event.Attempt.String(), string(digest)).Scan(&existing)
+	if err == nil {
+		return nil
+	}
+	if !isNoRows(err) {
+		return err
+	}
+	id, err := ids.New[ids.Any]()
+	if err != nil {
+		return err
+	}
+	_, _, err = RecordShadowResult(ctx, u, ShadowResult{ID: id, Tenant: event.Tenant, Attempt: event.Attempt, CapturedAt: at,
+		Summary: "provider observation", Comparison: "non-authoritative", Digest: digest})
+	return err
+}
+
+// ObserveHarness gates observations under the same lock as qualification
+// changes. Missing/off qualification cannot authorize product mutation.
+// The caller holds the Attempt/Task scope before acquiring this lock.
+func ObserveHarness(ctx context.Context, u *UnitOfWork, bound contracts.BoundEvent, at time.Time) (bool, error) {
+	event := bound.Event()
+	h, err := GetHarnessForUpdate(ctx, u, event.Tenant, event.Provider)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if h.Mode == lifecycle.HarnessShadow {
+		return false, RecordShadowObservation(ctx, u, bound, at)
+	}
+	return h.Mode == lifecycle.HarnessLive, nil
+}
 
 // ShadowResult is one durable shadow-run comparison. Shadow harnesses record
 // here and nowhere else: the table is append-only, and no authoritative

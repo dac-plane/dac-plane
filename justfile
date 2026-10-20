@@ -9,6 +9,7 @@ go_dirs := "cmd internal"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
+recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
 
 # Some macOS Command Line Tools SDKs break the cgo linker used by the
 # integration tests; pointing SDKROOT at the active Xcode SDK avoids it.
@@ -74,6 +75,15 @@ test-integration *pkgs="./...":
 [group('test')]
 test-integration-race *pkgs="./...":
     {{ sdkroot }}go test -race -count=1 -tags=integration {{ pkgs }}
+
+# Recovery acceptance and its existing command, cursor and fencing regressions.
+[group('test')]
+test-recovery:
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/simulator/ -run '{{ recovery_tests }}'
+
+[group('test')]
+test-recovery-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/simulator/ -run '{{ recovery_tests }}'
 
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]

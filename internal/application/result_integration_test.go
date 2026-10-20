@@ -152,7 +152,7 @@ func TestResultArtifactMismatchNeverCreatesRevision(t *testing.T) {
 				if err := w.Tick(g.ctx); err != nil {
 					t.Fatal(err)
 				}
-				_, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=now() where tenant_id=$1`, g.tenant.String())
+				_, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, g.tenant.String())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -289,7 +289,7 @@ func TestArtifactLostCommitReplyRecoversExactManifest(t *testing.T) {
 	if g.count(t, "artifact", "true") != 0 {
 		t.Fatal("lost reply guessed as admission")
 	}
-	if _, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=now() where tenant_id=$1`, g.tenant.String()); err != nil {
+	if _, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, g.tenant.String()); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.artifactWorker(t, port).Tick(g.ctx); err != nil {

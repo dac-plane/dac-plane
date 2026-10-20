@@ -15,6 +15,20 @@ type AttemptLease struct {
 	Epoch int64
 }
 
+// CheckAttemptLease fences settlement under the caller's Attempt lock, using
+// server time after any lock wait. Epoch equality alone cannot revive expiry.
+func CheckAttemptLease(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, attempt ids.AttemptID, lease AttemptLease) error {
+	var current bool
+	if err := u.QueryRow(ctx, `select exists(select 1 from attempt where tenant_id=$1 and attempt_id=$2 and lease_owner=$3 and lease_epoch=$4 and lease_expires_at>clock_timestamp())`,
+		tenant.String(), attempt.String(), lease.Owner, lease.Epoch).Scan(&current); err != nil {
+		return err
+	}
+	if !current {
+		return ErrStaleVersion
+	}
+	return nil
+}
+
 // ClaimAttemptLease takes the dispatch lease on an attempt for owner. It
 // succeeds when the attempt is unowned, the lease lapsed, or owner already
 // holds it (idempotent renewal under a new epoch only on takeover). A live

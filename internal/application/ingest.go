@@ -106,6 +106,17 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 	if _, _, err = store.LockResultScope(ctx, uow, peer.Tenant, event.Attempt); err != nil {
 		return Ingestion{}, err
 	}
+	authoritative, err := store.ObserveHarness(ctx, uow, bound, at)
+	if err != nil {
+		return Ingestion{}, err
+	}
+	if !authoritative {
+		if err = uow.Commit(ctx); err != nil {
+			return Ingestion{}, err
+		}
+		committed = true
+		return Ingestion{}, nil
+	}
 	cursor, err := store.LockCursor(ctx, uow, contracts.Cursor{
 		Tenant: event.Tenant, Attempt: event.Attempt, Operation: event.Operation,
 		Stream: event.Stream, Generation: event.Generation,

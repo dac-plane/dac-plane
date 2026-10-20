@@ -3,124 +3,58 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 )
 
-// A governed operation settles only from its exact execution receipt. A bare
-// operation_outcome cannot prove its effect, and action settlement does not
-// resolve the parent runtime's lifecycle or unrelated uncertainty.
-func (w *Worker) reconcileGoverned(ctx context.Context, tenant ids.TenantID, op lifecycle.ProviderOperation, action store.GovernedAction) error {
-	port := w.enforcement[op.Provider]
-	if port == nil {
-		port = w.ports[op.Provider]
+// Runtime outcomes and exact governed receipts share cursor/transaction gates,
+// but not authority: a bare outcome never proves a governed action's effect.
+func (w *Worker) applyReconciledEntry(ctx context.Context, u *store.UnitOfWork, current lifecycle.ProviderOperation, entry contracts.Entry, action *store.GovernedAction) (bool, error) {
+	if entry.PayloadOmitted {
+		return false, nil
 	}
-	if port == nil || port.Role() != contracts.RoleEnforcement {
-		return nil
-	}
-	cursor := contracts.Cursor{Tenant: tenant, Attempt: op.Attempt, Operation: op.ID, Stream: reconcileStream, Generation: 1}
-	if saved, err := store.GetCursor(ctx, w.pool, tenant, op.ID, reconcileStream); err == nil {
-		cursor = saved
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	sctx, cancel := context.WithTimeout(ctx, w.cfg.StreamTimeout)
-	defer cancel()
-	stream, err := port.Subscribe(sctx, cursor)
-	if err != nil {
-		return nil
-	}
-	defer func() {
-		if stream != nil {
-			_ = stream.Close()
+	var receipt *contracts.EnforcementReceipt
+	var outcome lifecycle.OperationState
+	if action != nil {
+		if entry.Kind != "enforcement.receipt" {
+			return false, nil
 		}
-	}()
-	rehydrated := false
-	for {
-		frame, err := stream.Next(sctx)
+		r, err := contracts.DecodeEntry[contracts.EnforcementReceipt](entry)
 		if err != nil {
-			return nil
+			return false, nil
 		}
-		event := contracts.Event{Tenant: tenant, Attempt: op.Attempt, Provider: op.Provider, Operation: op.ID, Stream: cursor.Stream, Generation: cursor.Generation, Body: frame}
-		bound, failure := contracts.BindEvent(contracts.Peer{Tenant: tenant, Provider: op.Provider}, event, op)
-		if failure != nil {
-			return nil
+		expected, _ := json.Marshal(action.Execution)
+		actual, _ := json.Marshal(r.Execution)
+		if string(expected) != string(actual) {
+			return false, nil
 		}
-		ingested, failure := contracts.Ingest(cursor, bound)
-		if failure != nil {
-			return nil
+		receipt = &r
+		outcome = lifecycle.OperationSucceeded
+	} else {
+		if entry.Kind != contracts.EntryOperationOutcome {
+			return false, nil
 		}
-		if ingested.Rehydrate {
-			// A receipt is immutable and operation-bound. Explicitly reopen
-			// replay at the start of the indicated generation; never resend the
-			// action or interpret the reset as evidence of its outcome.
-			if rehydrated {
-				return nil // Bound reset loops when a provider cannot rehydrate.
-			}
-			cursor = ingested.Cursor
-			cursor.After = 0
-			if err := w.persistCursor(ctx, tenant, cursor); err != nil {
-				return err
-			}
-			_ = stream.Close()
-			stream = nil
-			stream, err = port.Subscribe(sctx, cursor)
-			if err != nil {
-				return nil
-			}
-			rehydrated = true
-			continue
+		body, err := contracts.DecodeEntry[contracts.OperationOutcome](entry)
+		if err != nil {
+			return false, nil
 		}
-		for _, entry := range ingested.Entries {
-			if entry.Kind != "enforcement.receipt" {
-				continue
-			}
-			var receipt contracts.EnforcementReceipt
-			if json.Unmarshal(entry.Payload, &receipt) != nil || receipt.Validate() != nil {
-				continue
-			}
-			expected, _ := json.Marshal(action.Execution)
-			actual, _ := json.Marshal(receipt.Execution)
-			if string(expected) != string(actual) {
-				continue
-			}
-			u, err := store.Begin(ctx, w.pool)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = u.Rollback(ctx) }()
-			if err = store.LockGovernedAction(ctx, u, tenant, op.ID); err != nil {
-				return err
-			}
-			current, err := store.GetOperation(ctx, u, tenant, op.ID)
-			if err != nil {
-				return err
-			}
-			if current.State == lifecycle.OperationUncertain {
-				tr, err := w.transition(current.Version, time.Now().UTC())
-				if err != nil {
-					return err
-				}
-				if _, _, err = store.ApplyOperation(ctx, u, tenant, op.ID, lifecycle.OperationReconcile, lifecycle.OperationSucceeded, tr); err != nil {
-					return err
-				}
-				if err = store.InsertEnforcementReceipt(ctx, u, receipt); err != nil {
-					return err
-				}
-			}
-			if _, err = store.AdvanceCursor(ctx, u, ingested.Cursor); err != nil {
-				return err
-			}
-			return u.Commit(ctx)
-		}
-		cursor = ingested.Cursor
-		if err := w.persistCursor(ctx, tenant, cursor); err != nil {
-			return err
-		}
+		outcome = body.State
 	}
+	tr, err := w.transition(current.Version, time.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	op, _, err := store.ApplyOperation(ctx, u, current.Tenant, current.ID, lifecycle.OperationReconcile, outcome, tr)
+	if err != nil {
+		return false, err
+	}
+	if receipt != nil {
+		return true, store.InsertEnforcementReceipt(ctx, u, *receipt)
+	}
+	err = (progress.Step{UOW: u, Tenant: current.Tenant, Actor: SystemActor(), At: tr.At}).FollowOperation(ctx, op)
+	return true, err
 }
