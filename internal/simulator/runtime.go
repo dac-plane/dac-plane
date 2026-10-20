@@ -201,12 +201,17 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 // deliveryScope keeps decision idempotency separate from the parent turn and
 // refuses changed work even when the provider already has a cached reply.
 func (r *Runtime) deliveryScope(key runtimeWork, request contracts.Request) (*deliveries, error) {
+	if !key.decision.IsZero() {
+		// A decision identity cannot be rebound to a different parent operation.
+		key.operation = ids.OperationID{}
+	}
 	raw, err := json.Marshal(struct {
+		Operation ids.OperationID
 		Tenant    ids.TenantID
 		Attempt   ids.AttemptID
 		Method    contracts.Method
 		Arguments identity.Digest
-	}{request.Tenant, request.Attempt, request.Method, identity.DigestOf(request.Arguments)})
+	}{request.Operation, request.Tenant, request.Attempt, request.Method, identity.DigestOf(request.Arguments)})
 	if err != nil {
 		return nil, err
 	}

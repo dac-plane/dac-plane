@@ -44,4 +44,9 @@ func TestRecoveryRuntimeDistinctDecisionsAndChangedReplay(t *testing.T) {
 	if n := rt.Ledger().Effects(op); n != 3 {
 		t.Fatalf("changed replay effects=%d", n)
 	}
+	r.Arguments, _ = json.Marshal(map[string]string{"decision_id": second.String(), "native_ref": "question"})
+	r.Operation = mustID[ids.Operation](t)
+	if _, err := rt.Send(context.Background(), r); !errors.Is(err, simulator.ErrMalformedRequest) {
+		t.Fatalf("decision rebound to another operation: %v", err)
+	}
 }
