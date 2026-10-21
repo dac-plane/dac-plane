@@ -18,14 +18,15 @@ import (
 const schemaDir = "../../contracts/jsonschema/adapter"
 
 var (
-	frameContract        = schematest.GoContract[Frame](filepath.Join(schemaDir, "frame.schema.json"))
-	eventContract        = schematest.GoContract[Event](filepath.Join(schemaDir, "event.schema.json"))
-	streamContract       = schematest.GoContract[StreamFrame](filepath.Join(schemaDir, "stream-frame.schema.json"))
-	cursorContract       = schematest.GoContract[Cursor](filepath.Join(schemaDir, "cursor.schema.json"))
-	hookRequestContract  = schematest.GoContract[HookRequest](filepath.Join(schemaDir, "hook-request.schema.json"))
-	hookResponseContract = schematest.GoContract[HookResponse](filepath.Join(schemaDir, "hook-response.schema.json"))
-	evidenceContract     = schematest.GoContract[HookEvidence](filepath.Join(schemaDir, "hook-evidence.schema.json"))
-	preconditionContract = schematest.GoContract[ActionPrecondition](filepath.Join(schemaDir, "action-precondition.schema.json"))
+	frameContract         = schematest.GoContract[Frame](filepath.Join(schemaDir, "frame.schema.json"))
+	eventContract         = schematest.GoContract[Event](filepath.Join(schemaDir, "event.schema.json"))
+	streamContract        = schematest.GoContract[StreamFrame](filepath.Join(schemaDir, "stream-frame.schema.json"))
+	cursorContract        = schematest.GoContract[Cursor](filepath.Join(schemaDir, "cursor.schema.json"))
+	hookRequestContract   = schematest.GoContract[HookRequest](filepath.Join(schemaDir, "hook-request.schema.json"))
+	hookResponseContract  = schematest.GoContract[HookResponse](filepath.Join(schemaDir, "hook-response.schema.json"))
+	evidenceContract      = schematest.GoContract[HookEvidence](filepath.Join(schemaDir, "hook-evidence.schema.json"))
+	stageEvidenceContract = schematest.GoContract[HookStageEvidence](filepath.Join(schemaDir, "hook-stage-evidence.schema.json"))
+	preconditionContract  = schematest.GoContract[ActionPrecondition](filepath.Join(schemaDir, "action-precondition.schema.json"))
 )
 
 type fixture struct {
@@ -64,31 +65,33 @@ func conformanceFixtures(t *testing.T) map[string]fixture {
 		t.Fatalf("DecidePreAction() error = %v", err)
 	}
 	denied, _ := DecidePreAction(pre, nil, testNow)
+	stageEvidence := HookStageEvidence{Operation: newID[ids.Operation](t), Kind: HookPostAction, InputDigest: pre.InputDigest, OutputDigest: identity.DigestOf([]byte("out")), Duration: time.Second, ResponseDigest: identity.DigestOf([]byte(`{"kind":"post_action"}`)), Usage: []UsageMeter{{Unit: "tokens", Amount: 4}}}
 
 	marshal := func(v any) []byte { return schematest.Marshal(t, v) }
 	return map[string]fixture{
-		"hello":            {frameContract, marshal(lifecycleFrame(hello([]uint32{1, 2}, []Capability{"hooks"}, []Capability{"hooks"})))},
-		"ready":            {frameContract, marshal(lifecycleFrame(ready))},
-		"shutdown":         {frameContract, marshal(lifecycleFrame(shutdown))},
-		"request":          {frameContract, marshal(Frame{Kind: FrameRequest, Request: &request})},
-		"cancel":           {frameContract, marshal(Frame{Kind: FrameCancel, Cancel: &cancel})},
-		"reply ok":         {frameContract, marshal(Frame{Kind: FrameReply, Reply: &okReply})},
-		"reply unknown":    {frameContract, marshal(Frame{Kind: FrameReply, Reply: &unknownReply})},
-		"event frame":      {frameContract, marshal(Frame{Kind: FrameEvent, Event: &event})},
-		"event":            {eventContract, marshal(event)},
-		"connected":        {streamContract, marshal(StreamFrame{Kind: StreamConnected, ServerTime: testNow})},
-		"rows":             {streamContract, marshal(rows)},
-		"cleared":          {streamContract, marshal(StreamFrame{Kind: StreamCleared, NewGeneration: 2})},
-		"cursor too old":   {streamContract, marshal(StreamFrame{Kind: StreamCursorTooOld})},
-		"heartbeat":        {streamContract, marshal(StreamFrame{Kind: StreamHeartbeat, ServerTime: testNow})},
-		"cursor":           {cursorContract, marshal(f.cursor)},
-		"pre hook":         {hookRequestContract, marshal(pre)},
-		"post hook":        {hookRequestContract, marshal(post)},
-		"rewrite response": {hookResponseContract, marshal(rewrite)},
-		"usage response":   {hookResponseContract, marshal(HookResponse{Kind: HookPostAction, Usage: []UsageMeter{{Unit: "tokens", Amount: 1200}}})},
-		"allowed evidence": {evidenceContract, marshal(decision.Evidence)},
-		"missing evidence": {evidenceContract, marshal(denied.Evidence)},
-		"precondition":     {preconditionContract, marshal(ActionPrecondition{Operation: newID[ids.Operation](t), Resource: "screen", Token: identity.DigestOf([]byte("snapshot"))})},
+		"hello":               {frameContract, marshal(lifecycleFrame(hello([]uint32{1, 2}, []Capability{"hooks"}, []Capability{"hooks"})))},
+		"ready":               {frameContract, marshal(lifecycleFrame(ready))},
+		"shutdown":            {frameContract, marshal(lifecycleFrame(shutdown))},
+		"request":             {frameContract, marshal(Frame{Kind: FrameRequest, Request: &request})},
+		"cancel":              {frameContract, marshal(Frame{Kind: FrameCancel, Cancel: &cancel})},
+		"reply ok":            {frameContract, marshal(Frame{Kind: FrameReply, Reply: &okReply})},
+		"reply unknown":       {frameContract, marshal(Frame{Kind: FrameReply, Reply: &unknownReply})},
+		"event frame":         {frameContract, marshal(Frame{Kind: FrameEvent, Event: &event})},
+		"event":               {eventContract, marshal(event)},
+		"connected":           {streamContract, marshal(StreamFrame{Kind: StreamConnected, ServerTime: testNow})},
+		"rows":                {streamContract, marshal(rows)},
+		"cleared":             {streamContract, marshal(StreamFrame{Kind: StreamCleared, NewGeneration: 2})},
+		"cursor too old":      {streamContract, marshal(StreamFrame{Kind: StreamCursorTooOld})},
+		"heartbeat":           {streamContract, marshal(StreamFrame{Kind: StreamHeartbeat, ServerTime: testNow})},
+		"cursor":              {cursorContract, marshal(f.cursor)},
+		"pre hook":            {hookRequestContract, marshal(pre)},
+		"post hook":           {hookRequestContract, marshal(post)},
+		"rewrite response":    {hookResponseContract, marshal(rewrite)},
+		"usage response":      {hookResponseContract, marshal(HookResponse{Kind: HookPostAction, Usage: []UsageMeter{{Unit: "tokens", Amount: 1200}}})},
+		"allowed evidence":    {evidenceContract, marshal(decision.Evidence)},
+		"missing evidence":    {evidenceContract, marshal(denied.Evidence)},
+		"post stage evidence": {stageEvidenceContract, marshal(stageEvidence)},
+		"precondition":        {preconditionContract, marshal(ActionPrecondition{Operation: newID[ids.Operation](t), Resource: "screen", Token: identity.DigestOf([]byte("snapshot"))})},
 	}
 }
 

@@ -135,10 +135,16 @@ func TestEnforcementAnswersEveryHookKind(t *testing.T) {
 		Failure: simulator.HookFailure(contracts.FailureProviderFailed), Duration: time.Second,
 	}
 
-	sim := newEnforcement(t, config, map[ids.OperationID]simulator.EnforcementOp{
-		postOperation:    {Response: contracts.HookResponse{Kind: contracts.HookPostAction, AgentMessage: "recorded"}},
-		failureOperation: {Response: contracts.HookResponse{Kind: contracts.HookActionFailure}},
+	sim, err := simulator.NewEnforcement(config, simulator.EnforcementScenario{
+		Operations: map[ids.OperationID]simulator.EnforcementOp{},
+		Hooks: map[simulator.HookStageKey]simulator.EnforcementOp{
+			{Operation: postOperation, Kind: contracts.HookPostAction}:       {Response: contracts.HookResponse{Kind: contracts.HookPostAction, AgentMessage: "recorded"}},
+			{Operation: failureOperation, Kind: contracts.HookActionFailure}: {Response: contracts.HookResponse{Kind: contracts.HookActionFailure}},
+		},
 	})
+	if err != nil {
+		t.Fatalf("NewEnforcement() error = %v", err)
+	}
 
 	post := newRoleRequest(t, config, postOperation, contracts.RoleEnforcement, contracts.MethodPostAction, marshalArguments(t, postHook))
 	post.Attempt = postAttempt

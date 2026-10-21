@@ -30,6 +30,14 @@ var hookKind = map[contracts.Method]contracts.HookKind{
 // operation.
 type EnforcementScenario struct {
 	Operations map[ids.OperationID]EnforcementOp
+	Hooks      map[HookStageKey]EnforcementOp
+}
+
+// HookStageKey identifies one post-action or action-failure delivery for its
+// parent governed action.
+type HookStageKey struct {
+	Operation ids.OperationID
+	Kind      contracts.HookKind
 }
 
 // EnforcementOp is one operation's script. Response answers the hook request
@@ -47,16 +55,16 @@ type EnforcementOp struct {
 // response; what the response means is decided by the caller with
 // contracts.DecidePreAction and identity.Authorize, never here.
 type Enforcement struct {
-	config       Config
-	scenario     EnforcementScenario
-	ledger       *Ledger
-	deliveries   *deliveries
-	executions   *deliveries
-	mu           sync.Mutex
-	inputs       map[ids.OperationID]identity.Digest
-	fingerprints map[ids.OperationID]identity.Digest
-	hookprints   map[ids.OperationID]identity.Digest
-	receipts     map[ids.OperationID]contracts.EnforcementReceipt
+	config          Config
+	scenario        EnforcementScenario
+	ledger          *Ledger
+	executions      *deliveries
+	mu              sync.Mutex
+	inputs          map[ids.OperationID]identity.Digest
+	fingerprints    map[ids.OperationID]identity.Digest
+	stagePrints     map[HookStageKey]identity.Digest
+	stageDeliveries map[HookStageKey]*deliveries
+	receipts        map[ids.OperationID]contracts.EnforcementReceipt
 }
 
 // NewEnforcement validates the config and the scenario and returns the
@@ -72,12 +80,16 @@ func NewEnforcement(config Config, scenario EnforcementScenario) (*Enforcement, 
 			return nil, fmt.Errorf("%w: %s scripts an invalid response: %v", ErrInvalidScenario, operation, err)
 		}
 	}
+	for key, step := range scenario.Hooks {
+		if key.Operation.IsZero() || (key.Kind != contracts.HookPostAction && key.Kind != contracts.HookActionFailure) || step.Response.Validate() != nil || step.Response.Kind != key.Kind {
+			return nil, fmt.Errorf("%w: invalid hook-stage script", ErrInvalidScenario)
+		}
+	}
 	return &Enforcement{
 		config:     config,
 		scenario:   scenario,
 		ledger:     newLedger(),
-		deliveries: newDeliveries(),
-		executions: newDeliveries(), inputs: make(map[ids.OperationID]identity.Digest), fingerprints: make(map[ids.OperationID]identity.Digest), hookprints: make(map[ids.OperationID]identity.Digest), receipts: make(map[ids.OperationID]contracts.EnforcementReceipt),
+		executions: newDeliveries(), inputs: make(map[ids.OperationID]identity.Digest), fingerprints: make(map[ids.OperationID]identity.Digest), stagePrints: make(map[HookStageKey]identity.Digest), stageDeliveries: make(map[HookStageKey]*deliveries), receipts: make(map[ids.OperationID]contracts.EnforcementReceipt),
 	}, nil
 }
 
@@ -116,13 +128,17 @@ func (e *Enforcement) Send(ctx context.Context, request contracts.Request) (cont
 		return e.executeAction(ctx, request)
 	}
 	e.ledger.recordRequest(request)
-	step, ok := e.scenario.Operations[request.Operation]
-	if !ok {
-		return contracts.Reply{}, fmt.Errorf("%w: %s", ErrUnscripted, request.Operation)
-	}
 	hook, err := decodeHook(e.config, request)
 	if err != nil {
 		return contracts.Reply{}, err
+	}
+	key := HookStageKey{Operation: request.Operation, Kind: hook.Kind}
+	step, ok := e.scenario.Hooks[key]
+	if !ok {
+		step, ok = e.scenario.Operations[request.Operation]
+	}
+	if !ok {
+		return contracts.Reply{}, fmt.Errorf("%w: %s", ErrUnscripted, request.Operation)
 	}
 	if step.Response.Kind != hook.Kind {
 		return contracts.Reply{}, fmt.Errorf(
@@ -130,15 +146,20 @@ func (e *Enforcement) Send(ctx context.Context, request contracts.Request) (cont
 	}
 	e.mu.Lock()
 	digest := identity.DigestOf(request.Arguments)
-	previous, seen := e.hookprints[request.Operation]
+	previous, seen := e.stagePrints[key]
 	if seen && previous != digest {
 		e.mu.Unlock()
 		return contracts.Reply{}, ErrMalformedRequest
 	}
-	e.hookprints[request.Operation] = digest
+	e.stagePrints[key] = digest
+	stageDelivery := e.stageDeliveries[key]
+	if stageDelivery == nil {
+		stageDelivery = newDeliveries()
+		e.stageDeliveries[key] = stageDelivery
+	}
 	e.mu.Unlock()
 
-	recorded, done, release, err := e.deliveries.claim(ctx, request)
+	recorded, done, release, err := stageDelivery.claim(ctx, request)
 	if err != nil {
 		return contracts.Reply{}, err
 	}
@@ -177,7 +198,7 @@ func (e *Enforcement) Send(ctx context.Context, request contracts.Request) (cont
 		Role: contracts.RoleEnforcement, Operation: request.Operation, Method: request.Method,
 		Kind: HookDecision, Detail: string(step.Response.Permission),
 	})
-	e.deliveries.finish(request.Operation, request.Method, reply)
+	stageDelivery.finish(request.Operation, request.Method, reply)
 	if err := e.config.Control.reach(ctx, request.Operation, AfterEffect); err != nil {
 		return contracts.Reply{}, err
 	}

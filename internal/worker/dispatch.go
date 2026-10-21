@@ -66,6 +66,9 @@ func (w *Worker) handleRow(ctx context.Context, tenant ids.TenantID, row store.O
 	if body.CancelReason != "" {
 		return w.cancelRow(ctx, tenant, row, body, now)
 	}
+	if body.Role == contracts.RoleEnforcement && (body.Method == contracts.MethodPostAction || body.Method == contracts.MethodActionFailed) {
+		return w.hookStageRow(ctx, tenant, row, body, now)
+	}
 	if row.Record == lifecycle.RecordAuthorityUse {
 		return w.governedRow(ctx, tenant, row, body, now)
 	}

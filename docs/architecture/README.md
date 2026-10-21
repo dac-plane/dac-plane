@@ -142,6 +142,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 - [Recovery, replay, fencing and restart evidence (#27)](recovery-27.md)
 - [Security and lifecycle acceptance (#28)](security-28.md)
 - [Fenced harness migration execution (#60)](harness-migration-60.md)
+- [M1 lifecycle contract freeze and evidence (#30)](contract-freeze-30.md)
 
 ## Change triggers
 

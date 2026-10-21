@@ -1,49 +1,42 @@
-# Issue #29 — SQL/outbox durability decision
+# Issue #30 — Freeze the M1 lifecycle contracts
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/29
-Branch: `feature/29-sql-outbox-decision`, from merged `main` including #60.
+Tracker: https://github.com/dac-plane/dac-plane/issues/30
+Branch: `feature/30-contract-freeze`
 
-## Decision
+## Completed
 
-Accept PostgreSQL plus the transactional outbox for the bounded simulator-backed M1 lifecycle.
-PostgreSQL remains the sole product-lifecycle authority; outbox delivery is at least once; stable
-operation identities, fencing, and explicit reconciliation preserve safe behavior around external
-effects. This decision does not claim universal exactly-once behavior or production-provider and
-database-operations readiness. See [ADR-0006](../docs/adr/0006-sql-outbox-durability-decision.md).
-
-## Completed work
-
-- [x] Map existing failure-injection evidence for outbox writes, replay, claims, authority, spend,
-  shadow state, artifacts and migration to the decision criteria.
-- [x] Run focused race-enabled recovery, security/lifecycle and migration campaigns and contract
-  agreement guards.
-- [x] Record the evidence-backed bounded decision in an active ADR and link it from the architecture
-  baseline. Keep exploration sources unchanged.
-- [x] Replace the stale `internal/integration` verification path from the issue description with the
-  repository's actual `just` recipes.
-- [x] Run full CI and correct the pinned Go toolchain after the vulnerability check identified that
-  Go 1.26.9 was affected by GO-2026-6809; Go 1.26.10 is the pinned verification toolchain.
+- [x] Preserve the active architecture: product-owned lifecycle, PostgreSQL/outbox authority,
+  replaceable provider ports, and the explicitly bounded simulator-backed M1 claims.
+- [x] Complete the post-action and action-failure enforcement hook path. The governed action result
+  and follow-up outbox intent commit atomically; hook delivery does not repeat the action.
+- [x] Persist immutable per-stage evidence under `(tenant, action operation, hook kind)`. Retain
+  enriched pre-action evidence compatibly; persist only response/message/context digests and bounded
+  typed usage, never hook text or action input.
+- [x] Add the additive migration and refuse downgrade if it would discard new hook evidence.
+- [x] Add simulator stage idempotency, contract/schema agreement, persistence and application/worker
+  recovery regressions.
+- [x] Publish the lifecycle traceability/evidence matrix and explicit limitations in
+  `docs/architecture/contract-freeze-30.md`, linked from the architecture index.
 
 ## Observed verification
 
 - `just test-contracts` passed.
-- `just test-recovery-race` passed uncached: application 311.166s, worker 29.053s, PostgreSQL
-  25.423s, simulator 1.481s.
-- `just test-security-race` passed uncached: application 265.734s, migrations 22.866s, PostgreSQL
-  25.578s, worker 13.753s, with the remaining selected packages passing.
-- `just test-migration-race` passed uncached: application 34.859s, worker 1.414s, PostgreSQL 7.817s,
-  migrations 22.499s, simulator 1.269s.
-- `GOTOOLCHAIN=go1.26.10 just ci` passed all checks, including both integration-race partitions,
-  vulnerability scanning and workflow lint. After updating the `go.mod` toolchain pin to 1.26.10,
-  `go version` selected go1.26.10, `just mod-check` passed and `just vuln` reported no
-  vulnerabilities.
-- The first plain `just ci` on the host's pinned Go 1.26.9 reached `govulncheck` and reported
-  GO-2026-6809 in `crypto/x509`; it was fixed upstream in Go 1.26.10. No durability test exposed an
-  implementation defect.
+- `just test-hook-lifecycle` passed.
+- `just test-hook-lifecycle-race` passed.
+- `just test-recovery-race` passed.
+- `just test-security-race` passed.
+- `just test-migration-race` passed.
+- `just ci` passed all checks, including formatting, module checks, vet, unit/race tests, both
+  uncached PostgreSQL integration-race partitions, vulnerability scan (`No vulnerabilities found`),
+  and workflow lint. The general integration partition passed with application 330.320s, PostgreSQL
+  68.812s, worker 32.172s; the selected race partition passed with application 316.668s, migrations
+  32.781s, PostgreSQL 32.859s, worker 18.213s. All remaining packages passed or had no selected
+  tests.
+- `git diff --check` passed.
 
-## Limits retained
+## Limits
 
-These results cover deterministic provider simulators and the tested PostgreSQL failure boundaries.
-They do not qualify production providers, database failover or backup/restore, throughput or
-availability objectives, universal exactly-once external effects, or semantic correctness of
-provider results. Post-action/failure-hook delivery and typed hook evidence remain for #30.
+Evidence is from repository contracts and deterministic simulators. It does not qualify production
+providers, transport, PostgreSQL failover/backup/restore, scale, or semantic correctness of hook or
+agent results. Delivery remains at least once and uncertain outcomes remain explicit. Remote PR
+checks are separate from the local verification above.

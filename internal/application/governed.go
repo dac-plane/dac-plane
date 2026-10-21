@@ -253,9 +253,11 @@ func evaluateActionHook(ctx context.Context, port contracts.Port, hook contracts
 	raw = append(raw, '}')
 	sctx, cancel := context.WithDeadline(ctx, hook.Deadline)
 	defer cancel()
+	started := time.Now()
 	reply, err := port.Send(sctx, contracts.Request{Operation: hook.Operation, Delivery: delivery, Tenant: hook.Tenant, Attempt: hook.Attempt, Role: contracts.RoleEnforcement, Method: contracts.MethodPreAction, Arguments: raw, Demand: contracts.DemandPerson, Deadline: hook.Deadline})
 	if err != nil {
 		base.Evidence.Outcome = contracts.HookUnavailable
+		base.Evidence.Duration = positiveHookDuration(time.Since(started))
 		if sctx.Err() != nil {
 			base.Evidence.Outcome = contracts.HookTimedOut
 		}
@@ -266,9 +268,39 @@ func evaluateActionHook(ctx context.Context, port contracts.Port, hook contracts
 	decoder.DisallowUnknownFields()
 	if reply.Validate() != nil || reply.Operation != hook.Operation || reply.Delivery != delivery || reply.Durability != lifecycle.SendAccepted || decoder.Decode(&response) != nil {
 		base.Evidence.Outcome = contracts.HookMalformed
+		base.Evidence.Duration = positiveHookDuration(time.Since(started))
 		return base, nil
 	}
-	return contracts.DecidePreAction(hook, &response, time.Now().UTC())
+	decision, err := contracts.DecidePreAction(hook, &response, time.Now().UTC())
+	decision.Evidence.Duration = positiveHookDuration(time.Since(started))
+	if response.Validate() == nil {
+		decision.Evidence = hookResponseProjection(decision.Evidence, response)
+	}
+	return decision, err
+}
+
+func positiveHookDuration(d time.Duration) time.Duration {
+	if d <= 0 {
+		return time.Nanosecond
+	}
+	return d
+}
+
+func hookResponseProjection(e contracts.HookEvidence, response contracts.HookResponse) contracts.HookEvidence {
+	raw, _ := json.Marshal(response)
+	e.ResponseDigest = identity.DigestOf(raw)
+	if response.UserMessage != "" {
+		e.UserMessageDigest = identity.DigestOf([]byte(response.UserMessage))
+	}
+	if response.AgentMessage != "" {
+		e.AgentMessageDigest = identity.DigestOf([]byte(response.AgentMessage))
+	}
+	if len(response.AdditionalContext) > 0 {
+		contextBytes, _ := json.Marshal(response.AdditionalContext)
+		e.ContextDigest = identity.DigestOf(contextBytes)
+	}
+	e.Usage = response.Usage
+	return e
 }
 
 // GetGovernedAction reads evidence only for the owner of the task.

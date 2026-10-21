@@ -517,11 +517,18 @@ func InsertHookEvidence(ctx context.Context, u *UnitOfWork, tenant ids.TenantID,
 	if err := evidence.Validate(); err != nil {
 		return contracts.HookEvidence{}, false, err
 	}
+	usage, err := json.Marshal(evidence.Usage)
+	if err != nil {
+		return contracts.HookEvidence{}, false, err
+	}
+	if len(evidence.Usage) == 0 {
+		usage = []byte("[]")
+	}
 	inserted, err := insertReturning(ctx, u, `
-		insert into hook_evidence (tenant_id, operation_id, outcome, original_digest, effective_digest, rewritten)
-		values ($1, $2, $3, $4, $5, $6)`,
+		insert into hook_evidence (tenant_id, operation_id, outcome, original_digest, effective_digest, rewritten, duration_ns, response_digest, user_message_digest, agent_message_digest, context_digest, usage)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)`,
 		tenant.String(), evidence.Operation.String(), string(evidence.Outcome),
-		string(evidence.OriginalDigest), textOrNil(string(evidence.EffectiveDigest)), evidence.Rewritten,
+		string(evidence.OriginalDigest), textOrNil(string(evidence.EffectiveDigest)), evidence.Rewritten, durationOrNil(evidence.Duration), textOrNil(string(evidence.ResponseDigest)), textOrNil(string(evidence.UserMessageDigest)), textOrNil(string(evidence.AgentMessageDigest)), textOrNil(string(evidence.ContextDigest)), string(usage),
 	)
 	if err != nil {
 		return contracts.HookEvidence{}, false, err
@@ -536,7 +543,9 @@ func InsertHookEvidence(ctx context.Context, u *UnitOfWork, tenant ids.TenantID,
 	if loadErr != nil {
 		return contracts.HookEvidence{}, false, loadErr
 	}
-	if stored != evidence {
+	storedJSON, _ := json.Marshal(stored)
+	evidenceJSON, _ := json.Marshal(evidence)
+	if string(storedJSON) != string(evidenceJSON) {
 		return contracts.HookEvidence{}, false, ErrPayloadMismatch
 	}
 	return stored, true, nil
@@ -546,12 +555,14 @@ func InsertHookEvidence(ctx context.Context, u *UnitOfWork, tenant ids.TenantID,
 func GetHookEvidence(ctx context.Context, q Querier, tenant ids.TenantID, operation ids.OperationID) (contracts.HookEvidence, error) {
 	var evidence contracts.HookEvidence
 	var outcome, original string
-	var effective *string
+	var effective, response, user, agent, contextDigest *string
+	var duration *int64
+	var usage []byte
 	err := q.QueryRow(ctx, `
-		select outcome, original_digest, effective_digest, rewritten
+		select outcome, original_digest, effective_digest, rewritten, duration_ns, response_digest, user_message_digest, agent_message_digest, context_digest, usage
 		from hook_evidence where tenant_id = $1 and operation_id = $2`,
 		tenant.String(), operation.String(),
-	).Scan(&outcome, &original, &effective, &evidence.Rewritten)
+	).Scan(&outcome, &original, &effective, &evidence.Rewritten, &duration, &response, &user, &agent, &contextDigest, &usage)
 	if err != nil {
 		if isNoRows(err) {
 			return contracts.HookEvidence{}, ErrNotFound
@@ -564,8 +575,114 @@ func GetHookEvidence(ctx context.Context, q Querier, tenant ids.TenantID, operat
 	if effective != nil {
 		evidence.EffectiveDigest = identity.Digest(*effective)
 	}
+	if duration != nil {
+		evidence.Duration = time.Duration(*duration)
+	}
+	if response != nil {
+		evidence.ResponseDigest = identity.Digest(*response)
+	}
+	if user != nil {
+		evidence.UserMessageDigest = identity.Digest(*user)
+	}
+	if agent != nil {
+		evidence.AgentMessageDigest = identity.Digest(*agent)
+	}
+	if contextDigest != nil {
+		evidence.ContextDigest = identity.Digest(*contextDigest)
+	}
+	if len(usage) > 0 {
+		if err := json.Unmarshal(usage, &evidence.Usage); err != nil {
+			return contracts.HookEvidence{}, corruptRow("hook_evidence.usage", err)
+		}
+	}
 	if err := evidence.Validate(); err != nil {
 		return contracts.HookEvidence{}, err
 	}
 	return evidence, nil
+}
+
+func durationOrNil(d time.Duration) any {
+	if d == 0 {
+		return nil
+	}
+	return int64(d)
+}
+
+// InsertHookStageEvidence persists immutable post-action or action-failure
+// evidence. Its natural key is the parent operation plus hook kind, so replay
+// is stable while distinct stages remain independent.
+func InsertHookStageEvidence(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, evidence contracts.HookStageEvidence) (contracts.HookStageEvidence, bool, error) {
+	if tenant.IsZero() || evidence.Validate() != nil {
+		return contracts.HookStageEvidence{}, false, ErrPayloadMismatch
+	}
+	usage, err := json.Marshal(evidence.Usage)
+	if err != nil {
+		return contracts.HookStageEvidence{}, false, err
+	}
+	if len(evidence.Usage) == 0 {
+		usage = []byte("[]")
+	}
+	inserted, err := insertReturning(ctx, u, `
+		insert into hook_stage_evidence (tenant_id,operation_id,kind,input_digest,output_digest,failure_code,duration_ns,response_digest,user_message_digest,agent_message_digest,context_digest,usage)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)`,
+		tenant.String(), evidence.Operation.String(), string(evidence.Kind), string(evidence.InputDigest), textOrNil(string(evidence.OutputDigest)), textOrNil(string(evidence.FailureCode)), int64(evidence.Duration), string(evidence.ResponseDigest), textOrNil(string(evidence.UserMessageDigest)), textOrNil(string(evidence.AgentMessageDigest)), textOrNil(string(evidence.ContextDigest)), string(usage))
+	if err != nil {
+		return contracts.HookStageEvidence{}, false, err
+	}
+	if inserted {
+		return evidence, false, nil
+	}
+	stored, err := GetHookStageEvidence(ctx, u, tenant, evidence.Operation, evidence.Kind)
+	if isNotFound(err) {
+		return contracts.HookStageEvidence{}, false, ErrPayloadMismatch
+	}
+	if err != nil {
+		return contracts.HookStageEvidence{}, false, err
+	}
+	left, _ := json.Marshal(stored)
+	right, _ := json.Marshal(evidence)
+	if string(left) != string(right) {
+		return contracts.HookStageEvidence{}, false, ErrPayloadMismatch
+	}
+	return stored, true, nil
+}
+
+// GetHookStageEvidence loads one immutable follow-up hook stage.
+func GetHookStageEvidence(ctx context.Context, q Querier, tenant ids.TenantID, operation ids.OperationID, kind contracts.HookKind) (contracts.HookStageEvidence, error) {
+	var e contracts.HookStageEvidence
+	var input, response string
+	var output, failure, user, agent, contextDigest *string
+	var duration int64
+	var usage []byte
+	err := q.QueryRow(ctx, `select input_digest,output_digest,failure_code,duration_ns,response_digest,user_message_digest,agent_message_digest,context_digest,usage from hook_stage_evidence where tenant_id=$1 and operation_id=$2 and kind=$3`, tenant.String(), operation.String(), string(kind)).Scan(&input, &output, &failure, &duration, &response, &user, &agent, &contextDigest, &usage)
+	if err != nil {
+		if isNoRows(err) {
+			return contracts.HookStageEvidence{}, ErrNotFound
+		}
+		return contracts.HookStageEvidence{}, err
+	}
+	e.Operation, e.Kind = operation, kind
+	e.InputDigest, e.ResponseDigest, e.Duration = identity.Digest(input), identity.Digest(response), time.Duration(duration)
+	if output != nil {
+		e.OutputDigest = identity.Digest(*output)
+	}
+	if failure != nil {
+		e.FailureCode = contracts.FailureCode(*failure)
+	}
+	if user != nil {
+		e.UserMessageDigest = identity.Digest(*user)
+	}
+	if agent != nil {
+		e.AgentMessageDigest = identity.Digest(*agent)
+	}
+	if contextDigest != nil {
+		e.ContextDigest = identity.Digest(*contextDigest)
+	}
+	if err := json.Unmarshal(usage, &e.Usage); err != nil {
+		return contracts.HookStageEvidence{}, corruptRow("hook_stage_evidence.usage", err)
+	}
+	if err := e.Validate(); err != nil {
+		return contracts.HookStageEvidence{}, err
+	}
+	return e, nil
 }

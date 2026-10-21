@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HookStageEvidence",
+  "description": "Immutable safe evidence for a post-action or action-failure hook; raw messages and action payloads are never persisted.",
+  "type": "object",
+  "required": ["operation_id", "kind", "input_digest", "duration_ns", "response_digest"],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "kind": { "enum": ["post_action", "action_failure"] },
+    "input_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "output_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "failure_code": { "enum": ["protocol_mismatch", "unsupported_capability", "malformed_frame", "unknown_operation", "invalid_arguments", "unauthenticated", "unauthorized", "cancelled", "deadline_exceeded", "transport_unavailable", "provider_failed", "stale_precondition", "resource_busy"] },
+    "duration_ns": { "type": "integer", "minimum": 0, "maximum": 86400000000000 },
+    "response_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "user_message_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "agent_message_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "context_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "usage": { "type": "array", "maxItems": 16, "items": { "type": "object", "required": ["unit", "amount"], "additionalProperties": false, "properties": { "unit": { "$ref": "../lifecycle/common.schema.json#/$defs/unit" }, "amount": { "$ref": "../lifecycle/common.schema.json#/$defs/amount" } } } }
+  },
+  "oneOf": [
+    { "properties": { "kind": { "const": "post_action" } }, "required": ["output_digest"], "not": { "required": ["failure_code"] } },
+    { "properties": { "kind": { "const": "action_failure" } }, "required": ["failure_code"], "not": { "required": ["output_digest"] } }
+  ]
+}

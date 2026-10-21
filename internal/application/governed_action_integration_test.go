@@ -16,6 +16,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +68,16 @@ func (g *governedFixture) enforcement(t *testing.T, response contracts.HookRespo
 		ops[cmd.Request.Operation] = simulator.EnforcementOp{Response: response, Resource: g.resource, ExecuteError: executeErr}
 	}
 	e, err := simulator.NewEnforcement(simulator.Config{Tenant: g.tenant, Provider: g.provider}, simulator.EnforcementScenario{Operations: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func (g *governedFixture) enforcementWithHooks(t *testing.T, response contracts.HookResponse, hooks map[simulator.HookStageKey]simulator.EnforcementOp) *simulator.Enforcement {
+	t.Helper()
+	ops := map[ids.OperationID]simulator.EnforcementOp{g.cmd.Request.Operation: {Response: response, Resource: g.resource}}
+	e, err := simulator.NewEnforcement(simulator.Config{Tenant: g.tenant, Provider: g.provider}, simulator.EnforcementScenario{Operations: ops, Hooks: hooks})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,6 +150,141 @@ func TestGovernedActionOnceReceiptAndReplay(t *testing.T) {
 	body, err := worker.ParseDispatchBody(payload)
 	if err != nil || body.Operation != g.s.Operation.ID {
 		t.Fatalf("cancel operation=%s %v", body.Operation, err)
+	}
+}
+
+func TestGovernedActionPostHookIsDurableAndSafe(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	response := contracts.HookResponse{Kind: contracts.HookPostAction, UserMessage: "private-user-marker", AgentMessage: "private-agent-marker", AdditionalContext: []string{"private-context-marker"}, Usage: []contracts.UsageMeter{{Unit: "tokens", Amount: 7}}}
+	preResponse := simulator.AllowHook()
+	preResponse.UserMessage = "private-pre-user-marker"
+	preResponse.AdditionalContext = []string{"private-pre-context-marker"}
+	preResponse.Usage = []contracts.UsageMeter{{Unit: "tokens", Amount: 3}}
+	e := g.enforcementWithHooks(t, preResponse, map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: response}})
+	g.enforce(t, e, g.cmd)
+	g.tick(t, e)
+	if op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation); err != nil || op.State != lifecycle.OperationSucceeded {
+		t.Fatalf("operation=%+v, %v", op, err)
+	}
+	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("post evidence before hook delivery=%+v, %v", err, err)
+	}
+	g.tick(t, e)
+	evidence, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction)
+	if err != nil || evidence.OutputDigest == "" || evidence.ResponseDigest == "" || len(evidence.Usage) != 1 {
+		t.Fatalf("post evidence=%+v, %v", evidence, err)
+	}
+	var stored string
+	if err := g.pool.QueryRow(g.ctx, `select row_to_json(h)::text from hook_stage_evidence h where tenant_id=$1 and operation_id=$2`, g.tenant.String(), g.cmd.Request.Operation.String()).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private-pre-user-marker", "private-pre-context-marker", "private-user-marker", "private-agent-marker", "private-context-marker", string(g.cmd.Input)} {
+		if strings.Contains(stored, secret) {
+			t.Fatalf("durable hook evidence contains raw value %q", secret)
+		}
+	}
+	if got := e.Ledger().Effects(g.cmd.Request.Operation); got != 3 {
+		t.Fatalf("external effects=%d, want one action and one post hook", got)
+	}
+}
+
+func TestGovernedActionLostPostHookReplyRecoversWithoutRepeatingAction(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: contracts.HookResponse{Kind: contracts.HookPostAction, AgentMessage: "recorded"}, SendError: errors.New("reply lost")}})
+	g.enforce(t, e, g.cmd)
+	g.tick(t, e)
+	g.tick(t, e)
+	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("evidence before recovery=%v", err)
+	}
+	if _, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=clock_timestamp() where tenant_id=$1 and payload->>'method'='post_action'`, g.tenant.String()); err != nil {
+		t.Fatal(err)
+	}
+	g.tick(t, e)
+	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); err != nil {
+		t.Fatalf("recovered evidence: %v", err)
+	}
+	if got := e.Ledger().Effects(g.cmd.Request.Operation); got != 3 {
+		t.Fatalf("external effects=%d, want pre hook, action and one post hook", got)
+	}
+	if op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation); err != nil || op.State != lifecycle.OperationSucceeded {
+		t.Fatalf("operation=%+v, %v", op, err)
+	}
+}
+
+func TestGovernedActionMalformedPostHookReplyDoesNotAdmitEvidence(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: contracts.HookResponse{Kind: contracts.HookPostAction}}})
+	g.enforce(t, e, g.cmd)
+	g.tick(t, e)
+	malformed := hookPort{Port: e, send: func(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+		reply, err := e.Send(ctx, request)
+		if request.Method == contracts.MethodPostAction && err == nil {
+			reply.Result = json.RawMessage(`{"kind":"post_action","raw_secret":"must not be stored"}`)
+		}
+		return reply, err
+	}}
+	g.tick(t, malformed)
+	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("malformed response evidence=%v", err)
+	}
+	if op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation); err != nil || op.State != lifecycle.OperationSucceeded {
+		t.Fatalf("operation=%+v, %v", op, err)
+	}
+}
+
+func TestGovernedActionStaleHookClaimCannotCommitEvidence(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: contracts.HookResponse{Kind: contracts.HookPostAction}}})
+	g.enforce(t, e, g.cmd)
+	g.tick(t, e)
+	stale := hookPort{Port: e, send: func(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+		reply, err := e.Send(ctx, request)
+		if request.Method == contracts.MethodPostAction && err == nil {
+			_, updateErr := g.pool.Exec(g.ctx, `update outbox set lease_epoch=lease_epoch+1,lease_expires_at=clock_timestamp()+interval '1 hour' where tenant_id=$1 and payload->>'method'='post_action'`, g.tenant.String())
+			if updateErr != nil {
+				return contracts.Reply{}, updateErr
+			}
+		}
+		return reply, err
+	}}
+	g.tick(t, stale)
+	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stale claimant committed evidence=%v", err)
+	}
+	if _, err := g.pool.Exec(g.ctx, `update outbox set lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and payload->>'method'='post_action'`, g.tenant.String()); err != nil {
+		t.Fatal(err)
+	}
+	g.tick(t, e)
+	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); err != nil {
+		t.Fatalf("takeover evidence=%v", err)
+	}
+	if got := e.Ledger().Effects(g.cmd.Request.Operation); got != 3 {
+		t.Fatalf("effects=%d, want one each for pre hook, action and post hook", got)
+	}
+}
+
+func TestGovernedActionFailureHookUsesTypedFailureStage(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	cmd := g.cmd
+	pre := *cmd.Precondition
+	pre.Token = identity.DigestOf([]byte("stale resource"))
+	cmd.Precondition = &pre
+	response := contracts.HookResponse{Kind: contracts.HookActionFailure, AgentMessage: "failure noted"}
+	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: cmd.Request.Operation, Kind: contracts.HookActionFailure}: {Response: response}})
+	g.enforce(t, e, cmd)
+	g.tick(t, e)
+	op, err := store.GetOperation(g.ctx, g.pool, g.tenant, cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationRejected {
+		t.Fatalf("operation=%+v, %v", op, err)
+	}
+	g.tick(t, e)
+	evidence, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, cmd.Request.Operation, contracts.HookActionFailure)
+	if err != nil || evidence.FailureCode != contracts.FailureStalePrecondition || evidence.OutputDigest != "" {
+		t.Fatalf("failure evidence=%+v, %v", evidence, err)
+	}
+	if e.Ledger().Effects(cmd.Request.Operation) != 2 {
+		t.Fatal("rejected action was effected or failure hook missing")
 	}
 }
 
