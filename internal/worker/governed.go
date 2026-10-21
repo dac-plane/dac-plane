@@ -226,12 +226,16 @@ func (w *Worker) hookStageRow(ctx context.Context, tenant ids.TenantID, row stor
 	var hook contracts.HookRequest
 	decoder := json.NewDecoder(bytes.NewReader(body.Arguments))
 	decoder.DisallowUnknownFields()
-	if row.Record != lifecycle.RecordOperation || body.Operation.String() != row.RecordID.String() || !decodeSingle(decoder, &hook) || hook.Validate() != nil || hook.Operation != body.Operation || hook.Tenant != tenant || body.Method != hookMethod(hook.Kind) || (hook.Kind == contracts.HookPostAction && row.Event != string(lifecycle.OperationSucceed)) || (hook.Kind == contracts.HookActionFailure && row.Event != string(lifecycle.OperationSendRejected)) {
+	postEvent := row.Event == string(lifecycle.OperationSucceed) || row.Event == string(lifecycle.OperationReconcile)
+	if row.Record != lifecycle.RecordOperation || body.Operation.String() != row.RecordID.String() || !decodeSingle(decoder, &hook) || hook.Validate() != nil || hook.Operation != body.Operation || hook.Tenant != tenant || body.Method != hookMethod(hook.Kind) || (hook.Kind == contracts.HookPostAction && !postEvent) || (hook.Kind == contracts.HookActionFailure && row.Event != string(lifecycle.OperationSendRejected)) {
 		return w.poison(ctx, tenant, row, now, reasonInvalidBody)
 	}
 	action, err := store.GetGovernedAction(ctx, w.pool, tenant, body.Operation)
 	if err != nil {
-		return w.poison(ctx, tenant, row, now, reasonUnknownOperation)
+		if errors.Is(err, store.ErrNotFound) {
+			return w.poison(ctx, tenant, row, now, reasonUnknownOperation)
+		}
+		return err
 	}
 	port := w.enforcement[action.Use.Provider]
 	if port == nil {
@@ -269,7 +273,14 @@ func (w *Worker) hookStageRow(ctx context.Context, tenant ids.TenantID, row stor
 		return w.poison(ctx, tenant, row, now, reasonUnknownState)
 	}
 	action, err = store.GetGovernedAction(ctx, u, tenant, body.Operation)
-	if err != nil || !hookMatchesAction(hook, action) {
+	if err != nil {
+		_ = u.Rollback(ctx)
+		if errors.Is(err, store.ErrNotFound) {
+			return w.poison(ctx, tenant, row, now, reasonUnknownOperation)
+		}
+		return err
+	}
+	if !hookMatchesAction(hook, action) {
 		_ = u.Rollback(ctx)
 		return w.poison(ctx, tenant, row, now, reasonInvalidBody)
 	}

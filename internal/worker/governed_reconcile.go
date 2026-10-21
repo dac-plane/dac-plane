@@ -48,6 +48,19 @@ func (w *Worker) applyReconciledEntry(ctx context.Context, u *store.UnitOfWork, 
 	if err != nil {
 		return false, err
 	}
+	if receipt != nil {
+		followUp, err := hookOutbox(current.Tenant, current.Attempt, current.ID, contracts.HookRequest{
+			Kind: contracts.HookPostAction, Operation: current.ID, Tenant: current.Tenant,
+			Attempt: current.Attempt, Provider: current.Provider,
+			Action: receipt.Execution.Request.Action, Scope: receipt.Execution.Request.Scope,
+			InputDigest: receipt.Execution.Request.InputDigest, OutputDigest: receipt.OutputDigest,
+			Duration: positiveDuration(0),
+		}, tr.At)
+		if err != nil {
+			return false, err
+		}
+		tr.Outbox = followUp
+	}
 	op, _, err := store.ApplyOperation(ctx, u, current.Tenant, current.ID, lifecycle.OperationReconcile, outcome, tr)
 	if err != nil {
 		return false, err
