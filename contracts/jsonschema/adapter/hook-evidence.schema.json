@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "HookEvidence",
-  "description": "The safe audit record of a pre-action decision: digests of the original and effective inputs, never the inputs. rewritten is true exactly when the digests differ; the Go contract enforces that.",
+  "description": "The safe audit record of a pre-action decision: digests of inputs and hook response projections, never raw inputs or messages.",
   "type": "object",
   "required": ["operation_id", "outcome", "original_digest"],
   "additionalProperties": false,
@@ -10,7 +10,13 @@
     "outcome": { "enum": ["allowed", "denied", "missing", "timed_out", "malformed", "unavailable"] },
     "original_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
     "effective_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
-    "rewritten": { "const": true }
+    "rewritten": { "const": true },
+    "duration_ns": { "type": "integer", "minimum": 0, "maximum": 86400000000000 },
+    "response_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "user_message_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "agent_message_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "context_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+    "usage": { "type": "array", "maxItems": 16, "items": { "type": "object", "required": ["unit", "amount"], "additionalProperties": false, "properties": { "unit": { "$ref": "../lifecycle/common.schema.json#/$defs/unit" }, "amount": { "$ref": "../lifecycle/common.schema.json#/$defs/amount" } } } }
   },
   "if": { "properties": { "outcome": { "const": "allowed" } } },
   "then": { "required": ["effective_digest"] },

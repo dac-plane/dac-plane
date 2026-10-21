@@ -12,6 +12,7 @@ import (
 )
 
 const maxContextItems = 16
+const maxUsageMeters = 16
 
 // HookKind is the point at which a governed action is intercepted.
 type HookKind string
@@ -129,7 +130,7 @@ func (r HookResponse) Validate() error {
 		return fmt.Errorf("%w: a pre-action response, and only that, gives a permission", ErrInvalid)
 	case !pre && len(r.UpdatedInput) > 0, r.Permission == PermissionDeny && len(r.UpdatedInput) > 0:
 		return fmt.Errorf("%w: only an allowing pre-action response may rewrite input", ErrInvalid)
-	case len(r.UserMessage) > maxMessageLength || len(r.AgentMessage) > maxMessageLength || len(r.AdditionalContext) > maxContextItems:
+	case len(r.UserMessage) > maxMessageLength || len(r.AgentMessage) > maxMessageLength || len(r.AdditionalContext) > maxContextItems || len(r.Usage) > maxUsageMeters:
 		return fmt.Errorf("%w: hook messages and context are bounded", ErrInvalid)
 	}
 	for _, context := range r.AdditionalContext {
@@ -165,11 +166,65 @@ func HookOutcomes() []HookOutcome {
 // HookEvidence is the safe audit record of a pre-action decision: digests of
 // the original and effective inputs, never the inputs themselves.
 type HookEvidence struct {
-	Operation       ids.OperationID `json:"operation_id"`
-	Outcome         HookOutcome     `json:"outcome"`
-	OriginalDigest  identity.Digest `json:"original_digest"`
-	EffectiveDigest identity.Digest `json:"effective_digest,omitzero"`
-	Rewritten       bool            `json:"rewritten,omitempty"`
+	Operation          ids.OperationID `json:"operation_id"`
+	Outcome            HookOutcome     `json:"outcome"`
+	OriginalDigest     identity.Digest `json:"original_digest"`
+	EffectiveDigest    identity.Digest `json:"effective_digest,omitzero"`
+	Rewritten          bool            `json:"rewritten,omitempty"`
+	Duration           time.Duration   `json:"duration_ns,omitzero"`
+	ResponseDigest     identity.Digest `json:"response_digest,omitzero"`
+	UserMessageDigest  identity.Digest `json:"user_message_digest,omitzero"`
+	AgentMessageDigest identity.Digest `json:"agent_message_digest,omitzero"`
+	ContextDigest      identity.Digest `json:"context_digest,omitzero"`
+	Usage              []UsageMeter    `json:"usage,omitempty"`
+}
+
+// HookStageEvidence is the immutable safe evidence returned by a post-action
+// or action-failure hook. Text and action payloads are represented only by
+// digests; usage and elapsed duration are typed bounded values.
+type HookStageEvidence struct {
+	Operation          ids.OperationID `json:"operation_id"`
+	Kind               HookKind        `json:"kind"`
+	InputDigest        identity.Digest `json:"input_digest"`
+	OutputDigest       identity.Digest `json:"output_digest,omitzero"`
+	FailureCode        FailureCode     `json:"failure_code,omitzero"`
+	Duration           time.Duration   `json:"duration_ns"`
+	ResponseDigest     identity.Digest `json:"response_digest"`
+	UserMessageDigest  identity.Digest `json:"user_message_digest,omitzero"`
+	AgentMessageDigest identity.Digest `json:"agent_message_digest,omitzero"`
+	ContextDigest      identity.Digest `json:"context_digest,omitzero"`
+	Usage              []UsageMeter    `json:"usage,omitempty"`
+}
+
+// Validate rejects incomplete or stage-inconsistent durable hook evidence.
+func (e HookStageEvidence) Validate() error {
+	if e.Operation.IsZero() || (e.Kind != HookPostAction && e.Kind != HookActionFailure) || e.Duration < 0 || e.Duration > 24*time.Hour {
+		return fmt.Errorf("%w: invalid hook stage evidence identity or duration", ErrInvalid)
+	}
+	for _, digest := range []identity.Digest{e.InputDigest, e.ResponseDigest} {
+		if err := digest.Validate(); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+	}
+	if (e.Kind == HookPostAction) != (e.OutputDigest != "") || (e.Kind == HookActionFailure) != (e.FailureCode != "") || (e.FailureCode != "" && !slices.Contains(FailureCodes(), e.FailureCode)) {
+		return fmt.Errorf("%w: hook stage evidence does not match its kind", ErrInvalid)
+	}
+	for _, digest := range []identity.Digest{e.OutputDigest, e.UserMessageDigest, e.AgentMessageDigest, e.ContextDigest} {
+		if digest != "" {
+			if err := digest.Validate(); err != nil {
+				return fmt.Errorf("%w: %w", ErrInvalid, err)
+			}
+		}
+	}
+	if len(e.Usage) > maxUsageMeters {
+		return fmt.Errorf("%w: too many hook usage meters", ErrInvalid)
+	}
+	for _, meter := range e.Usage {
+		if err := meter.Unit.Validate(); err != nil || meter.Amount > lifecycle.MaxAmount {
+			return fmt.Errorf("%w: invalid hook usage", ErrInvalid)
+		}
+	}
+	return nil
 }
 
 // Validate reports whether the evidence is consistent with its outcome.
@@ -190,6 +245,24 @@ func (e HookEvidence) Validate() error {
 		}
 		if e.Rewritten == (e.EffectiveDigest == e.OriginalDigest) {
 			return fmt.Errorf("%w: rewritten exactly when the effective input differs", ErrInvalid)
+		}
+	}
+	if e.Duration < 0 || e.Duration > 24*time.Hour {
+		return fmt.Errorf("%w: invalid hook duration", ErrInvalid)
+	}
+	for _, digest := range []identity.Digest{e.ResponseDigest, e.UserMessageDigest, e.AgentMessageDigest, e.ContextDigest} {
+		if digest != "" {
+			if err := digest.Validate(); err != nil {
+				return fmt.Errorf("%w: %w", ErrInvalid, err)
+			}
+		}
+	}
+	if len(e.Usage) > maxUsageMeters {
+		return fmt.Errorf("%w: too many hook usage meters", ErrInvalid)
+	}
+	for _, meter := range e.Usage {
+		if err := meter.Unit.Validate(); err != nil || meter.Amount > lifecycle.MaxAmount {
+			return fmt.Errorf("%w: invalid hook usage", ErrInvalid)
 		}
 	}
 	return nil

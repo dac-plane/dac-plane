@@ -413,12 +413,35 @@ func TestPersistenceObservationsAndEvidence(t *testing.T) {
 	evidence := contracts.HookEvidence{
 		Operation: operation.ID, Outcome: contracts.HookDenied,
 		OriginalDigest: identity.DigestOf([]byte(`{"in":1}`)),
+		Duration:       3 * time.Millisecond, ResponseDigest: identity.DigestOf([]byte("safe response digest")),
+		UserMessageDigest: identity.DigestOf([]byte("message")), Usage: []contracts.UsageMeter{{Unit: "tokens", Amount: 9}},
 	}
 	if _, _, err := store.InsertHookEvidence(ctx, uow, f.tenant, evidence); err != nil {
 		t.Fatalf("InsertHookEvidence() error = %v", err)
 	}
 	if _, replayed, err := store.InsertHookEvidence(ctx, uow, f.tenant, evidence); err != nil || !replayed {
 		t.Fatalf("replay InsertHookEvidence() = %v, %v, want replayed", replayed, err)
+	}
+	loaded, err := store.GetHookEvidence(ctx, uow, f.tenant, operation.ID)
+	if err != nil || loaded.Duration != evidence.Duration || loaded.ResponseDigest != evidence.ResponseDigest || len(loaded.Usage) != 1 {
+		t.Fatalf("GetHookEvidence() = %+v, %v", loaded, err)
+	}
+	changedEvidence := evidence
+	changedEvidence.ResponseDigest = identity.DigestOf([]byte("different response"))
+	if _, _, err := store.InsertHookEvidence(ctx, uow, f.tenant, changedEvidence); !errors.Is(err, store.ErrPayloadMismatch) {
+		t.Fatalf("changed pre-action evidence replay = %v, want payload mismatch", err)
+	}
+	stage := contracts.HookStageEvidence{Operation: operation.ID, Kind: contracts.HookPostAction, InputDigest: evidence.OriginalDigest, OutputDigest: identity.DigestOf([]byte("output")), Duration: time.Second, ResponseDigest: identity.DigestOf([]byte("response"))}
+	if _, replayed, err := store.InsertHookStageEvidence(ctx, uow, f.tenant, stage); err != nil || replayed {
+		t.Fatalf("InsertHookStageEvidence() = replayed %v, %v", replayed, err)
+	}
+	if _, replayed, err := store.InsertHookStageEvidence(ctx, uow, f.tenant, stage); err != nil || !replayed {
+		t.Fatalf("replay InsertHookStageEvidence() = replayed %v, %v", replayed, err)
+	}
+	changed := stage
+	changed.OutputDigest = identity.DigestOf([]byte("different output"))
+	if _, _, err := store.InsertHookStageEvidence(ctx, uow, f.tenant, changed); !errors.Is(err, store.ErrPayloadMismatch) {
+		t.Fatalf("changed hook-stage replay error = %v, want payload mismatch", err)
 	}
 	if err := uow.Commit(ctx); err != nil {
 		t.Fatalf("Commit() error = %v", err)

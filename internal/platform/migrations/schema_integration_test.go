@@ -132,6 +132,27 @@ func TestMigrationDownThenUpRestoresSchema(t *testing.T) {
 	}
 }
 
+func TestMigrationRefusesToDropHookStageEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `insert into hook_stage_evidence (tenant_id,operation_id,kind,input_digest,output_digest,duration_ns,response_digest,usage) values ($1,$2,'post_action',$3,$4,1,$5,'[]'::jsonb)`, f.tenant, f.operation, digest(), digest(), digest()); err != nil {
+		t.Fatalf("insert hook stage evidence: %v", err)
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 9, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade while enriched hook evidence exists") {
+		t.Fatalf("ApplyVersion(9, down) error = %v, want data-preserving refusal", err)
+	}
+	version, err := provider.GetDBVersion(ctx)
+	if err != nil || version != 9 {
+		t.Fatalf("version after refused downgrade = %d, %v", version, err)
+	}
+}
+
 type fixture struct {
 	tenant    string
 	principal string

@@ -5,6 +5,7 @@ package application_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -211,17 +212,36 @@ func TestGovernedActionReceiptRehydrates(t *testing.T) {
 			}
 			v, err := application.GetGovernedAction(g.ctx, g.pool, g.actor, g.cmd.Request.Operation)
 			if err != nil || v.Receipt == nil {
-				t.Fatalf("receipt not recovered: %+v, %v", v.Receipt, err)
+				t.Fatalf("receipt not recovered: db=%d receipt=%+v, %v", g.count(t, "enforcement_receipt", "operation_id=$2", g.cmd.Request.Operation.String()), v.Receipt, err)
 			}
 			op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
 			if err != nil || op.State != lifecycle.OperationSucceeded {
 				t.Fatalf("reconciled operation=%+v, %v", op, err)
 			}
+			if got := g.count(t, "outbox", "payload->>'method'='post_action'"); got != 1 {
+				t.Fatalf("recovered post-hook intents=%d, want 1", got)
+			}
+			postHook := hookPort{Port: e, send: func(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+				if request.Method != contracts.MethodPostAction {
+					return e.Send(ctx, request)
+				}
+				result, err := json.Marshal(contracts.HookResponse{Kind: contracts.HookPostAction, AgentMessage: "recovered post hook"})
+				if err != nil {
+					return contracts.Reply{}, err
+				}
+				return contracts.Reply{Operation: request.Operation, Delivery: request.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted, Result: result}, nil
+			}}
+			if err := governedRecoveryWorker(t, g, postHook).Tick(g.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if evidence, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); err != nil || evidence.OutputDigest == "" {
+				t.Fatalf("recovered post-hook evidence=%+v, %v", evidence, err)
+			}
 			if got := g.resource.Ledger().Effects(g.cmd.Request.Operation); got != 1 {
 				t.Fatalf("recovery effects=%d", got)
 			}
 			if got := e.Ledger().Deliveries(g.cmd.Request.Operation); got != 2 {
-				t.Fatalf("recovery redispatched: %d deliveries", got)
+				t.Fatalf("recovery redispatched action: %d deliveries", got)
 			}
 			cursor, err := store.GetCursor(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, "dispatch")
 			if err != nil {

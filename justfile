@@ -11,6 +11,7 @@ govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
 recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
 migration_tests := "Migration"
+hook_lifecycle_tests := "GovernedAction(PostHook|FailureHook|LostPostHook)|HookStageEvidence"
 security_tests := "^Test[^/]*(Security|EventForged|EventBindingOfAnother|GovernedAction|Cancel|EnvironmentStop|RuntimeStop|Artifact|Review|PersistenceTenantIsolation|PersistenceClaimFencing|Migration|Budget|Spend|Authority|Resource)[^/]*$"
 
 # Some macOS Command Line Tools SDKs break the cgo linker used by the
@@ -100,6 +101,15 @@ test-migration:
 [group('test')]
 test-migration-race:
     {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/platform/migrations/ ./internal/simulator/ -run '{{ migration_tests }}'
+
+# Durable pre/post/failure enforcement hook lifecycle and replay/fencing evidence.
+[group('test')]
+test-hook-lifecycle:
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/platform/migrations/ ./internal/simulator/ -run '{{ hook_lifecycle_tests }}'
+
+[group('test')]
+test-hook-lifecycle-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/application/ ./internal/worker/ ./internal/platform/postgres/ ./internal/platform/migrations/ ./internal/simulator/ -run '{{ hook_lifecycle_tests }}'
 
 # Security/lifecycle acceptance, selected by complete top-level test names.
 [group('test')]

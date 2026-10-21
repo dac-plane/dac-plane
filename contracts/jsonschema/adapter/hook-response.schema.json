@@ -18,6 +18,7 @@
     },
     "usage": {
       "type": "array",
+      "maxItems": 16,
       "items": {
         "type": "object",
         "required": ["unit", "amount"],
