@@ -1,6 +1,6 @@
 # ADR-0007: Expose a versioned HTTP Surface API authenticated by external OpenID Connect
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-22
 - Issue: [#66](https://github.com/dac-plane/dac-plane/issues/66)
 
