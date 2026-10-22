@@ -1,42 +1,72 @@
-# Issue #30 — Freeze the M1 lifecycle contracts
+# Issue #66 — Decide the Surface API transport, versioning and actor authentication
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/30
-Branch: `feature/30-contract-freeze`
+Tracker: https://github.com/dac-plane/dac-plane/issues/66
+Branch: `docs/66-surface-api-adr`, from `main` at `034fa93`.
+Parent: #65 (M2: Deployable control plane).
 
-## Completed
+## Direction
 
-- [x] Preserve the active architecture: product-owned lifecycle, PostgreSQL/outbox authority,
-  replaceable provider ports, and the explicitly bounded simulator-backed M1 claims.
-- [x] Complete the post-action and action-failure enforcement hook path. The governed action result
-  and follow-up outbox intent commit atomically; hook delivery does not repeat the action.
-- [x] Persist immutable per-stage evidence under `(tenant, action operation, hook kind)`. Retain
-  enriched pre-action evidence compatibly; persist only response/message/context digests and bounded
-  typed usage, never hook text or action input.
-- [x] Add the additive migration and refuse downgrade if it would discard new hook evidence.
-- [x] Add simulator stage idempotency, contract/schema agreement, persistence and application/worker
-  recovery regressions.
-- [x] Publish the lifecycle traceability/evidence matrix and explicit limitations in
-  `docs/architecture/contract-freeze-30.md`, linked from the architecture index.
+Record ADR-0007 as a decision, not an implementation. Surfaces are clients of one deployed control
+plane; the Surface API is a thin transport over the existing transport-neutral command boundary in
+`internal/application`. Inputs already decided elsewhere are reused, not reopened:
 
-## Observed verification
+- ADR-0001 fixes public contracts as OpenAPI 3.1 and JSON Schema 2020-12.
+- ADR-0002 places the Surface API, authentication and actor authorization inside the one
+  control-plane application, with no handler bypassing lifecycle commands.
+- The review invariants require every mutating command to be authenticated, authorized,
+  idempotent and version checked.
 
-- `just test-contracts` passed.
-- `just test-hook-lifecycle` passed.
-- `just test-hook-lifecycle-race` passed.
-- `just test-recovery-race` passed.
-- `just test-security-race` passed.
-- `just test-migration-race` passed.
-- `just ci` passed all checks, including formatting, module checks, vet, unit/race tests, both
-  uncached PostgreSQL integration-race partitions, vulnerability scan (`No vulnerabilities found`),
-  and workflow lint. The general integration partition passed with application 330.320s, PostgreSQL
-  68.812s, worker 32.172s; the selected race partition passed with application 316.668s, migrations
-  32.781s, PostgreSQL 32.859s, worker 18.213s. All remaining packages passed or had no selected
-  tests.
-- `git diff --check` passed.
+Decisions confirmed with the maintainer on 2026-10-22:
 
-## Limits
+- Operator model: neutral to the operator, self-hosted first. The operator configures identity;
+  a managed offering later uses the same artifact.
+- Identity: adopt the historical specification's position. People authenticate through an external
+  OpenID Connect provider; machine surfaces use scoped service credentials from the same provider;
+  organization SSO is later. dac-plane stores no passwords.
 
-Evidence is from repository contracts and deterministic simulators. It does not qualify production
-providers, transport, PostgreSQL failover/backup/restore, scale, or semantic correctness of hook or
-agent results. Delivery remains at least once and uncertain outcomes remain explicit. Remote PR
-checks are separate from the local verification above.
+Evidence used: `architecture-explore/plane-bot-explore/notes/MASTER-RECORD.md` §5 items 11, 14 and 15
+and `DEEP-DIVES-01.md` §1 (command-oriented, mostly unary surface, streaming only where needed,
+client nonces, admin twins; vendor trust topology not adopted), and
+`architecture-explore/docs/spec/SPEC.md` (platform and workload identity rows, tenant definition,
+section 15 public API, event replay with cursor).
+
+## Implementation
+
+- [x] Confirm the operator model and identity position before drafting.
+- [x] Read ADR style (0001, 0005, 0006), the command envelope (`internal/application/application.go`),
+  identity contracts (`internal/identity`), and the durable event table.
+- [x] Draft `docs/adr/0007-surface-api-transport-and-authentication.md` with status Proposed.
+- [x] Resolve the three open questions with the maintainer (2026-10-22): owner-scoped reads with a
+  narrow tenant-reader permission; trusted provisioning command as the only way to create tenants,
+  principals, bindings and permissions; no time-based cursor window, reset on invalid or
+  other-generation cursors, retention deferred to its own decision.
+- [ ] Maintainer review of the complete draft.
+- [ ] Link ADR-0007 from `docs/architecture/README.md` once accepted.
+- [ ] Open the PR with the governance template; set status Accepted on approval.
+
+## Verification
+
+- `git diff --check`
+- Every relative link in the ADR resolves to a file on this branch.
+- `just test-contracts` is unaffected (no schema change in this issue).
+
+## Findings carried to implementation issues
+
+- `durable_event` is keyed by UUID with no monotonic per-tenant sequence, so it cannot serve as a
+  resumable stream cursor yet. #70 must add an ordered sequence before the event stream exists.
+- The application layer exposes few reads (`GetSubmission`, `GetReviewedResult`, `GetMigration`,
+  `GetGovernedAction`), mostly keyed by nonce. Task, attempt and attention queries must be added as
+  application functions in #70, not composed in handlers.
+- Mapping an external identity to a principal needs a new stored binding record with a schema and
+  agreement test; that belongs to #71, together with the tenant-reader permission record and the
+  trusted provisioning command.
+- The event cursor must carry a stream generation as well as the sequence, so a backup restore or
+  compaction yields a reset instead of skipped events (#70).
+- No retention policy exists for durable events; the minimum resumable window waits for a data
+  retention decision.
+
+## Remaining boundaries
+
+This issue decides no adapter transport (#67), deployment or TLS placement (#68), role model or team
+sharing beyond the tenant-reader permission, data retention, rate limiting, or web-workspace browser
+concerns such as CORS and cookie sessions.
