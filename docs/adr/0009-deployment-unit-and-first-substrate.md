@@ -43,8 +43,9 @@ digest-pinned base, contains no shell or package manager, runs as a non-root use
 filesystem, and holds no configuration secrets. The same image runs every role below.
 
 The binary exposes subcommands: `serve` runs the control plane, `migrate` applies schema migrations,
-and `provision` performs the trusted provisioning ADR-0007 defines. Nothing else is a separate
-artifact. Adapters are separate programs with their own images, built on the adapter kit.
+`provision` performs the trusted provisioning ADR-0007 defines, and `health` probes the local
+operations listener for liveness or readiness so a substrate health check needs no shell in the
+image. Nothing else is a separate artifact. Adapters are separate programs with their own images, built on the adapter kit.
 
 ### Roles per process
 
@@ -74,8 +75,9 @@ discard evidence.
 
 dac-plane terminates TLS itself on the Surface API and the adapter endpoint, from certificate and key
 files the operator mounts and replaces without rebuilding the image. An operator may also run a proxy
-or load balancer in front, but the hop from that proxy to dac-plane must be TLS as well. Plaintext is
-never served on a non-loopback interface, which keeps ADR-0007's rule unchanged.
+or load balancer in front, but the hop from that proxy to dac-plane must be TLS as well. The same rule
+covers the operations listener below. No listener serves plaintext on a non-loopback interface, which
+keeps ADR-0007's rule unchanged and needs no exception.
 
 ### Health and readiness
 
@@ -83,7 +85,11 @@ A separate operations listener serves liveness and readiness. Liveness reports t
 runs. Readiness additionally requires a reachable database, a schema version inside the release's
 range, and the Surface API and adapter listeners accepting connections. The operations listener is
 bound to loopback by default and exposes status only, never records, identities or configuration. An
-operator may bind it to a private interface for an external health checker.
+operator may bind it to a private interface for an external health checker; off loopback it serves
+TLS from the same mounted certificate material, so no listener serves plaintext off loopback. A
+substrate health check inside the container uses the `health` subcommand, which dials the loopback
+listener, so the default configuration needs neither a shell in the image nor a listener off
+loopback.
 
 ### Configuration and secrets
 
@@ -148,7 +154,8 @@ behavior are proven by the operations evidence issue before they are claimed.
 - #73 adds the subcommands, the startup schema-range check, the TLS and operations listeners,
   file-based secrets, the image, the reference stack with its development profile, and CI recipes that
   build the image reproducibly, check the dependency exclusion, and run the stack end to end.
-- `cmd/dac-plane` gains subcommands; the current single-mode entry point becomes `serve`.
+- `cmd/dac-plane` gains subcommands; the current single-mode entry point becomes `serve`, and the
+  reference stack's health checks run `health` inside each container.
 - Migrations gain a release compatibility range and the expand-then-contract rule; a migration that
   breaks the previous release must be split.
 - #74 proves rolling upgrade across a migration, process kill and restart, backup and restore, and

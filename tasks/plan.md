@@ -1,7 +1,7 @@
 # Issue #68 — Decide the deployment unit and first substrate
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/68
-Branch: `docs/68-deployment-unit-adr`, stacked on `docs/67-accept-adr-0008` (#79), from `main` at `01184ee`.
+Branch: `docs/68-deployment-unit-adr`, from `main` at `ebf16d8` (after #79).
 Parent: #65 (M2: Deployable control plane).
 
 ## Direction
@@ -48,13 +48,16 @@ vendor-operated and offers no self-hosted deployment model.
 
 ## Findings carried to implementation issues
 
-- `cmd/dac-plane` has one mode; it needs `serve`, `migrate` and `provision` subcommands (#73, with
-  `provision` from #71).
+- `cmd/dac-plane` has one mode; it needs `serve`, `migrate`, `provision` and `health` subcommands
+  (#73, with `provision` from #71).
 - Startup never checks the schema version; `serve` needs the release-range check (#73).
 - Nothing yet guards that the release binary excludes `internal/simulator`; add a dependency-graph
   check as a justfile recipe CI calls (#73).
 - Migrations need a declared compatibility range and the expand-then-contract rule (#73, proven in
   #74).
+
+- The operations listener serves TLS whenever it is bound off loopback; the `health` subcommand probes
+  it on loopback for container health checks (#73).
 
 ## Remaining boundaries
 
