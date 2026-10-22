@@ -54,6 +54,26 @@ interfaces. See [ADR-0002](../adr/0002-initial-application-boundary.md).
 The diagram does not prescribe Kubernetes, a cloud, an event broker, Temporal, a particular agent
 runtime or an environment provider.
 
+### First deployment
+
+[Editable Draw.io source](deployment-view.drawio) · [Rendered SVG](deployment-view.svg) ·
+[Rendered PNG](deployment-view.png)
+
+Question answered: **What runs where in the first supported deployment, and who opens each
+connection?**
+
+Audience: operators and engineers packaging the control plane.
+
+One image runs identical `serve` replicas, each with the Surface API, the adapter endpoint and the
+worker, against one PostgreSQL primary. Schema changes happen only in a separate `migrate` step before
+a rollout. Surface clients and provider adapters both connect in over TLS with tokens from the
+operator's OpenID Connect provider; the control plane never dials an adapter. Simulator adapters and a
+test issuer exist only in a development profile. See
+[ADR-0009](../adr/0009-deployment-unit-and-first-substrate.md).
+
+The view shows the reference Compose stack. It does not choose PostgreSQL high availability, a cloud,
+Kubernetes or a production provider.
+
 ## Ownership rules
 
 1. `dac-plane` is authoritative for Task, Attempt, AttentionRequest, Decision, Budget, Artifact,
@@ -132,6 +152,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 - [ADR-0006: PostgreSQL and transactional outbox for the bounded M1 lifecycle](../adr/0006-sql-outbox-durability-decision.md)
 - [ADR-0007: versioned HTTP Surface API authenticated by external OpenID Connect](../adr/0007-surface-api-transport-and-authentication.md)
 - [ADR-0008: out-of-process provider adapters over an adapter-initiated ControlFrame connection](../adr/0008-adapter-process-boundary-and-wire-transport.md)
+- [ADR-0009: one container image, migrated by an explicit step, on a reference Compose stack](../adr/0009-deployment-unit-and-first-substrate.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

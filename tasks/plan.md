@@ -1,68 +1,65 @@
-# Issue #67 — Decide the provider adapter process boundary and wire transport
+# Issue #68 — Decide the deployment unit and first substrate
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/67
-Branch: `docs/67-adapter-boundary-adr`, from `main` at `5b84977`.
+Tracker: https://github.com/dac-plane/dac-plane/issues/68
+Branch: `docs/68-deployment-unit-adr`, from `main` at `ebf16d8` (after #79).
 Parent: #65 (M2: Deployable control plane).
 
 ## Direction
 
-Record ADR-0008 as a decision, not an implementation. It decides where runtime, environment,
-enforcement and artifact-store adapters run, how ControlFrame crosses the process boundary, how an
-adapter authenticates, and what the public adapter kit is. Inputs already decided are reused:
+Record ADR-0009 and add the deployment view the baseline README calls for. This is a decision and a
+diagram, not an implementation. Inputs already decided are reused:
 
-- ADR-0002: providers are external systems behind ports and never write the product database; a
-  runtime split needs an ADR covering protocol, authentication, idempotency, cancellation and
-  failure reconciliation.
-- ADR-0003: ControlFrame is the logical protocol across an external process boundary, with
-  fail-fast negotiation and no implicit downgrade.
-- ADR-0006: lost replies stay uncertain and are reconciled, never resent as if no effect occurred.
-- ADR-0007: JSON Schema is the only schema language; external OpenID Connect is the trust root.
+- ADR-0002: one application, API and loops in one process until a split trigger is proven.
+- ADR-0007: TLS placement is left to this ADR, but plaintext is never served off loopback.
+- ADR-0008: adapters dial in; in-process ports stay out of production; a replica claims work only
+  while it holds a provider connection.
 
-Decisions confirmed with the maintainer on 2026-10-22, after reviewing the Plane-Bot evidence:
+Decisions confirmed with the maintainer on 2026-10-22, after reviewing the evidence:
 
-- Production adapters always run out of process. In-process ports remain for the deterministic
-  simulators and tests only.
-- The adapter always opens the connection: one WebSocket over HTTPS carrying JSON ControlFrames.
-- An adapter authenticates with OpenID Connect client-credentials tokens from the operator's
-  identity provider, bound to a provisioned provider registration. Per-operation authority stays in
-  `AuthorityGrant`.
-- The adapter kit is a separate Go module in this repository.
+- Migrations run only through a separate `dac-plane migrate` step; serving processes refuse to start
+  outside their release's schema range.
+- First substrate: one OCI image plus a production-capable reference Docker Compose stack; Kubernetes
+  later on evidence.
+- dac-plane terminates TLS itself; an operator proxy is allowed only with TLS on the hop to dac-plane.
+- Every replica runs all roles (adopted from ADR-0002, not reopened).
 
-Evidence used: `architecture-explore/plane-bot-explore/notes/DEEP-DIVES-03.md` §1–2 and §5 items 4–6
-(versioned control port; machine receives server-streamed request frames over its own outbound
-connection; cloud pods dialed with a per-resource token; one daemon protocol in two placements;
-Computer Use as a separate process), `DEEP-DIVES-01.md` §3–4 (separate daemon and coordinator
-processes), and `architecture-explore/docs/spec/SPEC.md` (workload identity row; "the runtime
-adapter can be a worker-side library").
+Evidence used: the CP9 deployment-fit gate in
+`architecture-explore/docs/qualification/control-plane-candidates.md` ("local-only demos do not
+pass"; a Kubernetes-only topology counted against a candidate), the operator setup, upgrade and
+rollback measurement in `architecture-explore/docs/spec/SPEC.md`, and Grok Bot's single update lease
+and claimed upgrade schedules in `plane-bot-explore/notes/MASTER-RECORD.md` §5. Grok Bot is
+vendor-operated and offers no self-hosted deployment model.
 
 ## Implementation
 
-- [x] Confirm the four open decisions before drafting.
-- [x] Read the adapter contracts (`internal/contracts/port.go`, `frame.go`, `gate.go`, `stream.go`)
-  and how the worker holds ports (`internal/worker/worker.go`).
-- [x] Draft `docs/adr/0008-adapter-process-boundary-and-wire-transport.md` with status Proposed.
-- [ ] Maintainer review of the draft.
-- [ ] On approval: set Accepted and link it from `docs/architecture/README.md` in the same PR.
+- [x] Confirm the open decisions before drafting.
+- [x] Read the entry point, configuration, bootstrap and migration provider.
+- [x] Draft `docs/adr/0009-deployment-unit-and-first-substrate.md`; marked Accepted in the PR so merging records acceptance.
+- [x] Add `docs/architecture/deployment-view.drawio` and export `.svg` and `.png` from it.
+- [x] Describe the deployment view in `docs/architecture/README.md`.
+- [ ] Maintainer review of the draft and the view.
+- [x] Link ADR-0009 from "Source decisions".
 
 ## Verification
 
 - `git diff --check`
-- Every relative link in the ADR resolves to a file on this branch.
+- Every relative link in the ADR and README resolves on this branch.
+- The `.svg` and `.png` are exported from the committed `.drawio` source.
 
 ## Findings carried to implementation issues
 
-- The worker takes a fixed `map[ids.ProviderID]contracts.Port` at construction. Adapters that
-  connect and disconnect need a connection registry that satisfies `contracts.Port` per provider and
-  reports "no port" while disconnected, so rows stay pending as they do today (#72).
-- With several control-plane replicas, an adapter connection terminates on one replica. Work for a
-  provider must be claimed only where a connection exists (#72, proven in #74; deployment shape in
-  #68).
-- `contracts.Peer` is documented as established by transport authentication; nothing establishes it
-  yet. The provider registration and its (issuer, subject) binding are new records (#72).
-- Simulators must run behind the kit out of process so the full M1 suites run over the wire (#72).
+- `cmd/dac-plane` has one mode; it needs `serve`, `migrate`, `provision` and `health` subcommands
+  (#73, with `provision` from #71).
+- Startup never checks the schema version; `serve` needs the release-range check (#73).
+- Nothing yet guards that the release binary excludes `internal/simulator`; add a dependency-graph
+  check as a justfile recipe CI calls (#73).
+- Migrations need a declared compatibility range and the expand-then-contract rule (#73, proven in
+  #74).
+
+- The operations listener serves TLS whenever it is bound off loopback; the `health` subcommand probes
+  it on loopback for container health checks (#73).
 
 ## Remaining boundaries
 
-This issue selects no production provider (#75), no deployment or TLS placement (#68), and no
-adapter-side sandboxing of the provider itself. Stdio or local-socket transports and control-plane
-dial-out are not adopted.
+This issue does not choose PostgreSQL high availability or backup tooling, observability export,
+resource sizing, Kubernetes packaging, or an artifact store. No production provider is qualified (#75).
