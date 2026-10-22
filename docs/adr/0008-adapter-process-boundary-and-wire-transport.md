@@ -1,6 +1,6 @@
 # ADR-0008: Run provider adapters out of process over an adapter-initiated ControlFrame connection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-22
 - Issue: [#67](https://github.com/dac-plane/dac-plane/issues/67)
 

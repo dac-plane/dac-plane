@@ -131,6 +131,7 @@ still need authoritative tables and active contracts. The contract-freeze gate i
 - [ADR-0005: fenced harness migration restarts work with explicit evidence](../adr/0005-fenced-harness-migration.md)
 - [ADR-0006: PostgreSQL and transactional outbox for the bounded M1 lifecycle](../adr/0006-sql-outbox-durability-decision.md)
 - [ADR-0007: versioned HTTP Surface API authenticated by external OpenID Connect](../adr/0007-surface-api-transport-and-authentication.md)
+- [ADR-0008: out-of-process provider adapters over an adapter-initiated ControlFrame connection](../adr/0008-adapter-process-boundary-and-wire-transport.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)
