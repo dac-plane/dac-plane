@@ -130,6 +130,18 @@ test-identity:
 test-identity-race:
     {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/authn/ ./internal/identity/ ./internal/provision/ ./internal/platform/migrations/ -run '{{ identity_tests }}'
 
+# Surface API v1 (ADR-0007): contract conformance, handlers, end-to-end lifecycle
+# over HTTP, and commit-ordered event streams.
+[group('test')]
+test-surface:
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/httpapi/
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/platform/postgres/ ./internal/platform/migrations/ -run 'StreamEvents|RolledBack|SurfaceEvents'
+
+[group('test')]
+test-surface-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/httpapi/
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/platform/postgres/ ./internal/platform/migrations/ -run 'StreamEvents|RolledBack|SurfaceEvents'
+
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]
 test-contracts:

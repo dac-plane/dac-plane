@@ -26,8 +26,8 @@
   },
   "if": {
     "anyOf": [
-      { "properties": { "runtime_stopped": { "const": true } } },
-      { "properties": { "environment_stopped": { "const": true } } }
+      { "required": ["runtime_stopped"], "properties": { "runtime_stopped": { "const": true } } },
+      { "required": ["environment_stopped"], "properties": { "environment_stopped": { "const": true } } }
     ]
   },
   "then": { "properties": { "state": { "enum": ["cancellation_requested", "terminated"] } } },

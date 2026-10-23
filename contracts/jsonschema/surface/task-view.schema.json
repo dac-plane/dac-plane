@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskView",
+  "description": "A task as a surface reads it. The ETag header carries task.version.",
+  "type": "object",
+  "required": [
+    "task",
+    "open_attention",
+    "revisions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "task": {
+      "$ref": "../lifecycle/task.schema.json"
+    },
+    "attempt": {
+      "$ref": "../lifecycle/attempt.schema.json"
+    },
+    "open_attention": {
+      "type": "array",
+      "items": {
+        "$ref": "../lifecycle/attention-request.schema.json"
+      }
+    },
+    "spend_challenge": {
+      "$ref": "../lifecycle/spend-challenge.schema.json"
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "$ref": "revision-view.schema.json"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewResult",
+  "description": "Result of a review; rework is present when changes were requested and new work was scheduled.",
+  "type": "object",
+  "required": [
+    "review"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "review": {
+      "$ref": "../lifecycle/result-review.schema.json"
+    },
+    "rework": {
+      "$ref": "submission.schema.json"
+    }
+  }
+}

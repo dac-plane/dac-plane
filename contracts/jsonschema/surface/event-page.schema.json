@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventPage",
+  "description": "One page of events. When reset is true the cursor could not be resumed: re-read snapshots and continue from next_cursor.",
+  "type": "object",
+  "required": [
+    "events",
+    "next_cursor",
+    "reset"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "event.schema.json"
+      }
+    },
+    "next_cursor": {
+      "$ref": "event.schema.json#/$defs/cursor"
+    },
+    "reset": {
+      "type": "boolean"
+    }
+  }
+}

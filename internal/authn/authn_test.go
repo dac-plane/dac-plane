@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -15,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,188 +23,43 @@ import (
 
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/oidctest"
 )
 
 var testNow = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 
 const testAudience = "https://dac-plane.example/api"
 
-// testIssuer is an OpenID Connect issuer served over TLS from the test
-// process: discovery metadata plus a key set the test can rotate.
+// testIssuer adapts the shared test issuer to this package's fixed claims.
 type testIssuer struct {
-	t       *testing.T
-	server  *httptest.Server
-	mu      sync.Mutex
-	keys    map[string]crypto.Signer
-	fetches atomic.Int32
-	// failKeys makes the key endpoint answer 500.
-	failKeys atomic.Bool
-	// hold, when set, blocks the key endpoint until it is closed; each
-	// blocked request is announced on held.
-	hold chan struct{}
-	held chan struct{}
-	// discoveredIssuer overrides the issuer discovery reports.
-	discoveredIssuer string
-	keysURL          string
+	*oidctest.Issuer
 }
 
 func newTestIssuer(t *testing.T) *testIssuer {
 	t.Helper()
-	issuer := &testIssuer{t: t, keys: map[string]crypto.Signer{}}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
-		discovered := issuer.discoveredIssuer
-		if discovered == "" {
-			discovered = issuer.server.URL
-		}
-		keysURL := issuer.keysURL
-		if keysURL == "" {
-			keysURL = issuer.server.URL + "/keys"
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                                discovered,
-			"jwks_uri":                              keysURL,
-			"authorization_endpoint":                issuer.server.URL + "/authorize",
-			"token_endpoint":                        issuer.server.URL + "/token",
-			"id_token_signing_alg_values_supported": []string{"RS256", "ES256"},
-		})
-	})
-	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
-		issuer.fetches.Add(1)
-		issuer.mu.Lock()
-		hold, held := issuer.hold, issuer.held
-		issuer.mu.Unlock()
-		if hold != nil {
-			held <- struct{}{}
-			<-hold
-		}
-		if issuer.failKeys.Load() {
-			http.Error(w, "unavailable", http.StatusInternalServerError)
-			return
-		}
-		issuer.mu.Lock()
-		defer issuer.mu.Unlock()
-		var set jose.JSONWebKeySet
-		for kid, signer := range issuer.keys {
-			set.Keys = append(set.Keys, jose.JSONWebKey{Key: signer.Public(), KeyID: kid, Use: "sig"})
-		}
-		_ = json.NewEncoder(w).Encode(set)
-	})
-	issuer.server = httptest.NewTLSServer(mux)
-	t.Cleanup(issuer.server.Close)
-	return issuer
+	issuer := oidctest.New(t)
+	issuer.Audience, issuer.Subject = testAudience, "user-248289761001"
+	issuer.Now = func() time.Time { return testNow }
+	return &testIssuer{issuer}
 }
 
-func (i *testIssuer) url() string { return i.server.URL }
-
-func (i *testIssuer) publish(kid string, signer crypto.Signer) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.keys[kid] = signer
-}
-
-func (i *testIssuer) withdraw(kid string) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	delete(i.keys, kid)
-}
-
-func newRSAKey(t *testing.T) *rsa.PrivateKey {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return key
-}
-
-func newECKey(t *testing.T) *ecdsa.PrivateKey {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return key
-}
-
-// tokenSpec describes one signed token. Zero values take the defaults of a
-// valid access token from issuer with kid "k1".
-type tokenSpec struct {
-	kid       string
-	key       any
-	algorithm jose.SignatureAlgorithm
-	typ       string
-	noType    bool
-	embedJWK  bool
-	claims    map[string]any
-	drop      []string
-}
-
-func (i *testIssuer) claims() map[string]any {
-	return map[string]any{
-		"iss": i.url(), "sub": "user-248289761001", "aud": testAudience,
-		"iat": testNow.Add(-time.Minute).Unix(), "exp": testNow.Add(5 * time.Minute).Unix(),
-		"jti": "id-1", "client_id": "surface-client",
-	}
-}
-
+func (i *testIssuer) url() string                         { return i.URL() }
+func (i *testIssuer) publish(kid string, s crypto.Signer) { i.Publish(kid, s) }
+func (i *testIssuer) withdraw(kid string)                 { i.Withdraw(kid) }
+func (i *testIssuer) claims() map[string]any              { return i.DefaultClaims() }
 func (i *testIssuer) token(t *testing.T, spec tokenSpec) string {
 	t.Helper()
-	claims := i.claims()
-	for name, value := range spec.claims {
-		claims[name] = value
-	}
-	for _, name := range spec.drop {
-		delete(claims, name)
-	}
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sign(t, spec, payload).compact
+	return i.Token(t, spec)
 }
 
-type signedToken struct {
-	compact, full string
-}
+func newRSAKey(t *testing.T) *rsa.PrivateKey  { return oidctest.NewRSAKey(t) }
+func newECKey(t *testing.T) *ecdsa.PrivateKey { return oidctest.NewECKey(t) }
 
-func sign(t *testing.T, spec tokenSpec, payload []byte) signedToken {
+type tokenSpec = oidctest.Spec
+
+func sign(t *testing.T, spec tokenSpec, payload []byte) oidctest.Signed {
 	t.Helper()
-	if spec.kid == "" {
-		spec.kid = "k1"
-	}
-	if spec.algorithm == "" {
-		spec.algorithm = jose.RS256
-	}
-	options := &jose.SignerOptions{EmbedJWK: spec.embedJWK}
-	if !spec.noType {
-		typ := spec.typ
-		if typ == "" {
-			typ = "at+jwt"
-		}
-		options = options.WithType(jose.ContentType(typ))
-	}
-	key := jose.SigningKey{Algorithm: spec.algorithm, Key: jose.JSONWebKey{Key: spec.key, KeyID: spec.kid}}
-	if spec.embedJWK {
-		key.Key = spec.key
-	}
-	if spec.algorithm == jose.HS256 {
-		key.Key = spec.key
-		options = options.WithHeader(jose.HeaderKey("kid"), spec.kid)
-	}
-	signer, err := jose.NewSigner(key, options)
-	if err != nil {
-		t.Fatalf("NewSigner() error = %v", err)
-	}
-	object, err := signer.Sign(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compact, err := object.CompactSerialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return signedToken{compact: compact, full: object.FullSerialize()}
+	return oidctest.Sign(t, spec, payload)
 }
 
 type binding struct {
@@ -252,7 +103,7 @@ func newHarness(t *testing.T, change func(*IssuerConfig), opts ...Option) *harne
 	}
 	logger := slog.New(slog.NewJSONHandler(h.logs, nil))
 	all := append([]Option{
-		WithHTTPClient(issuer.server.Client()),
+		WithHTTPClient(issuer.Client()),
 		WithClock(func() time.Time { return *h.clock.Load() }),
 		WithKeyRefresh(time.Minute, 15*time.Minute),
 	}, opts...)
@@ -301,11 +152,11 @@ func TestAuthenticateAcceptsBoundAccessTokens(t *testing.T) {
 	ecKey := newECKey(t)
 	h.issuer.publish("k2", ecKey)
 	for name, spec := range map[string]tokenSpec{
-		"RS256 at+jwt":                {key: h.key},
-		"ES256 at+jwt":                {kid: "k2", key: ecKey, algorithm: jose.ES256},
-		"application/at+jwt":          {key: h.key, typ: "application/at+jwt"},
-		"type compares ignoring case": {key: h.key, typ: "AT+JWT"},
-		"expired within clock skew":   {key: h.key, claims: map[string]any{"exp": testNow.Add(-10 * time.Second).Unix()}},
+		"RS256 at+jwt":                {Key: h.key},
+		"ES256 at+jwt":                {KeyID: "k2", Key: ecKey, Algorithm: jose.ES256},
+		"application/at+jwt":          {Key: h.key, Type: "application/at+jwt"},
+		"type compares ignoring case": {Key: h.key, Type: "AT+JWT"},
+		"expired within clock skew":   {Key: h.key, Claims: map[string]any{"exp": testNow.Add(-10 * time.Second).Unix()}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, spec), h.tenant)
@@ -327,7 +178,7 @@ func TestAuthenticateRefusesWithTheRightReason(t *testing.T) {
 	h := newHarness(t, nil)
 	other := newRSAKey(t)
 	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: mustMarshalPublic(t, &h.key.PublicKey)})
-	valid := h.issuer.token(t, tokenSpec{key: h.key})
+	valid := h.issuer.token(t, tokenSpec{Key: h.key})
 	parts := strings.Split(valid, ".")
 	unsigned := encodeSegment(`{"alg":"none","typ":"at+jwt"}`) + "." + parts[1] + "."
 	lowercase := encodeSegment(`{"alg":"rs256","typ":"at+jwt","kid":"k1"}`) + "." + parts[1] + "." + parts[2]
@@ -342,28 +193,28 @@ func TestAuthenticateRefusesWithTheRightReason(t *testing.T) {
 		{"not a JWT", "not-a-token", ReasonMalformed},
 		{"oversized", strings.Repeat("a", maxTokenBytes+1), ReasonMalformed},
 		{"encrypted serialization", "a.b.c.d.e", ReasonMalformed},
-		{"JSON serialization", sign(t, tokenSpec{key: h.key}, payload).full, ReasonMalformed},
+		{"JSON serialization", sign(t, tokenSpec{Key: h.key}, payload).Full, ReasonMalformed},
 		{"alg none", unsigned, ReasonMalformed},
 		{"lowercase alg", lowercase, ReasonMalformed},
-		{"HS256 keyed with the public key", h.issuer.token(t, tokenSpec{key: publicPEM, algorithm: jose.HS256}), ReasonAlgorithmNotAllowed},
-		{"algorithm not pinned for issuer", h.issuer.token(t, tokenSpec{kid: "k1", key: newECKey(t), algorithm: jose.ES256}), ReasonAlgorithmNotAllowed},
-		{"untrusted issuer", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"iss": "https://evil.example"}}), ReasonUntrustedIssuer},
-		{"missing type", h.issuer.token(t, tokenSpec{key: h.key, noType: true}), ReasonWrongType},
-		{"ID token type", h.issuer.token(t, tokenSpec{key: h.key, typ: "JWT"}), ReasonWrongType},
-		{"wrong audience", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"aud": "https://other.example"}}), ReasonWrongAudience},
-		{"missing audience", h.issuer.token(t, tokenSpec{key: h.key, drop: []string{"aud"}}), ReasonWrongAudience},
-		{"unpublished key under a published key ID", h.issuer.token(t, tokenSpec{key: other}), ReasonBadSignature},
-		{"key embedded in the header", h.issuer.token(t, tokenSpec{key: other, embedJWK: true}), ReasonBadSignature},
-		{"expired", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"exp": testNow.Add(-time.Minute).Unix()}}), ReasonExpired},
-		{"not yet valid", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"nbf": testNow.Add(time.Minute).Unix()}}), ReasonNotYetValid},
-		{"issued in the future", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"iat": testNow.Add(time.Minute).Unix()}}), ReasonNotYetValid},
-		{"missing issued at", h.issuer.token(t, tokenSpec{key: h.key, drop: []string{"iat"}}), ReasonInvalidClaims},
-		{"missing expiry", h.issuer.token(t, tokenSpec{key: h.key, drop: []string{"exp"}}), ReasonInvalidClaims},
-		{"lifetime above the maximum", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"iat": testNow.Add(-2 * time.Hour).Unix()}}), ReasonLifetimeExceeded},
-		{"missing subject", h.issuer.token(t, tokenSpec{key: h.key, drop: []string{"sub"}}), ReasonInvalidClaims},
-		{"subject with a space", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"sub": "user 1"}}), ReasonInvalidClaims},
-		{"ID token claims in an access token", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"nonce": "n-1"}}), ReasonInvalidClaims},
-		{"unbound subject", h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"sub": "someone-else"}}), ReasonUnbound},
+		{"HS256 keyed with the public key", h.issuer.token(t, tokenSpec{Key: publicPEM, Algorithm: jose.HS256}), ReasonAlgorithmNotAllowed},
+		{"algorithm not pinned for issuer", h.issuer.token(t, tokenSpec{KeyID: "k1", Key: newECKey(t), Algorithm: jose.ES256}), ReasonAlgorithmNotAllowed},
+		{"untrusted issuer", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"iss": "https://evil.example"}}), ReasonUntrustedIssuer},
+		{"missing type", h.issuer.token(t, tokenSpec{Key: h.key, NoType: true}), ReasonWrongType},
+		{"ID token type", h.issuer.token(t, tokenSpec{Key: h.key, Type: "JWT"}), ReasonWrongType},
+		{"wrong audience", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"aud": "https://other.example"}}), ReasonWrongAudience},
+		{"missing audience", h.issuer.token(t, tokenSpec{Key: h.key, Drop: []string{"aud"}}), ReasonWrongAudience},
+		{"unpublished key under a published key ID", h.issuer.token(t, tokenSpec{Key: other}), ReasonBadSignature},
+		{"key embedded in the header", h.issuer.token(t, tokenSpec{Key: other, EmbedJWK: true}), ReasonBadSignature},
+		{"expired", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"exp": testNow.Add(-time.Minute).Unix()}}), ReasonExpired},
+		{"not yet valid", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"nbf": testNow.Add(time.Minute).Unix()}}), ReasonNotYetValid},
+		{"issued in the future", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"iat": testNow.Add(time.Minute).Unix()}}), ReasonNotYetValid},
+		{"missing issued at", h.issuer.token(t, tokenSpec{Key: h.key, Drop: []string{"iat"}}), ReasonInvalidClaims},
+		{"missing expiry", h.issuer.token(t, tokenSpec{Key: h.key, Drop: []string{"exp"}}), ReasonInvalidClaims},
+		{"lifetime above the maximum", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"iat": testNow.Add(-2 * time.Hour).Unix()}}), ReasonLifetimeExceeded},
+		{"missing subject", h.issuer.token(t, tokenSpec{Key: h.key, Drop: []string{"sub"}}), ReasonInvalidClaims},
+		{"subject with a space", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"sub": "user 1"}}), ReasonInvalidClaims},
+		{"ID token claims in an access token", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"nonce": "n-1"}}), ReasonInvalidClaims},
+		{"unbound subject", h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"sub": "someone-else"}}), ReasonUnbound},
 	}
 	var tokens []string
 	for _, tc := range cases {
@@ -407,11 +258,11 @@ func mustMarshalPublic(t *testing.T, key crypto.PublicKey) []byte {
 
 func TestAuthenticateRefusesOtherTenantsWithoutDistinction(t *testing.T) {
 	h := newHarness(t, nil)
-	token := h.issuer.token(t, tokenSpec{key: h.key})
+	token := h.issuer.token(t, tokenSpec{Key: h.key})
 	otherTenant := mustID[ids.Tenant](t)
 	h.bindings[binding{h.issuer.url(), "user-248289761001", otherTenant}] = identity.Principal{Tenant: h.tenant, ID: mustID[ids.Principal](t), Kind: identity.PrincipalHuman}
 
-	_, unboundErr := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{"sub": "nobody"}}), h.tenant)
+	_, unboundErr := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{"sub": "nobody"}}), h.tenant)
 	_, foreignErr := h.auth.Authenticate(context.Background(), token, mustID[ids.Tenant](t))
 	_, mismatchErr := h.auth.Authenticate(context.Background(), token, otherTenant)
 	for name, err := range map[string]error{"unbound": unboundErr, "unknown tenant": foreignErr, "principal of another tenant": mismatchErr} {
@@ -424,7 +275,7 @@ func TestAuthenticateRefusesOtherTenantsWithoutDistinction(t *testing.T) {
 func TestAuthenticateSurfacesResolverFailures(t *testing.T) {
 	h := newHarness(t, nil)
 	h.failure = errors.New("database unavailable")
-	_, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{key: h.key}), h.tenant)
+	_, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{Key: h.key}), h.tenant)
 	if err == nil || errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("Authenticate() error = %v, want an operational failure", err)
 	}
@@ -436,12 +287,12 @@ func TestUntypedIssuerStillRefusesIDTokens(t *testing.T) {
 	if !strings.Contains(h.logs.String(), "access token typing is not required") {
 		t.Fatalf("opt-out was not logged at startup: %s", h.logs)
 	}
-	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{key: h.key, noType: true}), h.tenant); err != nil {
+	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{Key: h.key, NoType: true}), h.tenant); err != nil {
 		t.Fatalf("untyped access token refused: %v", err)
 	}
 	for name, claim := range map[string]string{"nonce": "nonce", "at_hash": "at_hash"} {
 		t.Run(name, func(t *testing.T) {
-			token := h.issuer.token(t, tokenSpec{key: h.key, typ: "JWT", claims: map[string]any{claim: "x"}})
+			token := h.issuer.token(t, tokenSpec{Key: h.key, Type: "JWT", Claims: map[string]any{claim: "x"}})
 			if _, err := h.auth.Authenticate(context.Background(), token, h.tenant); !errors.Is(err, ErrUnauthenticated) {
 				t.Fatalf("ID token with %s accepted: %v", claim, err)
 			}
@@ -451,40 +302,40 @@ func TestUntypedIssuerStillRefusesIDTokens(t *testing.T) {
 
 func TestUnknownKeyIDFloodFetchesKeysAtMostOncePerInterval(t *testing.T) {
 	h := newHarness(t, nil)
-	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{key: h.key}), h.tenant); err != nil {
+	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{Key: h.key}), h.tenant); err != nil {
 		t.Fatalf("warm-up: %v", err)
 	}
-	before := h.issuer.fetches.Load()
+	before := h.issuer.Fetches()
 	attacker := newRSAKey(t)
 	var wait sync.WaitGroup
 	for i := range 64 {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			token := h.issuer.token(t, tokenSpec{kid: fmt.Sprintf("invented-%d", i), key: attacker})
+			token := h.issuer.token(t, tokenSpec{KeyID: fmt.Sprintf("invented-%d", i), Key: attacker})
 			_, _ = h.auth.Authenticate(context.Background(), token, h.tenant)
 		}()
 	}
 	wait.Wait()
-	if extra := h.issuer.fetches.Load() - before; extra > 1 {
+	if extra := h.issuer.Fetches() - before; extra > 1 {
 		t.Fatalf("64 unknown key IDs caused %d key-set fetches, want at most 1", extra)
 	}
 }
 
 func TestKeyRotationAndWithdrawal(t *testing.T) {
 	h := newHarness(t, nil)
-	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{key: h.key}), h.tenant); err != nil {
-		t.Fatalf("initial key: %v", err)
+	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{Key: h.key}), h.tenant); err != nil {
+		t.Fatalf("initial Key: %v", err)
 	}
 	rotated := newRSAKey(t)
 	h.issuer.publish("k2", rotated)
 	h.advance(2 * time.Minute)
-	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{kid: "k2", key: rotated}), h.tenant); err != nil {
+	if _, err := h.auth.Authenticate(context.Background(), h.issuer.token(t, tokenSpec{KeyID: "k2", Key: rotated}), h.tenant); err != nil {
 		t.Fatalf("rotated key refused after the refresh interval: %v", err)
 	}
 	h.issuer.withdraw("k1")
 	h.advance(16 * time.Minute)
-	old := h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{
+	old := h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{
 		"iat": h.clock.Load().Add(-time.Minute).Unix(), "exp": h.clock.Load().Add(time.Minute).Unix(),
 	}})
 	if _, err := h.auth.Authenticate(context.Background(), old, h.tenant); !errors.Is(err, ErrUnauthenticated) {
@@ -494,8 +345,8 @@ func TestKeyRotationAndWithdrawal(t *testing.T) {
 
 func TestNewRefusesUnsafeDiscovery(t *testing.T) {
 	for name, change := range map[string]func(*testIssuer){
-		"issuer mismatch":   func(i *testIssuer) { i.discoveredIssuer = "https://elsewhere.example" },
-		"plaintext key URL": func(i *testIssuer) { i.keysURL = "http://keys.example/keys" },
+		"issuer mismatch":   func(i *testIssuer) { i.DiscoveredIssuer = "https://elsewhere.example" },
+		"plaintext key URL": func(i *testIssuer) { i.KeysURL = "http://keys.example/keys" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			issuer := newTestIssuer(t)
@@ -504,7 +355,7 @@ func TestNewRefusesUnsafeDiscovery(t *testing.T) {
 			resolve := func(context.Context, string, string, ids.TenantID) (identity.Principal, bool, error) {
 				return identity.Principal{}, false, nil
 			}
-			if _, err := New(context.Background(), config, resolve, slog.New(slog.DiscardHandler), WithHTTPClient(issuer.server.Client())); err == nil {
+			if _, err := New(context.Background(), config, resolve, slog.New(slog.DiscardHandler), WithHTTPClient(issuer.Client())); err == nil {
 				t.Fatal("New() accepted unsafe discovery")
 			}
 		})
@@ -532,7 +383,7 @@ func TestBearerToken(t *testing.T) {
 func (h *harness) freshToken(t *testing.T) string {
 	t.Helper()
 	now := *h.clock.Load()
-	return h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{
+	return h.issuer.token(t, tokenSpec{Key: h.key, Claims: map[string]any{
 		"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix(),
 	}})
 }
@@ -546,7 +397,7 @@ func TestWithdrawnKeyStopsVerifyingWhileKeyEndpointIsDown(t *testing.T) {
 		t.Fatalf("warm-up: %v", err)
 	}
 	h.issuer.withdraw("k1")
-	h.issuer.failKeys.Store(true)
+	h.issuer.FailKeys(true)
 
 	h.advance(10 * time.Minute)
 	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
@@ -566,12 +417,12 @@ func TestWithdrawnKeyStopsVerifyingWhileKeyEndpointIsDown(t *testing.T) {
 		}
 	}
 
-	h.issuer.failKeys.Store(false)
+	h.issuer.FailKeys(false)
 	rotated := newRSAKey(t)
 	h.issuer.publish("k2", rotated)
 	h.advance(2 * time.Minute)
 	now := *h.clock.Load()
-	token := h.issuer.token(t, tokenSpec{kid: "k2", key: rotated, claims: map[string]any{"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix()}})
+	token := h.issuer.token(t, tokenSpec{KeyID: "k2", Key: rotated, Claims: map[string]any{"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix()}})
 	if _, err := h.auth.Authenticate(context.Background(), token, h.tenant); err != nil {
 		t.Fatalf("recovered endpoint not used again: %v", err)
 	}
@@ -647,7 +498,7 @@ func TestRotatedKeyWaitsForTheRefreshInProgress(t *testing.T) {
 	}
 
 	now := *h.clock.Load()
-	newKeyToken := h.issuer.token(t, tokenSpec{kid: "k2", key: rotated, claims: map[string]any{"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix()}})
+	newKeyToken := h.issuer.token(t, tokenSpec{KeyID: "k2", Key: rotated, Claims: map[string]any{"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix()}})
 	const callers = 4
 	results := make(chan error, callers)
 	for range callers {
@@ -673,28 +524,15 @@ func TestRotatedKeyWaitsForTheRefreshInProgress(t *testing.T) {
 	if err := <-refreshed; err != nil {
 		t.Fatalf("refreshing caller: %v", err)
 	}
-	if fetches := h.issuer.fetches.Load(); fetches != 2 {
+	if fetches := h.issuer.Fetches(); fetches != 2 {
 		t.Fatalf("key-set fetches = %d, want 2 (initial and one refresh)", fetches)
 	}
 }
 
-// holdKeys blocks the key endpoint until the returned channel is released.
-// Cleanup releases it too, so a failing test cannot leave a handler blocked
-// and hang the server shutdown.
+// holdKeys blocks the key endpoint until released.
 func (h *harness) holdKeys(t *testing.T) (chan struct{}, chan struct{}) {
 	t.Helper()
-	h.issuer.mu.Lock()
-	h.issuer.hold, h.issuer.held = make(chan struct{}), make(chan struct{}, 8)
-	hold, held := h.issuer.hold, h.issuer.held
-	h.issuer.mu.Unlock()
-	t.Cleanup(func() { release(hold) })
-	return hold, held
+	return h.issuer.HoldKeys(t)
 }
 
-func release(hold chan struct{}) {
-	select {
-	case <-hold:
-	default:
-		close(hold)
-	}
-}
+func release(hold chan struct{}) { oidctest.Release(hold) }

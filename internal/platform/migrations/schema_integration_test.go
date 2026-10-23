@@ -179,6 +179,99 @@ func TestMigrationRefusesToDropActorIdentity(t *testing.T) {
 	}
 }
 
+func TestMigrationSurfaceEventsPositionAtCommitAndRefuseDowngrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `insert into durable_event (tenant_id, event_id, record_kind, record_id, event, from_state, to_state, version, occurred_at) values ($1, $2, 'attempt', $3, 'start', 'starting', 'executing', 2, now())`, f.tenant, mustID[ids.Any](t), f.attempt); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	var task sql.NullString
+	if err := db.QueryRowContext(ctx, `select task_id::text from event_position where tenant_id = $1`, f.tenant).Scan(&task); err != nil || task.String != f.task {
+		t.Fatalf("event position task = %v, %v; want %s", task, err, f.task)
+	}
+	if _, err := db.ExecContext(ctx, `update event_position set task_id = null`); err == nil {
+		t.Fatal("event position updated")
+	}
+	if _, err := db.ExecContext(ctx, `update event_stream set generation = 2`); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 11, false); err == nil || !strings.Contains(err.Error(), "event stream generation has advanced") {
+		t.Fatalf("ApplyVersion(11, down) error = %v, want generation-preserving refusal", err)
+	}
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != migrations.CurrentVersion {
+		t.Fatalf("version after refused downgrade = %d, %v", version, err)
+	}
+}
+
+// TestMigrationSurfaceEventsBackfillKeepsRecordVersionOrder writes events
+// whose recorded times run backwards across a record's versions before
+// version 11, then upgrades: each record's versions must stay in order.
+func TestMigrationSurfaceEventsBackfillKeepsRecordVersionOrder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db, err := sql.Open("pgx", testpostgres.Start(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 10); err != nil {
+		t.Fatalf("UpTo(10) error = %v", err)
+	}
+	f := seedCore(t, ctx, db)
+	base := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	insert := func(record string, version int, at time.Time) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `insert into durable_event (tenant_id, event_id, record_kind, record_id, event, from_state, version, occurred_at) values ($1, $2, 'attempt', $3, 'start', 'starting', $4, $5)`,
+			f.tenant, mustID[ids.Any](t), record, version, at); err != nil {
+			t.Fatalf("insert v%d: %v", version, err)
+		}
+	}
+	insert(f.attempt, 1, base)
+	insert(f.attempt, 2, base.Add(2*time.Hour))
+	insert(f.attempt, 3, base.Add(time.Hour))
+	other := mustID[ids.Attempt](t)
+	insert(other, 1, base.Add(90*time.Minute))
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("Up() error = %v", err)
+	}
+	rows, err := db.QueryContext(ctx, `select e.record_id::text, e.version from event_position p join durable_event e on e.event_id = p.event_id where p.tenant_id = $1 order by p.position`, f.tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	last := map[string]int{}
+	var count int
+	for rows.Next() {
+		var record string
+		var version int
+		if err := rows.Scan(&record, &version); err != nil {
+			t.Fatal(err)
+		}
+		if version <= last[record] {
+			t.Fatalf("record %s version %d after version %d", record, version, last[record])
+		}
+		last[record] = version
+		count++
+	}
+	if count != 4 {
+		t.Fatalf("positioned %d of 4 events", count)
+	}
+	var next int64
+	if err := db.QueryRowContext(ctx, `select nextval('event_position_seq')`).Scan(&next); err != nil || next != 5 {
+		t.Fatalf("next position after backfill = %d, %v; want 5", next, err)
+	}
+}
+
 type fixture struct {
 	tenant    string
 	principal string

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CancelResult",
+  "description": "Result of a cancellation request; the stop is confirmed by later events.",
+  "type": "object",
+  "required": [
+    "task_id",
+    "state"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "state": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "attempt_state": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

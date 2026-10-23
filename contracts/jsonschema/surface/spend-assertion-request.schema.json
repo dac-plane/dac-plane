@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpendAssertionRequest",
+  "description": "Body of POST .../tasks/{task}/spend-assertions. Exactly one of submission_key and review_key names the governed command by its Idempotency-Key.",
+  "type": "object",
+  "required": [
+    "assertion"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "submission_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "review_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "assertion": {
+      "type": "object",
+      "required": [
+        "spend_id",
+        "terms",
+        "proof",
+        "asserted_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "spend_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "terms": {
+          "$ref": "../lifecycle/common.schema.json#/$defs/spendTerms"
+        },
+        "proof": {
+          "$ref": "../identity/common.schema.json#/$defs/digest"
+        },
+        "asserted_at": {
+          "$ref": "../identity/common.schema.json#/$defs/timestamp"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "submission_key"
+      ],
+      "not": {
+        "required": [
+          "review_key"
+        ]
+      }
+    },
+    {
+      "required": [
+        "review_key"
+      ],
+      "not": {
+        "required": [
+          "submission_key"
+        ]
+      }
+    }
+  ]
+}

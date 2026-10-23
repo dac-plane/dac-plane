@@ -1,0 +1,885 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "dac-plane Surface API",
+    "version": "1.0.0",
+    "description": "Surface API v1 (ADR-0007). Commands map one-to-one onto application commands; mutating requests require Idempotency-Key, and commands that change an existing record require If-Match with its ETag. Errors are RFC 9457 problems."
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/v1/tenants/{tenant}/tasks": {
+      "post": {
+        "operationId": "submitTask",
+        "summary": "Submit a task",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The submission. Replaying the same Idempotency-Key and body returns it again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/submission.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Location": {
+                "description": "URL of the created task.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/submit-task-request.schema.json"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}": {
+      "get": {
+        "operationId": "getTask",
+        "summary": "Read a task",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The task.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/task-view.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}/spend-assertions": {
+      "post": {
+        "operationId": "assertSpend",
+        "summary": "Complete a spend-governed submission or rework",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The submission with its receipt and dispatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/submission.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "description": "If-Match carries the spend challenge version.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/spend-assertion-request.schema.json"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}/cancel": {
+      "post": {
+        "operationId": "cancelTask",
+        "summary": "Request cancellation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancellation recorded; the stop is confirmed by later events.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/cancel-result.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "description": "If-Match carries the task version.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/cancel-request.schema.json"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}/reviews": {
+      "post": {
+        "operationId": "reviewResult",
+        "summary": "Review a result revision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The review, with rework when changes were requested.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/review-result.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "description": "If-Match carries the task version.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/review-request.schema.json"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}/attempts/{attempt}": {
+      "get": {
+        "operationId": "getAttempt",
+        "summary": "Read an attempt of a task",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          },
+          {
+            "$ref": "#/components/parameters/Attempt"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The attempt.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/attempt.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}/revisions/{revision}": {
+      "get": {
+        "operationId": "getRevision",
+        "summary": "Read a result revision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          },
+          {
+            "$ref": "#/components/parameters/Revision"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revision and its reviews.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/revision-view.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/tasks/{task}/events": {
+      "get": {
+        "operationId": "taskEvents",
+        "summary": "Read or stream a task's events",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Task"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/LastEventID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of events (application/json) or a Server-Sent Events stream (text/event-stream) whose ids are cursors; a reset event carries next_cursor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/event-page.schema.json"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/attention": {
+      "get": {
+        "operationId": "listAttention",
+        "summary": "List open attention requests",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Open requests on tasks the principal may read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/attention-list.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/attention/{attention}": {
+      "get": {
+        "operationId": "getAttention",
+        "summary": "Read an attention request",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Attention"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/attention-request.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/attention/{attention}/decisions": {
+      "post": {
+        "operationId": "decide",
+        "summary": "Decide an attention request",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Attention"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The recorded decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/decision-result.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "description": "If-Match carries the attention request version.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/decision-request.schema.json"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/events": {
+      "get": {
+        "operationId": "tenantEvents",
+        "summary": "Read or stream the tenant's events",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/LastEventID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of events (application/json) or a Server-Sent Events stream (text/event-stream) whose ids are cursors; a reset event carries next_cursor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/event-page.schema.json"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "An OAuth 2.0 access token (typ at+jwt) from an operator-configured OpenID Connect issuer, bound to a principal of the tenant in the path."
+      }
+    },
+    "parameters": {
+      "Tenant": {
+        "name": "tenant",
+        "in": "path",
+        "required": true,
+        "description": "The tenant; the bearer identity must be bound to a principal of it.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "Task": {
+        "name": "task",
+        "in": "path",
+        "required": true,
+        "description": "The task.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "Attempt": {
+        "name": "attempt",
+        "in": "path",
+        "required": true,
+        "description": "The attempt.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "Revision": {
+        "name": "revision",
+        "in": "path",
+        "required": true,
+        "description": "The result revision.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "Attention": {
+        "name": "attention",
+        "in": "path",
+        "required": true,
+        "description": "The attention request.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Client-chosen key, 1 to 128 bytes; the command nonce.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "IfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "The strong ETag of the record version the command was decided on.",
+        "schema": {
+          "type": "string",
+          "pattern": "^\"[1-9][0-9]*\"$"
+        }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "Resume after this cursor; Last-Event-ID takes precedence.",
+        "schema": {
+          "$ref": "../jsonschema/surface/event.schema.json#/$defs/cursor"
+        }
+      },
+      "LastEventID": {
+        "name": "Last-Event-ID",
+        "in": "header",
+        "required": false,
+        "description": "SSE resume cursor. A malformed or foreign cursor is answered with a reset.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Page size, 1 to 500; default 100.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "headers": {
+      "ETag": {
+        "description": "Strong entity tag carrying the record version.",
+        "schema": {
+          "type": "string",
+          "pattern": "^\"[1-9][0-9]*\"$"
+        }
+      }
+    },
+    "responses": {
+      "Problem400": {
+        "description": "Malformed request",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem401": {
+        "description": "Unauthenticated",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem403": {
+        "description": "Forbidden",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem404": {
+        "description": "Not found, or not visible to the principal",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem409": {
+        "description": "Refused by the lifecycle",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem412": {
+        "description": "Stale If-Match version",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem422": {
+        "description": "Invalid command, or Idempotency-Key reused with a different body",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem428": {
+        "description": "If-Match required",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
+      "Problem500": {
+        "description": "Internal error",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewRequest",
+  "description": "Body of POST .../tasks/{task}/reviews.",
+  "type": "object",
+  "required": [
+    "revision_id",
+    "disposition"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "revision_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "disposition": {
+      "enum": [
+        "accept",
+        "request_changes",
+        "reject"
+      ]
+    },
+    "rework": {
+      "type": "object",
+      "required": [
+        "provider_id",
+        "demand",
+        "deadline",
+        "unit",
+        "amount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "demand": {
+          "enum": [
+            "person",
+            "background"
+          ]
+        },
+        "deadline": {
+          "$ref": "../identity/common.schema.json#/$defs/timestamp"
+        },
+        "unit": {
+          "$ref": "../lifecycle/common.schema.json#/$defs/unit"
+        },
+        "amount": {
+          "$ref": "../lifecycle/common.schema.json#/$defs/amount",
+          "minimum": 1
+        },
+        "spend": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "disposition": {
+        "const": "request_changes"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "rework"
+    ]
+  },
+  "else": {
+    "not": {
+      "required": [
+        "rework"
+      ]
+    }
+  }
+}

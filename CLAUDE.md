@@ -14,7 +14,8 @@ architecture baseline, its ADRs, the Go process foundation (`cmd/`, `internal/`)
 contracts (identity and scoped authority, the nine lifecycle records with their transitions and
 audit, and the provider adapter protocol, each mirrored by JSON Schema), PostgreSQL persistence,
 the fenced dispatch worker, deterministic provider simulators and the transport-neutral command
-boundary for submission. There is no HTTP surface yet. M1 is tracked by epic #11, whose ordered issues are the implementation
+boundary for submission. M2 (epic #65) adds actor authentication, trusted provisioning and the Surface
+API handler; no process serves it on a listener yet (#73). M1 is tracked by epic #11, whose ordered issues are the implementation
 sequence. Do not start writing implementation code against a reading of the docs alone; work starts
 from one of those issues and a plan in `tasks/plan.md` against the baseline below. The earlier
 candidate research and TypeScript/PostgreSQL prototypes live under `architecture-explore/` as
@@ -41,8 +42,10 @@ cmd/dac-plane/        the control-plane process entry point
 internal/             application modules: bootstrap, config, ids, identity, lifecycle, contracts
                       (provider adapter protocol), platform (postgres store, migrations), worker
                       (dispatch loop), simulator (deterministic providers), application
-                      (command boundary)
+                      (command boundary and owner-scoped reads), authn (actor authentication),
+                      provision (trusted provisioning), httpapi (Surface API v1)
 contracts/jsonschema/ language-neutral JSON Schema 2020-12 contracts, tested against the Go types
+contracts/openapi/    the Surface API v1 OpenAPI 3.1 document, tested against the served routes
 tasks/plan.md         the plan for the issue currently in progress, rewritten per issue
 architecture-explore/ retained research, experiments and prototypes (read-only by default)
 .github/              the PR-title gate and CI workflow, which calls justfile recipes
