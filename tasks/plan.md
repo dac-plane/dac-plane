@@ -113,6 +113,8 @@ offers no reusable pattern.
   bound during a key-endpoint outage.
 - The key-set fetch runs outside the lock with a caller-independent timeout; callers with usable keys
   never wait for another caller's refresh.
+- A caller whose signature did not verify waits for a refresh already in flight and uses its result,
+  so a token signed with a newly published key is not refused during another request's refresh.
 - `dac-plane provision` validates `-kind`, `-issuer` and `-subject` while parsing, so typos are usage
   errors reported before the database is opened.
 

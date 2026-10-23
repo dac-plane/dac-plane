@@ -84,8 +84,11 @@ func (k *keySet) VerifySignature(ctx context.Context, raw string) ([]byte, error
 // current returns usable cached keys, refreshing them when they are missing,
 // past half of maxAge, or wanted after a verification failure. At most one
 // refresh runs at a time and one starts at most once per minRefresh. A caller
-// with usable keys never waits for a refresh it did not start; a caller
-// without usable keys waits for the refresh in progress.
+// whose token verified against the cache never waits for a refresh it did not
+// start. A caller without usable keys, or one that wants fresh keys because
+// its signature did not verify, waits for the refresh in progress and then
+// uses its result, so a token signed with a newly published key is not
+// refused merely because another request started the refresh.
 func (k *keySet) current(ctx context.Context, wanted bool) ([]jose.JSONWebKey, error) {
 	for {
 		k.mu.Lock()
@@ -96,18 +99,21 @@ func (k *keySet) current(ctx context.Context, wanted bool) ([]jose.JSONWebKey, e
 		if (wanted || due) && allowed && k.refreshing == nil {
 			return k.refresh(ctx, now)
 		}
-		if usable {
+		refreshing := k.refreshing
+		if usable && (!wanted || refreshing == nil) {
 			keys := k.keys
 			k.mu.Unlock()
 			return keys, nil
 		}
-		refreshing := k.refreshing
 		k.mu.Unlock()
 		if refreshing == nil {
 			return nil, errKeysUnavailable
 		}
 		select {
 		case <-refreshing:
+			// The refresh just completed satisfies a wanted refresh; do not
+			// start another one for the same verification failure.
+			wanted = false
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}

@@ -585,10 +585,7 @@ func TestSlowKeyRefreshDoesNotBlockCallersWithUsableKeys(t *testing.T) {
 	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
 		t.Fatalf("warm-up: %v", err)
 	}
-	h.issuer.mu.Lock()
-	h.issuer.hold, h.issuer.held = make(chan struct{}), make(chan struct{}, 1)
-	hold, held := h.issuer.hold, h.issuer.held
-	h.issuer.mu.Unlock()
+	hold, held := h.holdKeys(t)
 	h.advance(8 * time.Minute)
 
 	refreshCtx, cancelRefresh := context.WithCancel(context.Background())
@@ -618,8 +615,86 @@ func TestSlowKeyRefreshDoesNotBlockCallersWithUsableKeys(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("caller with usable keys waited for another caller's refresh")
 	}
-	close(hold)
+	release(hold)
 	if err := <-refreshed; err != nil {
 		t.Fatalf("refreshing caller: %v", err)
+	}
+}
+
+// TestRotatedKeyWaitsForTheRefreshInProgress proves a token signed with a
+// newly published key is not refused while another request's refresh is in
+// flight: callers whose signature did not verify wait for that refresh, while
+// callers whose token verifies against the cache do not.
+func TestRotatedKeyWaitsForTheRefreshInProgress(t *testing.T) {
+	h := newHarness(t, nil)
+	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
+		t.Fatalf("warm-up: %v", err)
+	}
+	rotated := newRSAKey(t)
+	h.issuer.publish("k2", rotated)
+	hold, held := h.holdKeys(t)
+	h.advance(8 * time.Minute)
+
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant)
+		refreshed <- err
+	}()
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh never reached the key endpoint")
+	}
+
+	now := *h.clock.Load()
+	newKeyToken := h.issuer.token(t, tokenSpec{kid: "k2", key: rotated, claims: map[string]any{"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix()}})
+	const callers = 4
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			_, err := h.auth.Authenticate(context.Background(), newKeyToken, h.tenant)
+			results <- err
+		}()
+	}
+	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
+		t.Fatalf("cached-key caller refused during the refresh: %v", err)
+	}
+	select {
+	case err := <-results:
+		t.Fatalf("new-key caller returned before the refresh completed: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	release(hold)
+	for range callers {
+		if err := <-results; err != nil {
+			t.Fatalf("token signed with the newly published key refused: %v", err)
+		}
+	}
+	if err := <-refreshed; err != nil {
+		t.Fatalf("refreshing caller: %v", err)
+	}
+	if fetches := h.issuer.fetches.Load(); fetches != 2 {
+		t.Fatalf("key-set fetches = %d, want 2 (initial and one refresh)", fetches)
+	}
+}
+
+// holdKeys blocks the key endpoint until the returned channel is released.
+// Cleanup releases it too, so a failing test cannot leave a handler blocked
+// and hang the server shutdown.
+func (h *harness) holdKeys(t *testing.T) (chan struct{}, chan struct{}) {
+	t.Helper()
+	h.issuer.mu.Lock()
+	h.issuer.hold, h.issuer.held = make(chan struct{}), make(chan struct{}, 8)
+	hold, held := h.issuer.hold, h.issuer.held
+	h.issuer.mu.Unlock()
+	t.Cleanup(func() { release(hold) })
+	return hold, held
+}
+
+func release(hold chan struct{}) {
+	select {
+	case <-hold:
+	default:
+		close(hold)
 	}
 }
