@@ -87,6 +87,17 @@ func parse(args []string) (operation, error) {
 	}
 	set := map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	// Values are checked here, like identifiers, so a typo is a usage error
+	// reported before any database is opened.
+	if set["kind"] && !slices.Contains(identity.PrincipalKinds(), identity.PrincipalKind(kind)) {
+		return nil, fmt.Errorf("%w: -kind must be human or service", errUsage)
+	}
+	if set["issuer"] && !identity.ValidIssuer(issuer) {
+		return nil, fmt.Errorf("%w: -issuer must be an https URL without query or fragment", errUsage)
+	}
+	if set["subject"] && !identity.ValidSubject(subject) {
+		return nil, fmt.Errorf("%w: -subject must be 1 to 255 visible ASCII characters", errUsage)
+	}
 	need := func(required []string, allowed ...string) error {
 		for _, name := range required {
 			if !set[name] {

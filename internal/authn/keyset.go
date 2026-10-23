@@ -28,9 +28,17 @@ var errNoMatchingKey = errors.New("no published key verifies the signature")
 //
 // The key ID in a token is attacker-controlled, so an unknown key ID may
 // trigger at most one refresh per minRefresh across all callers; a flood of
-// invented key IDs cannot turn into a flood of requests to the issuer. Keys
-// are also refreshed once they are older than maxAge, so a key the issuer
-// withdraws stops verifying within that bound.
+// invented key IDs cannot turn into a flood of requests to the issuer.
+//
+// Cached keys are refreshed once they reach half of maxAge and are never used
+// once they reach maxAge, whether the refresh failed or was rate-limited: a
+// key the issuer withdraws stops verifying within maxAge even while the
+// issuer's key endpoint is unavailable. Inside that bound the last good keys
+// keep authentication working through a failed refresh.
+//
+// The fetch runs outside the lock with a timeout that does not depend on the
+// caller, so a slow or failing endpoint never blocks callers that hold usable
+// keys, and one caller disconnecting does not cancel the refresh for others.
 type keySet struct {
 	client     *http.Client
 	url        string
@@ -43,6 +51,8 @@ type keySet struct {
 	keys        []jose.JSONWebKey
 	fetchedAt   time.Time
 	lastAttempt time.Time
+	// refreshing is closed when the refresh in progress, if any, completes.
+	refreshing chan struct{}
 }
 
 // VerifySignature implements oidc.KeySet. It is called by the go-oidc
@@ -71,29 +81,74 @@ func (k *keySet) VerifySignature(ctx context.Context, raw string) ([]byte, error
 	return verifyWith(signed, header, keys)
 }
 
-// current returns the cached keys, refreshing them first when they are
-// missing, older than maxAge, or wanted after a verification failure. A
-// refresh is attempted at most once per minRefresh; a failed refresh keeps the
-// last good keys.
+// current returns usable cached keys, refreshing them when they are missing,
+// past half of maxAge, or wanted after a verification failure. At most one
+// refresh runs at a time and one starts at most once per minRefresh. A caller
+// with usable keys never waits for a refresh it did not start; a caller
+// without usable keys waits for the refresh in progress.
 func (k *keySet) current(ctx context.Context, wanted bool) ([]jose.JSONWebKey, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	now := k.now()
-	stale := k.fetchedAt.IsZero() || now.Sub(k.fetchedAt) >= k.maxAge
-	allowed := k.lastAttempt.IsZero() || now.Sub(k.lastAttempt) >= k.minRefresh
-	if (wanted || stale) && allowed {
-		k.lastAttempt = now
-		keys, err := k.fetch(ctx)
-		if err == nil {
-			k.keys, k.fetchedAt = keys, now
-		} else if k.fetchedAt.IsZero() {
-			return nil, err
+	for {
+		k.mu.Lock()
+		now := k.now()
+		usable := k.usable(now)
+		due := k.fetchedAt.IsZero() || now.Sub(k.fetchedAt) >= k.maxAge/2
+		allowed := k.lastAttempt.IsZero() || now.Sub(k.lastAttempt) >= k.minRefresh
+		if (wanted || due) && allowed && k.refreshing == nil {
+			return k.refresh(ctx, now)
+		}
+		if usable {
+			keys := k.keys
+			k.mu.Unlock()
+			return keys, nil
+		}
+		refreshing := k.refreshing
+		k.mu.Unlock()
+		if refreshing == nil {
+			return nil, errKeysUnavailable
+		}
+		select {
+		case <-refreshing:
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-	if k.fetchedAt.IsZero() {
-		return nil, errors.New("issuer keys are not available yet")
+}
+
+var errKeysUnavailable = errors.New("no issuer keys younger than the maximum key age are available")
+
+// usable reports whether the cached keys may verify at now. Called with mu
+// held.
+func (k *keySet) usable(now time.Time) bool {
+	return !k.fetchedAt.IsZero() && now.Sub(k.fetchedAt) < k.maxAge
+}
+
+// refresh fetches the key set with mu released and stores it on success.
+// Called with mu held; returns with it released.
+func (k *keySet) refresh(ctx context.Context, started time.Time) ([]jose.JSONWebKey, error) {
+	done := make(chan struct{})
+	k.refreshing, k.lastAttempt = done, started
+	k.mu.Unlock()
+
+	fetchContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultTimeout)
+	keys, err := k.fetch(fetchContext)
+	cancel()
+
+	k.mu.Lock()
+	if err == nil {
+		k.keys, k.fetchedAt = keys, started
 	}
-	return k.keys, nil
+	k.refreshing = nil
+	close(done)
+	usable, current := k.usable(k.now()), k.keys
+	k.mu.Unlock()
+	switch {
+	case usable:
+		return current, nil
+	case err != nil:
+		return nil, err
+	default:
+		return nil, errKeysUnavailable
+	}
 }
 
 func (k *keySet) fetch(ctx context.Context) ([]jose.JSONWebKey, error) {

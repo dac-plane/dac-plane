@@ -249,7 +249,7 @@ func TestProvisionCommandWritesJSON(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := provision.Run(ctx, []string{"bind", "-tenant", tenant, "-principal", principal, "-issuer", "http://plain.example", "-subject", "x"}, &stdout, &stderr, open)
-	if code != provision.ExitError || stdout.Len() != 0 {
+	if code != provision.ExitUsage || stdout.Len() != 0 {
 		t.Fatalf("plaintext issuer: code %d stdout %q", code, stdout.String())
 	}
 }

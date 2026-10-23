@@ -41,6 +41,12 @@ type testIssuer struct {
 	mu      sync.Mutex
 	keys    map[string]crypto.Signer
 	fetches atomic.Int32
+	// failKeys makes the key endpoint answer 500.
+	failKeys atomic.Bool
+	// hold, when set, blocks the key endpoint until it is closed; each
+	// blocked request is announced on held.
+	hold chan struct{}
+	held chan struct{}
 	// discoveredIssuer overrides the issuer discovery reports.
 	discoveredIssuer string
 	keysURL          string
@@ -69,6 +75,17 @@ func newTestIssuer(t *testing.T) *testIssuer {
 	})
 	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
 		issuer.fetches.Add(1)
+		issuer.mu.Lock()
+		hold, held := issuer.hold, issuer.held
+		issuer.mu.Unlock()
+		if hold != nil {
+			held <- struct{}{}
+			<-hold
+		}
+		if issuer.failKeys.Load() {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
 		issuer.mu.Lock()
 		defer issuer.mu.Unlock()
 		var set jose.JSONWebKeySet
@@ -508,5 +525,101 @@ func TestBearerToken(t *testing.T) {
 		if _, ok := BearerToken(header); ok {
 			t.Errorf("BearerToken(%q) accepted", header)
 		}
+	}
+}
+
+// freshToken is a valid token from key k1 issued at the harness's current time.
+func (h *harness) freshToken(t *testing.T) string {
+	t.Helper()
+	now := *h.clock.Load()
+	return h.issuer.token(t, tokenSpec{key: h.key, claims: map[string]any{
+		"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix(),
+	}})
+}
+
+// TestWithdrawnKeyStopsVerifyingWhileKeyEndpointIsDown proves cached keys are
+// never used past the maximum key age, whether the refresh failed or was
+// rate-limited, while still bridging a short outage inside that bound.
+func TestWithdrawnKeyStopsVerifyingWhileKeyEndpointIsDown(t *testing.T) {
+	h := newHarness(t, nil)
+	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
+		t.Fatalf("warm-up: %v", err)
+	}
+	h.issuer.withdraw("k1")
+	h.issuer.failKeys.Store(true)
+
+	h.advance(10 * time.Minute)
+	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
+		t.Fatalf("cached keys inside the maximum age stopped working during an outage: %v", err)
+	}
+	for _, step := range []struct {
+		name    string
+		advance time.Duration
+	}{
+		{"at the maximum age, refresh failed", 5 * time.Minute},
+		{"immediately again, refresh rate-limited", 0},
+		{"a day later", 24 * time.Hour},
+	} {
+		h.advance(step.advance)
+		if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("%s: withdrawn cached key still verifies: %v", step.name, err)
+		}
+	}
+
+	h.issuer.failKeys.Store(false)
+	rotated := newRSAKey(t)
+	h.issuer.publish("k2", rotated)
+	h.advance(2 * time.Minute)
+	now := *h.clock.Load()
+	token := h.issuer.token(t, tokenSpec{kid: "k2", key: rotated, claims: map[string]any{"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix()}})
+	if _, err := h.auth.Authenticate(context.Background(), token, h.tenant); err != nil {
+		t.Fatalf("recovered endpoint not used again: %v", err)
+	}
+}
+
+// TestSlowKeyRefreshDoesNotBlockCallersWithUsableKeys proves the fetch runs
+// outside the lock: while one caller's refresh is stuck, others verify with
+// the cached keys.
+func TestSlowKeyRefreshDoesNotBlockCallersWithUsableKeys(t *testing.T) {
+	h := newHarness(t, nil)
+	if _, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant); err != nil {
+		t.Fatalf("warm-up: %v", err)
+	}
+	h.issuer.mu.Lock()
+	h.issuer.hold, h.issuer.held = make(chan struct{}), make(chan struct{}, 1)
+	hold, held := h.issuer.hold, h.issuer.held
+	h.issuer.mu.Unlock()
+	h.advance(8 * time.Minute)
+
+	refreshCtx, cancelRefresh := context.WithCancel(context.Background())
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := h.auth.Authenticate(refreshCtx, h.freshToken(t), h.tenant)
+		refreshed <- err
+	}()
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh never reached the key endpoint")
+	}
+	// The caller that started the refresh disconnects; the refresh must go on.
+	cancelRefresh()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.auth.Authenticate(context.Background(), h.freshToken(t), h.tenant)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("caller with usable keys refused during a slow refresh: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("caller with usable keys waited for another caller's refresh")
+	}
+	close(hold)
+	if err := <-refreshed; err != nil {
+		t.Fatalf("refreshing caller: %v", err)
 	}
 }

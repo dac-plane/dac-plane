@@ -106,6 +106,16 @@ offers no reusable pattern.
 - `DAC_IDENTITY_CONFIG_FILE` is read into `config.Config` as an optional path; the process that serves
   the Surface API (#70, #73) loads it with `authn.LoadConfig`.
 
+## Review follow-ups (PR #82)
+
+- Cached issuer keys are refreshed at half of the maximum key age and are never used at or past it,
+  even when the refresh failed or was rate-limited, so a withdrawn key stops verifying within the
+  bound during a key-endpoint outage.
+- The key-set fetch runs outside the lock with a caller-independent timeout; callers with usable keys
+  never wait for another caller's refresh.
+- `dac-plane provision` validates `-kind`, `-issuer` and `-subject` while parsing, so typos are usage
+  errors reported before the database is opened.
+
 ## Verification
 
 - `just test-contracts`, `just test-identity`, `just test-identity-race`, `just ci`
