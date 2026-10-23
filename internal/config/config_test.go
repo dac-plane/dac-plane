@@ -72,3 +72,17 @@ func mapLookup(values map[string]string) func(string) (string, bool) {
 		return value, ok
 	}
 }
+
+func TestLoadReadsOptionalIdentityConfigFile(t *testing.T) {
+	config, err := Load(mapLookup(map[string]string{databaseURLEnv: "postgres://dac:test@localhost/dac"}))
+	if err != nil || config.IdentityConfigFile != "" {
+		t.Fatalf("without identity file: %+v, %v", config, err)
+	}
+	config, err = Load(mapLookup(map[string]string{
+		databaseURLEnv:        "postgres://dac:test@localhost/dac",
+		identityConfigFileEnv: " /run/config/identity.json ",
+	}))
+	if err != nil || config.IdentityConfigFile != "/run/config/identity.json" {
+		t.Fatalf("with identity file: %+v, %v", config, err)
+	}
+}

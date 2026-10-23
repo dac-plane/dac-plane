@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IdentityConfig",
+  "description": "The identity providers whose access tokens the control plane accepts, loaded from the file DAC_IDENTITY_CONFIG_FILE names.",
+  "type": "object",
+  "required": ["issuers"],
+  "additionalProperties": false,
+  "properties": {
+    "issuers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/issuer" }
+    }
+  },
+  "$defs": {
+    "issuer": {
+      "type": "object",
+      "required": ["issuer", "audience", "algorithms", "max_token_lifetime_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "issuer": { "$ref": "../identity/common.schema.json#/$defs/issuer" },
+        "audience": {
+          "description": "The identifier this API expects in the aud claim.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^[\\x21-\\x7e]+$"
+        },
+        "algorithms": {
+          "description": "Asymmetric JWS algorithms this issuer is pinned to; never taken from the access token itself.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"] }
+        },
+        "max_token_lifetime_seconds": {
+          "description": "The longest exp minus iat accepted.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "clock_skew_seconds": {
+          "description": "Leeway for exp, nbf and iat. Defaults to 30.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300
+        },
+        "require_access_token_type": {
+          "description": "Require the at+jwt type (RFC 9068). Defaults to true; false only for an issuer that cannot type its access tokens, whose audience must then be issued for this API alone.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

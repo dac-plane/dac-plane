@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TenantReader",
+  "description": "The narrow permission to read every task of a tenant and its tenant-wide event stream, set only through trusted provisioning.",
+  "type": "object",
+  "required": ["tenant_id", "principal_id", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "principal_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "enabled": { "description": "Absent means disabled.", "type": "boolean" },
+    "updated_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+  }
+}
