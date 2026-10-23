@@ -34,22 +34,28 @@ enforce external actions. PostgreSQL and artifact storage are implementation sub
 lifecycle authorities.
 
 The view intentionally omits deployment hosts, network protocols, vendor selections and trust zones.
-Those decisions are not yet made.
+Protocols and deployment are shown in the views below; vendor selections and trust zones remain open.
 
-### Proposed containers
+### Containers
 
 [Editable Draw.io source](container-view.drawio) · [Rendered SVG](container-view.svg) ·
 [Rendered PNG](container-view.png)
 
-Question answered: **What independently running software and stores form the first product?**
+Question answered: **What independently running software and stores form the product, and how do they
+connect?**
 
-Audience: engineers planning the first implementation slice.
+Audience: engineers implementing the control plane, its Surface API and provider adapters.
 
-The first implementation uses one modular control-plane application, PostgreSQL and artifact storage.
-API handling, lifecycle transitions, outbox dispatch, reconciliation and adapter orchestration begin as
-modules of that application, not separate services. The web workspace is later and must use the same
-public API as other surfaces. Runtime, environment and enforcement systems stay behind replaceable
-interfaces. See [ADR-0002](../adr/0002-initial-application-boundary.md).
+One modular control-plane application owns the lifecycle and PostgreSQL. API handling, lifecycle
+transitions, outbox dispatch, reconciliation and the adapter endpoint are modules of that application,
+not separate services ([ADR-0002](../adr/0002-initial-application-boundary.md)). Surfaces use the
+Surface API over HTTPS with replayable events; the web workspace is later and uses the same API
+([ADR-0007](../adr/0007-surface-api-transport-and-authentication.md)). Every provider role, including
+artifact byte storage, is reached through a separate adapter process that opens a TLS WebSocket to the
+application and never writes PostgreSQL; in-process simulators serve tests only
+([ADR-0008](../adr/0008-adapter-process-boundary-and-wire-transport.md)). Artifact identity, digest
+and lineage stay in PostgreSQL. The M1 lifecycle core behind this boundary is proven with
+deterministic simulators.
 
 The diagram does not prescribe Kubernetes, a cloud, an event broker, Temporal, a particular agent
 runtime or an environment provider.
@@ -138,9 +144,11 @@ cursor replay and rehydration, authority retirement and revocation, hook rewriti
 challenge replay, environment and shadow behavior, artifact fencing and stale action preconditions.
 Passing that suite proves contract behavior, not production-provider qualification.
 
-The exploration schema is incomplete relative to this target: Budget, ResultRevision and ResultReview
-still need authoritative tables and active contracts. The contract-freeze gate in the
-[architecture review](review-2026-10-15.md#contract-freeze-gate) is the first implementation task.
+M1 delivered this slice against the deterministic simulators: all nine authoritative records have
+active contracts and PostgreSQL storage, and the
+[contract-freeze gate](review-2026-10-15.md#contract-freeze-gate) is closed by the
+[M1 contract freeze](contract-freeze-30.md). M2 makes the core reachable by surfaces and real
+providers and deployable, without changing lifecycle ownership.
 
 ## Source decisions
 
