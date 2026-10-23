@@ -20,6 +20,8 @@ var (
 	policyContract    = schematest.GoContract[Policy](filepath.Join(schemaDir, "policy.schema.json"))
 	grantContract     = schematest.GoContract[AuthorityGrant](filepath.Join(schemaDir, "authority-grant.schema.json"))
 	useContract       = schematest.GoContract[AuthorityUse](filepath.Join(schemaDir, "authority-use.schema.json"))
+	bindingContract   = schematest.GoContract[IdentityBinding](filepath.Join(schemaDir, "identity-binding.schema.json"))
+	readerContract    = schematest.GoContract[TenantReader](filepath.Join(schemaDir, "tenant-reader.schema.json"))
 )
 
 func validRecords(t *testing.T) map[string]struct {
@@ -54,6 +56,9 @@ func validRecords(t *testing.T) map[string]struct {
 		"allowed use":      {useContract, schematest.Marshal(t, allowed)},
 		"denied use":       {useContract, schematest.Marshal(t, denied)},
 		"denied grant use": {useContract, schematest.Marshal(t, deniedWithGrant(t, f))},
+		"identity binding": {bindingContract, schematest.Marshal(t, testBinding(t))},
+		"disabled binding": {bindingContract, schematest.Marshal(t, disabledBinding(t))},
+		"tenant reader":    {readerContract, schematest.Marshal(t, testReader(t))},
 	}
 }
 
@@ -134,6 +139,24 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"denied use unknown reason", "denied use", func(d map[string]any) { d["reason"] = "nope" }},
 		{"use grant without source", "denied grant use", func(d map[string]any) { delete(d, "source") }},
 		{"use unknown outcome", "allowed use", func(d map[string]any) { d["outcome"] = "maybe" }},
+		{"binding missing tenant", "identity binding", func(d map[string]any) { delete(d, "tenant_id") }},
+		{"binding missing principal", "identity binding", func(d map[string]any) { delete(d, "principal_id") }},
+		{"binding missing update time", "identity binding", func(d map[string]any) { delete(d, "updated_at") }},
+		{"binding http issuer", "identity binding", func(d map[string]any) { d["issuer"] = "http://issuer.example" }},
+		{"binding issuer with query", "identity binding", func(d map[string]any) { d["issuer"] = "https://issuer.example/?tenant=a" }},
+		{"binding issuer with fragment", "identity binding", func(d map[string]any) { d["issuer"] = "https://issuer.example/#x" }},
+		{"binding issuer with user", "identity binding", func(d map[string]any) { d["issuer"] = "https://user@issuer.example" }},
+		{"binding issuer without host", "identity binding", func(d map[string]any) { d["issuer"] = "https:///path" }},
+		{"binding issuer with space", "identity binding", func(d map[string]any) { d["issuer"] = "https://issuer.example/a b" }},
+		{"binding issuer too long", "identity binding", func(d map[string]any) { d["issuer"] = "https://issuer.example/" + strings.Repeat("a", 2048) }},
+		{"binding empty subject", "identity binding", func(d map[string]any) { d["subject"] = "" }},
+		{"binding subject with space", "identity binding", func(d map[string]any) { d["subject"] = "user 1" }},
+		{"binding non-ASCII subject", "identity binding", func(d map[string]any) { d["subject"] = "usér" }},
+		{"binding subject too long", "identity binding", func(d map[string]any) { d["subject"] = strings.Repeat("s", 256) }},
+		{"binding unknown field", "identity binding", func(d map[string]any) { d["email"] = "a@example.com" }},
+		{"reader missing principal", "tenant reader", func(d map[string]any) { delete(d, "principal_id") }},
+		{"reader missing update time", "tenant reader", func(d map[string]any) { delete(d, "updated_at") }},
+		{"reader unknown field", "tenant reader", func(d map[string]any) { d["role"] = "admin" }},
 	}
 
 	for _, tc := range cases {
@@ -203,4 +226,27 @@ func TestRecordsCarryNoCredentialFields(t *testing.T) {
 			}
 		}
 	}
+}
+
+func testBinding(t *testing.T) IdentityBinding {
+	t.Helper()
+	principal := testPrincipal(t)
+	return IdentityBinding{
+		Tenant: principal.Tenant, Principal: principal.ID,
+		Issuer: "https://issuer.example/realms/a", Subject: "248289761001",
+		Enabled: true, UpdatedAt: testNow,
+	}
+}
+
+func disabledBinding(t *testing.T) IdentityBinding {
+	t.Helper()
+	binding := testBinding(t)
+	binding.Enabled = false
+	return binding
+}
+
+func testReader(t *testing.T) TenantReader {
+	t.Helper()
+	principal := testPrincipal(t)
+	return TenantReader{Tenant: principal.Tenant, Principal: principal.ID, Enabled: true, UpdatedAt: testNow}
 }

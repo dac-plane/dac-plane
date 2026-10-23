@@ -7,6 +7,17 @@
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     },
+    "issuer": {
+      "description": "An OpenID Connect issuer: an https URL of visible ASCII with no user information, query or fragment, compared exactly.",
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://[\\x21\\x22\\x24-\\x2e\\x30-\\x3e\\x41-\\x7e]+(/[\\x21\\x22\\x24-\\x3e\\x40-\\x7e]*)?$"
+    },
+    "subject": {
+      "description": "A subject identifier, unique and never reassigned within its issuer: 1 to 255 visible ASCII characters, compared exactly.",
+      "type": "string",
+      "pattern": "^[\\x21-\\x7e]{1,255}$"
+    },
     "timestamp": {
       "type": "string",
       "format": "date-time"

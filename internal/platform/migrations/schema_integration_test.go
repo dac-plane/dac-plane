@@ -148,7 +148,33 @@ func TestMigrationRefusesToDropHookStageEvidence(t *testing.T) {
 		t.Fatalf("ApplyVersion(9, down) error = %v, want data-preserving refusal", err)
 	}
 	version, err := provider.GetDBVersion(ctx)
-	if err != nil || version != 9 {
+	if err != nil || version != migrations.CurrentVersion {
+		t.Fatalf("version after refused downgrade = %d, %v", version, err)
+	}
+}
+
+func TestMigrationRefusesToDropActorIdentity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `insert into identity_binding (issuer, subject, tenant_id, principal_id, enabled, updated_at) values ('https://issuer.example', 'user-1', $1, $2, true, now())`, f.tenant, f.principal); err != nil {
+		t.Fatalf("insert identity binding: %v", err)
+	}
+	for _, bad := range []struct{ issuer, subject string }{{"http://issuer.example", "user-1"}, {"https://issuer.example/?q", "user-1"}, {"https://issuer.example", "user 1"}} {
+		if _, err := db.ExecContext(ctx, `insert into identity_binding (issuer, subject, tenant_id, principal_id, enabled, updated_at) values ($1, $2, $3, $4, true, now())`, bad.issuer, bad.subject, f.tenant, f.principal); err == nil {
+			t.Fatalf("schema accepted binding %q %q", bad.issuer, bad.subject)
+		}
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 10, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade while version 10 actor identity exists") {
+		t.Fatalf("ApplyVersion(10, down) error = %v, want identity-preserving refusal", err)
+	}
+	version, err := provider.GetDBVersion(ctx)
+	if err != nil || version != migrations.CurrentVersion {
 		t.Fatalf("version after refused downgrade = %d, %v", version, err)
 	}
 }

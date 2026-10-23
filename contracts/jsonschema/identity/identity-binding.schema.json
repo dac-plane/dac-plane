@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IdentityBinding",
+  "description": "Maps an external identity, the pair (issuer, subject), to one principal of one tenant. The tenant comes from the binding, never from an identity provider claim.",
+  "type": "object",
+  "required": ["tenant_id", "principal_id", "issuer", "subject", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "principal_id": { "$ref": "common.schema.json#/$defs/uuidv7" },
+    "issuer": { "$ref": "common.schema.json#/$defs/issuer" },
+    "subject": { "$ref": "common.schema.json#/$defs/subject" },
+    "enabled": { "description": "Absent means disabled.", "type": "boolean" },
+    "updated_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+  }
+}

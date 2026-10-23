@@ -12,7 +12,7 @@ import (
 )
 
 // contractPackages hold the Go types that JSON Schema contracts mirror.
-var contractPackages = []string{"../../identity", "../../lifecycle", "../../contracts"}
+var contractPackages = []string{"../../identity", "../../lifecycle", "../../contracts", "../../authn"}
 
 // nestedRecords are validated structs that never travel alone: each is a
 // nested object inside a record schema, covered by that record's agreement

@@ -12,6 +12,7 @@ actionlint_version := "v1.7.12"
 recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
 migration_tests := "Migration"
 hook_lifecycle_tests := "GovernedAction(PostHook|FailureHook|LostPostHook)|HookStageEvidence"
+identity_tests := "Schema|Authenticat|Provision|Identity|TenantReader|BearerToken|Config|UnknownKeyID|KeyRotation|UntypedIssuer|NewRefuses|RunRefuses|RunReports"
 security_tests := "^Test[^/]*(Security|EventForged|EventBindingOfAnother|GovernedAction|Cancel|EnvironmentStop|RuntimeStop|Artifact|Review|PersistenceTenantIsolation|PersistenceClaimFencing|Migration|Budget|Spend|Authority|Resource)[^/]*$"
 
 # Some macOS Command Line Tools SDKs break the cgo linker used by the
@@ -119,6 +120,15 @@ test-security:
 [group('test')]
 test-security-race:
     {{ sdkroot }}go test -race -count=1 -tags=integration ./... -run '{{ security_tests }}'
+
+# Actor authentication, identity bindings and trusted provisioning (ADR-0007).
+[group('test')]
+test-identity:
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/authn/ ./internal/identity/ ./internal/provision/ ./internal/platform/migrations/ -run '{{ identity_tests }}'
+
+[group('test')]
+test-identity-race:
+    {{ sdkroot }}go test -race -count=1 -tags=integration ./internal/authn/ ./internal/identity/ ./internal/provision/ ./internal/platform/migrations/ -run '{{ identity_tests }}'
 
 # Run only the contract suites: schema conformance and both coverage guards
 [group('test')]

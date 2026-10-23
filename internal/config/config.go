@@ -10,6 +10,7 @@ import (
 const (
 	databaseURLEnv            = "DAC_DATABASE_URL"
 	databaseConnectTimeoutEnv = "DAC_DATABASE_CONNECT_TIMEOUT"
+	identityConfigFileEnv     = "DAC_IDENTITY_CONFIG_FILE"
 	defaultConnectTimeout     = 10 * time.Second
 )
 
@@ -17,6 +18,10 @@ const (
 type Config struct {
 	DatabaseURL            string
 	DatabaseConnectTimeout time.Duration
+	// IdentityConfigFile names the trusted-issuer configuration the Surface
+	// API authenticates against (ADR-0007). It is optional until a process
+	// serves the Surface API.
+	IdentityConfigFile string
 }
 
 // Load reads configuration through lookup. Error messages intentionally omit
@@ -40,8 +45,11 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		connectTimeout = parsedTimeout
 	}
 
+	identityConfigFile, _ := lookup(identityConfigFileEnv)
+
 	return Config{
 		DatabaseURL:            databaseURL,
 		DatabaseConnectTimeout: connectTimeout,
+		IdentityConfigFile:     strings.TrimSpace(identityConfigFile),
 	}, nil
 }
