@@ -186,9 +186,17 @@ func decode[T interface{ Validate() error }](r *http.Request) (T, error) {
 	if err != nil || len(data) > maxBodyBytes {
 		return body, errMalformedJSON
 	}
+	// Exactly one JSON object and nothing after it: null, arrays and
+	// trailing tokens are malformed, not an empty body.
+	if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) == 0 || trimmed[0] != '{' {
+		return body, errMalformedJSON
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil || decoder.More() {
+	if err := decoder.Decode(&body); err != nil {
+		return body, errMalformedJSON
+	}
+	if err := decoder.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		return body, errMalformedJSON
 	}
 	return body, body.Validate()
@@ -296,17 +304,22 @@ func (a *API) problem(w http.ResponseWriter, r *http.Request, err error) {
 	_ = json.NewEncoder(w).Encode(problem)
 }
 
-// formatCursor renders an opaque cursor; parseCursor is its inverse.
+// formatCursor renders an opaque cursor: generation, position and the tag of
+// the stream it belongs to. parseCursor is its inverse.
 func formatCursor(c application.EventCursor) string {
-	return fmt.Sprintf("%d.%d", c.Generation, c.Position)
+	return fmt.Sprintf("%d.%d.%s", c.Generation, c.Position, c.Stream)
 }
 
 func parseCursor(text string) (application.EventCursor, error) {
-	generation, position, ok := strings.Cut(text, ".")
-	g, gErr := strconv.ParseUint(generation, 10, 64)
-	p, pErr := strconv.ParseInt(position, 10, 64)
-	if !ok || gErr != nil || pErr != nil || g == 0 || p < 0 {
-		return application.EventCursor{}, fmt.Errorf("%w: malformed cursor", application.ErrInvalidCommand)
+	parts := strings.Split(text, ".")
+	invalid := fmt.Errorf("%w: malformed cursor", application.ErrInvalidCommand)
+	if len(parts) != 3 || len(parts[2]) != 12 || strings.Trim(parts[2], "0123456789abcdef") != "" {
+		return application.EventCursor{}, invalid
 	}
-	return application.EventCursor{Generation: g, Position: p}, nil
+	g, gErr := strconv.ParseUint(parts[0], 10, 64)
+	p, pErr := strconv.ParseInt(parts[1], 10, 64)
+	if gErr != nil || pErr != nil || g == 0 || p < 0 || strconv.FormatUint(g, 10) != parts[0] || strconv.FormatInt(p, 10) != parts[1] {
+		return application.EventCursor{}, invalid
+	}
+	return application.EventCursor{Generation: g, Position: p, Stream: parts[2]}, nil
 }

@@ -104,7 +104,10 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request, actor identity.Auth
 			heartbeat.Reset(a.options.Heartbeat)
 		}
 		cursor = page.Next
-		if len(page.Events) == limit {
+		full := len(page.Events) == limit
+		// The page is written: nothing below may send it again.
+		page = application.EventPage{Next: cursor}
+		if full {
 			// More may be waiting; read again without waiting for the tick.
 			if page, err = a.page(ctx, actor, task, cursor, false, limit); err != nil {
 				return nil
@@ -139,7 +142,7 @@ func writePage(w http.ResponseWriter, page application.EventPage) (bool, error) 
 		return true, err
 	}
 	for _, event := range page.Events {
-		body := eventBody(page.Next.Generation, event)
+		body := eventBody(page.Next, event)
 		data, err := json.Marshal(body)
 		if err != nil {
 			return false, err

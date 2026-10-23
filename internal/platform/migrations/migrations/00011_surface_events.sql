@@ -72,11 +72,22 @@ CREATE CONSTRAINT TRIGGER durable_event_position
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION durable_event_position();
 
--- Events written before this version are positioned in the order they
--- occurred.
+-- Events written before this version are positioned roughly in the order
+-- they occurred, but never with a record's later version before an earlier
+-- one: a transition's recorded time is not monotonic per record, so each
+-- event is ordered by the latest time among its record's versions up to it,
+-- then by record and version.
 INSERT INTO event_position (tenant_id, position, event_id, task_id)
-SELECT tenant_id, nextval('event_position_seq'), event_id, durable_event_task(tenant_id, record_kind, record_id)
-FROM (SELECT * FROM durable_event ORDER BY occurred_at, event_id) existing;
+SELECT tenant_id, row_number() OVER (ORDER BY effective_at, record_kind, record_id, version, event_id), event_id,
+       durable_event_task(tenant_id, record_kind, record_id)
+FROM (
+  SELECT tenant_id, event_id, record_kind, record_id, version,
+         max(occurred_at) OVER (PARTITION BY tenant_id, record_kind, record_id ORDER BY version
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS effective_at
+  FROM durable_event
+) existing;
+SELECT setval('event_position_seq', coalesce((SELECT max(position) FROM event_position), 1),
+              (SELECT count(*) > 0 FROM event_position));
 
 -- The stream generation. A cursor from another generation is reset; the
 -- restore runbook advances it so a cursor beyond a restored head is caught.

@@ -170,6 +170,19 @@ task lock to the M1 paths that lock attempts, attention requests and operations 
   behaviour.
 - `CLAUDE.md` working set updated for `authn`, `provision`, `httpapi` and `contracts/openapi`.
 
+## Review follow-ups (PR #84)
+
+- Cursors carry a stream tag (a short digest of tenant and task, or tenant scope), so a cursor from
+  another task's stream, the tenant stream or another tenant is reset instead of skipping history.
+- The migration backfill orders existing events by the latest time among each record's versions up to
+  them, then record and version, so a record's versions never replay backwards; the sequence continues
+  after the backfill.
+- The SSE loop clears a page once written, so a heartbeat between polls never re-sends events or a
+  reset.
+- Request bodies and the identity configuration must be exactly one JSON object: `null`, arrays and
+  trailing tokens are malformed.
+- The end-to-end setup rolls back its seeding transaction on failure.
+
 ## Verification
 
 - `just test-contracts`, `just test-surface`, `just test-surface-race`, `just ci`

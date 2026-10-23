@@ -132,13 +132,16 @@ func LoadConfig(path string) (Config, error) {
 // ParseConfig decodes a configuration document strictly, rejecting unknown
 // fields, and validates it.
 func ParseConfig(data []byte) (Config, error) {
+	if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) == 0 || trimmed[0] != '{' {
+		return Config{}, fmt.Errorf("%w: the identity configuration must be one JSON object", ErrInvalidConfig)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var config Config
 	if err := decoder.Decode(&config); err != nil {
 		return Config{}, fmt.Errorf("%w: the identity configuration is not a valid document", ErrInvalidConfig)
 	}
-	if decoder.More() {
+	if err := decoder.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("%w: the identity configuration holds more than one document", ErrInvalidConfig)
 	}
 	return config, config.Validate()

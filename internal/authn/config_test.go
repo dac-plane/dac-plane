@@ -93,8 +93,13 @@ func TestParseConfigRejectsDuplicateIssuersAndTrailingDocuments(t *testing.T) {
 	if _, err := ParseConfig([]byte(duplicate)); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("ParseConfig(duplicate) error = %v", err)
 	}
-	if _, err := ParseConfig([]byte(minimalConfig + minimalConfig)); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("ParseConfig(two documents) error = %v", err)
+	for name, document := range map[string]string{
+		"two documents": minimalConfig + minimalConfig, "trailing bracket": minimalConfig + "]",
+		"trailing brace": minimalConfig + "}", "null": "null", "array": "[" + minimalConfig + "]", "empty": "",
+	} {
+		if _, err := ParseConfig([]byte(document)); !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("ParseConfig(%s) error = %v", name, err)
+		}
 	}
 }
 

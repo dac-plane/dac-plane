@@ -224,9 +224,10 @@ type EventBody struct {
 	OccurredAt    time.Time            `json:"occurred_at"`
 }
 
-func eventBody(generation uint64, event store.StreamEvent) EventBody {
+// eventBody renders event in the stream next belongs to.
+func eventBody(next application.EventCursor, event store.StreamEvent) EventBody {
 	body := EventBody{
-		Cursor: formatCursor(application.EventCursor{Generation: generation, Position: event.Position}),
+		Cursor: formatCursor(application.EventCursor{Generation: next.Generation, Position: event.Position, Stream: next.Stream}),
 		Record: event.Record, RecordID: event.RecordID, RecordVersion: event.Version,
 		Event: event.Event, From: event.From, To: event.To, OccurredAt: event.OccurredAt.UTC(),
 	}
@@ -249,7 +250,7 @@ type EventPageBody struct {
 func eventPageBody(page application.EventPage) EventPageBody {
 	body := EventPageBody{Events: []EventBody{}, NextCursor: formatCursor(page.Next), Reset: page.Reset}
 	for _, event := range page.Events {
-		body.Events = append(body.Events, eventBody(page.Next.Generation, event))
+		body.Events = append(body.Events, eventBody(page.Next, event))
 	}
 	return body
 }

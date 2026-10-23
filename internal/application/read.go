@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -38,11 +40,26 @@ type RevisionView struct {
 	Reviews  []lifecycle.ResultReview
 }
 
-// EventCursor is a resumable position in an event stream. The zero cursor
-// starts from the beginning.
+// EventCursor is a resumable position in one event stream. Stream names the
+// stream it belongs to, so a cursor from another task's stream or another
+// tenant is reset instead of being applied as a position it never had. The
+// zero cursor starts from the beginning.
 type EventCursor struct {
 	Generation uint64
 	Position   int64
+	Stream     string
+}
+
+// StreamTag identifies one stream: a tenant's task stream, or the tenant
+// stream when task is zero. It is a short digest, not a secret: it only
+// detects a cursor used on the wrong stream; every read is still authorized.
+func StreamTag(tenant ids.TenantID, task ids.TaskID) string {
+	scope := "tenant"
+	if !task.IsZero() {
+		scope = "task/" + task.String()
+	}
+	sum := sha256.Sum256([]byte(tenant.String() + "/" + scope))
+	return hex.EncodeToString(sum[:6])
 }
 
 // EventPage is one page of events. Next resumes after the last event
@@ -253,18 +270,19 @@ func ListEvents(ctx context.Context, pool *pgxpool.Pool, actor identity.Authoriz
 		if err != nil {
 			return err
 		}
+		stream := StreamTag(r.principal.Tenant, task)
 		fresh := cursor == EventCursor{}
-		if !fresh && (cursor.Generation != generation || cursor.Position > head) {
+		if !fresh && (cursor.Stream != stream || cursor.Generation != generation || cursor.Position > head) {
 			// The client re-reads its snapshots, which reflect every event up
 			// to head, and continues from there.
-			page = EventPage{Next: EventCursor{Generation: generation, Position: head}, Reset: true}
+			page = EventPage{Next: EventCursor{Generation: generation, Position: head, Stream: stream}, Reset: true}
 			return nil
 		}
 		events, err := store.ListStreamEvents(ctx, r.uow, r.principal.Tenant, task, r.owner(), cursor.Position, limit)
 		if err != nil {
 			return err
 		}
-		page = EventPage{Events: events, Next: EventCursor{Generation: generation, Position: cursor.Position}}
+		page = EventPage{Events: events, Next: EventCursor{Generation: generation, Position: cursor.Position, Stream: stream}}
 		if len(events) > 0 {
 			page.Next.Position = events[len(events)-1].Position
 		}

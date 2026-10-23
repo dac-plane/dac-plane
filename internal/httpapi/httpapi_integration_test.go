@@ -57,6 +57,11 @@ type surface struct {
 
 func newSurface(t *testing.T) *surface {
 	t.Helper()
+	return newSurfaceWith(t, httpapi.Options{PollInterval: 20 * time.Millisecond, Heartbeat: time.Second, StreamLifetime: 5 * time.Second})
+}
+
+func newSurfaceWith(t *testing.T, options httpapi.Options) *surface {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
 	databaseURL := testpostgres.Start(t)
@@ -117,6 +122,7 @@ func newSurface(t *testing.T) *surface {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = uow.Rollback(ctx) }()
 	if _, err := store.UpsertHarness(ctx, uow, lifecycle.HarnessQualification{Tenant: s.tenant, Provider: s.provider, Mode: lifecycle.HarnessLive, Version: 1, UpdatedAt: s.at}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +136,7 @@ func newSurface(t *testing.T) *surface {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api, err := httpapi.New(pool, authenticator, logger, httpapi.Options{PollInterval: 20 * time.Millisecond, Heartbeat: time.Second, StreamLifetime: 5 * time.Second})
+	api, err := httpapi.New(pool, authenticator, logger, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,9 +428,12 @@ func (s *surface) assertStream(t *testing.T, path, after string, want []httpapi.
 
 func cursorPosition(t *testing.T, cursor string) int64 {
 	t.Helper()
-	_, position, ok := strings.Cut(cursor, ".")
-	n, err := strconv.ParseInt(position, 10, 64)
-	if !ok || err != nil {
+	parts := strings.Split(cursor, ".")
+	if len(parts) != 3 {
+		t.Fatalf("cursor %q", cursor)
+	}
+	n, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
 		t.Fatalf("cursor %q", cursor)
 	}
 	return n
@@ -538,5 +547,74 @@ func TestSurfaceReaderRevocationAppliesToTheNextRequest(t *testing.T) {
 	}
 	if page := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: "/events", as: "reader"}), http.StatusOK); len(page.Events) != 0 {
 		t.Fatalf("revoked reader still sees %d tenant events", len(page.Events))
+	}
+}
+
+// TestSurfaceForeignCursorsReset uses one stream's cursor on another: the
+// stream must reset instead of resuming at a position it never had.
+func TestSurfaceForeignCursorsReset(t *testing.T) {
+	s := newSurface(t)
+	first := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-a", body: s.submitBody()}), http.StatusCreated)
+	second := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-b", body: s.submitBody()}), http.StatusCreated)
+	firstStream := "/tasks/" + first.Task.ID.String() + "/events"
+	secondStream := "/tasks/" + second.Task.ID.String() + "/events"
+	firstPage := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: firstStream, as: "owner"}), http.StatusOK)
+	secondPage := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: secondStream, as: "owner"}), http.StatusOK)
+	tenantPage := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: "/events", as: "owner"}), http.StatusOK)
+	if len(firstPage.Events) == 0 || len(secondPage.Events) == 0 {
+		t.Fatal("tasks have no events")
+	}
+	for name, use := range map[string]struct{ path, cursor string }{
+		"task cursor on another task":      {secondStream, firstPage.Events[0].Cursor},
+		"tenant cursor on a task stream":   {secondStream, tenantPage.Events[0].Cursor},
+		"task cursor on the tenant stream": {"/events", firstPage.Events[0].Cursor},
+	} {
+		t.Run(name, func(t *testing.T) {
+			page := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: use.path + "?after=" + use.cursor, as: "owner"}), http.StatusOK)
+			if !page.Reset || len(page.Events) != 0 {
+				t.Fatalf("foreign cursor resumed: reset %v, %d events", page.Reset, len(page.Events))
+			}
+			if resumed := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: use.path + "?after=" + page.NextCursor, as: "owner"}), http.StatusOK); resumed.Reset {
+				t.Fatalf("reset cursor %s is itself reset", page.NextCursor)
+			}
+		})
+	}
+}
+
+// TestSurfaceStreamNeverRepeatsEventsAcrossHeartbeats sets the heartbeat
+// below the poll interval, so heartbeats fire between polls, and requires
+// every event id on the stream to be unique.
+func TestSurfaceStreamNeverRepeatsEventsAcrossHeartbeats(t *testing.T) {
+	s := newSurfaceWith(t, httpapi.Options{PollInterval: 300 * time.Millisecond, Heartbeat: 10 * time.Millisecond, StreamLifetime: 2 * time.Second})
+	sub := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-h", body: s.submitBody()}), http.StatusCreated)
+	path := "/tasks/" + sub.Task.ID.String() + "/events"
+	want := decodeInto[httpapi.EventPageBody](t, s.do(t, call{method: "GET", path: path, as: "owner"}), http.StatusOK)
+	request, err := http.NewRequestWithContext(s.ctx, "GET", s.server.URL+"/v1/tenants/"+s.tenant.String()+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+s.token(t, "owner"))
+	request.Header.Set("Accept", "text/event-stream")
+	response, err := s.server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	scanner := bufio.NewScanner(response.Body)
+	seen, heartbeats := map[string]bool{}, 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == ": heartbeat" {
+			heartbeats++
+		}
+		if id, ok := strings.CutPrefix(line, "id: "); ok {
+			if seen[id] {
+				t.Fatalf("event %s sent twice", id)
+			}
+			seen[id] = true
+		}
+	}
+	if heartbeats < 3 || len(seen) != len(want.Events) {
+		t.Fatalf("stream sent %d heartbeats and %d events, want >= 3 and %d", heartbeats, len(seen), len(want.Events))
 	}
 }

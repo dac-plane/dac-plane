@@ -142,6 +142,11 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		{"submit oversized key", unitRequest{"POST", base + "/tasks", validSubmit, with(map[string]string{"Idempotency-Key": strings.Repeat("k", 129)})}, 400},
 		{"submit malformed JSON", unitRequest{"POST", base + "/tasks", `{"provider_id":`, with(map[string]string{"Idempotency-Key": "k1"})}, 400},
 		{"submit unknown field", unitRequest{"POST", base + "/tasks", strings.Replace(validSubmit, "{", `{"objective":"x",`, 1), with(map[string]string{"Idempotency-Key": "k1"})}, 400},
+		{"cancel null body", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `null`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
+		{"cancel trailing bracket", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}]`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
+		{"cancel trailing brace", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}}`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
+		{"cancel array body", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `[{}]`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
+		{"cancel empty body", unitRequest{"POST", base + "/tasks/" + task + "/cancel", ``, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
 		{"submit two objects", unitRequest{"POST", base + "/tasks", validSubmit + validSubmit, with(map[string]string{"Idempotency-Key": "k1"})}, 400},
 		{"submit oversized body", unitRequest{"POST", base + "/tasks", `{"x":"` + strings.Repeat("a", maxBodyBytes) + `"}`, with(map[string]string{"Idempotency-Key": "k1"})}, 400},
 		{"submit invalid body", unitRequest{"POST", base + "/tasks", strings.Replace(validSubmit, `"amount":5`, `"amount":0`, 1), with(map[string]string{"Idempotency-Key": "k1"})}, 422},
@@ -197,11 +202,17 @@ func TestAuthenticatorFailureIsNotReportedAsUnauthenticated(t *testing.T) {
 }
 
 func TestCursorRoundTripAndRejection(t *testing.T) {
-	cursor := application.EventCursor{Generation: 3, Position: 42}
+	tenant, task := newID[ids.Tenant](t), newID[ids.Task](t)
+	cursor := application.EventCursor{Generation: 3, Position: 42, Stream: application.StreamTag(tenant, task)}
 	if parsed, err := parseCursor(formatCursor(cursor)); err != nil || parsed != cursor {
 		t.Fatalf("round trip = %+v, %v", parsed, err)
 	}
-	for _, text := range []string{"", "3", "0.1", "3.-1", "a.b", "3.4.5", "3. 4"} {
+	if application.StreamTag(tenant, task) == application.StreamTag(tenant, ids.TaskID{}) ||
+		application.StreamTag(tenant, task) == application.StreamTag(newID[ids.Tenant](t), task) {
+		t.Fatal("stream tags collide across scope or tenant")
+	}
+	for _, text := range []string{"", "3", "3.4", "0.1." + cursor.Stream, "3.-1." + cursor.Stream, "a.b." + cursor.Stream,
+		"3.4.5", "3.4." + strings.ToUpper(cursor.Stream), "3.04." + cursor.Stream, "3. 4." + cursor.Stream, "3.4." + cursor.Stream + ".x"} {
 		if _, err := parseCursor(text); err == nil {
 			t.Errorf("parseCursor(%q) accepted", text)
 		}
