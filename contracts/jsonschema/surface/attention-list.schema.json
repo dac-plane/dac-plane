@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AttentionList",
+  "description": "Open attention requests on tasks the principal may read.",
+  "type": "object",
+  "required": [
+    "attention"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attention": {
+      "type": "array",
+      "items": {
+        "$ref": "../lifecycle/attention-request.schema.json"
+      }
+    }
+  }
+}

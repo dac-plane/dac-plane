@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SubmitTaskRequest",
+  "description": "Body of POST /v1/tenants/{tenant}/tasks.",
+  "type": "object",
+  "required": [
+    "provider_id",
+    "deadline",
+    "unit",
+    "ceiling",
+    "amount"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "demand": {
+      "enum": [
+        "person",
+        "background"
+      ]
+    },
+    "deadline": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    },
+    "unit": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/unit"
+    },
+    "ceiling": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/amount",
+      "minimum": 1
+    },
+    "amount": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/amount",
+      "minimum": 1
+    },
+    "spend": {
+      "type": "boolean"
+    }
+  }
+}

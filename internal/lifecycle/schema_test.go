@@ -136,14 +136,20 @@ func validRecords(t *testing.T) map[string]record {
 		"held claim":          {claimContract, schematest.Marshal(t, claimed)},
 		"task":                {taskContract, schematest.Marshal(t, task)},
 		"cancelling attempt":  {attemptContract, schematest.Marshal(t, attempt)},
-		"pending approval":    {attentionContract, schematest.Marshal(t, f.request)},
-		"decided approval":    {attentionContract, schematest.Marshal(t, decided)},
-		"pending question":    {attentionContract, schematest.Marshal(t, question)},
-		"approval decision":   {decisionContract, schematest.Marshal(t, f.decision)},
-		"answer decision":     {decisionContract, schematest.Marshal(t, answer)},
-		"applied audit":       {auditContract, schematest.Marshal(t, applied)},
-		"rejected audit":      {auditContract, schematest.Marshal(t, rejected)},
-		"system audit":        {auditContract, schematest.Marshal(t, change.Audit(newID[ids.Audit](t), testSystem, testNow))},
+		// An attempt that has not stopped omits both flags; the schema's
+		// stop-flag condition must not apply to it.
+		"executing attempt": {attemptContract, schematest.Marshal(t, Attempt{
+			ID: attempt.ID, Tenant: attempt.Tenant, Task: attempt.Task, Number: 1, State: AttemptExecuting,
+			Version: 1, CreatedAt: attempt.CreatedAt, UpdatedAt: attempt.UpdatedAt,
+		})},
+		"pending approval":  {attentionContract, schematest.Marshal(t, f.request)},
+		"decided approval":  {attentionContract, schematest.Marshal(t, decided)},
+		"pending question":  {attentionContract, schematest.Marshal(t, question)},
+		"approval decision": {decisionContract, schematest.Marshal(t, f.decision)},
+		"answer decision":   {decisionContract, schematest.Marshal(t, answer)},
+		"applied audit":     {auditContract, schematest.Marshal(t, applied)},
+		"rejected audit":    {auditContract, schematest.Marshal(t, rejected)},
+		"system audit":      {auditContract, schematest.Marshal(t, change.Audit(newID[ids.Audit](t), testSystem, testNow))},
 	}
 }
 

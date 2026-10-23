@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Submission",
+  "description": "A submitted task as it stands now.",
+  "type": "object",
+  "required": [
+    "task",
+    "attempt",
+    "operation",
+    "budget",
+    "reservation",
+    "provider_id",
+    "harness_mode",
+    "demand",
+    "deadline",
+    "unit",
+    "amount"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "task": {
+      "$ref": "../lifecycle/task.schema.json"
+    },
+    "attempt": {
+      "$ref": "../lifecycle/attempt.schema.json"
+    },
+    "operation": {
+      "$ref": "../lifecycle/provider-operation.schema.json"
+    },
+    "budget": {
+      "$ref": "../lifecycle/budget.schema.json"
+    },
+    "reservation": {
+      "$ref": "../lifecycle/reservation.schema.json"
+    },
+    "spend_challenge": {
+      "$ref": "../lifecycle/spend-challenge.schema.json"
+    },
+    "spend_receipt": {
+      "$ref": "../lifecycle/spend-receipt.schema.json"
+    },
+    "provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "harness_mode": {
+      "enum": [
+        "off",
+        "shadow",
+        "live"
+      ]
+    },
+    "demand": {
+      "enum": [
+        "person",
+        "background"
+      ]
+    },
+    "deadline": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    },
+    "unit": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/unit"
+    },
+    "amount": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/amount"
+    },
+    "dispatch": {
+      "type": "object",
+      "required": [
+        "status",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

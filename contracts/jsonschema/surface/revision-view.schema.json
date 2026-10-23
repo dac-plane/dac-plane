@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RevisionView",
+  "description": "One result revision and the reviews it received.",
+  "type": "object",
+  "required": [
+    "revision",
+    "reviews"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "$ref": "../lifecycle/result-revision.schema.json"
+    },
+    "reviews": {
+      "type": "array",
+      "items": {
+        "$ref": "../lifecycle/result-review.schema.json"
+      }
+    }
+  }
+}

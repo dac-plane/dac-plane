@@ -179,6 +179,36 @@ func TestMigrationRefusesToDropActorIdentity(t *testing.T) {
 	}
 }
 
+func TestMigrationSurfaceEventsPositionAtCommitAndRefuseDowngrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `insert into durable_event (tenant_id, event_id, record_kind, record_id, event, from_state, to_state, version, occurred_at) values ($1, $2, 'attempt', $3, 'start', 'starting', 'executing', 2, now())`, f.tenant, mustID[ids.Any](t), f.attempt); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	var task sql.NullString
+	if err := db.QueryRowContext(ctx, `select task_id::text from event_position where tenant_id = $1`, f.tenant).Scan(&task); err != nil || task.String != f.task {
+		t.Fatalf("event position task = %v, %v; want %s", task, err, f.task)
+	}
+	if _, err := db.ExecContext(ctx, `update event_position set task_id = null`); err == nil {
+		t.Fatal("event position updated")
+	}
+	if _, err := db.ExecContext(ctx, `update event_stream set generation = 2`); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 11, false); err == nil || !strings.Contains(err.Error(), "event stream generation has advanced") {
+		t.Fatalf("ApplyVersion(11, down) error = %v, want generation-preserving refusal", err)
+	}
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != migrations.CurrentVersion {
+		t.Fatalf("version after refused downgrade = %d, %v", version, err)
+	}
+}
+
 type fixture struct {
 	tenant    string
 	principal string

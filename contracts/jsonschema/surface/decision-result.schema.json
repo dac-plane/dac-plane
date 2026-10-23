@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionResult",
+  "description": "Result of a decision.",
+  "type": "object",
+  "required": [
+    "attention_id",
+    "decision_id",
+    "kind",
+    "state"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attention_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "decision_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "kind": {
+      "enum": [
+        "approve_once",
+        "approve_standing",
+        "deny",
+        "answer"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "minLength": 1
+    },
+    "grant_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    }
+  }
+}

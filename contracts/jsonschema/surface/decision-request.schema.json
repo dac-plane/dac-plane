@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionRequest",
+  "description": "Body of POST .../attention/{attention}/decisions.",
+  "type": "object",
+  "required": [
+    "kind"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": [
+        "approve_once",
+        "approve_standing",
+        "deny",
+        "answer"
+      ]
+    },
+    "answer_digest": {
+      "$ref": "../identity/common.schema.json#/$defs/digest"
+    }
+  },
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "answer"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "answer_digest"
+    ]
+  },
+  "else": {
+    "not": {
+      "required": [
+        "answer_digest"
+      ]
+    }
+  }
+}

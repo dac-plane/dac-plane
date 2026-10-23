@@ -56,7 +56,7 @@ func TestAuthenticateThroughProvisionedBindings(t *testing.T) {
 	config := Config{Issuers: []IssuerConfig{{Issuer: issuer.url(), Audience: testAudience, Algorithms: []string{"RS256"}, MaxTokenLifetimeSeconds: 3600}}}
 	logs := &bytes.Buffer{}
 	auth, err := New(ctx, config, StoreResolver(pool), slog.New(slog.NewJSONHandler(logs, nil)),
-		WithHTTPClient(issuer.server.Client()), WithClock(func() time.Time { return testNow }))
+		WithHTTPClient(issuer.Client()), WithClock(func() time.Time { return testNow }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestAuthenticateThroughProvisionedBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := issuer.token(t, tokenSpec{key: key})
+	token := issuer.token(t, tokenSpec{Key: key})
 	const subject = "user-248289761001"
 
 	if _, err := auth.Authenticate(ctx, token, tenant); !errors.Is(err, ErrUnauthenticated) {
