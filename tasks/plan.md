@@ -1,65 +1,42 @@
-# Issue #68 — Decide the deployment unit and first substrate
+# Issue #69 — Refresh the container view after M1
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/68
-Branch: `docs/68-deployment-unit-adr`, from `main` at `ebf16d8` (after #79).
+Tracker: https://github.com/dac-plane/dac-plane/issues/69
+Branch: `docs/69-container-view-refresh`, from `main` at `f84b1f3`.
 Parent: #65 (M2: Deployable control plane).
 
 ## Direction
 
-Record ADR-0009 and add the deployment view the baseline README calls for. This is a decision and a
-diagram, not an implementation. Inputs already decided are reused:
+Bring `docs/architecture/container-view.drawio`, its exports and the baseline README in line with M1
+completion and the accepted M2 decisions. No decision changes here; every change traces to an accepted
+ADR or to M1 evidence:
 
-- ADR-0002: one application, API and loops in one process until a split trigger is proven.
-- ADR-0007: TLS placement is left to this ADR, but plaintext is never served off loopback.
-- ADR-0008: adapters dial in; in-process ports stay out of production; a replica claims work only
-  while it holds a provider connection.
-
-Decisions confirmed with the maintainer on 2026-10-22, after reviewing the evidence:
-
-- Migrations run only through a separate `dac-plane migrate` step; serving processes refuse to start
-  outside their release's schema range.
-- First substrate: one OCI image plus a production-capable reference Docker Compose stack; Kubernetes
-  later on evidence.
-- dac-plane terminates TLS itself; an operator proxy is allowed only with TLS on the hop to dac-plane.
-- Every replica runs all roles (adopted from ADR-0002, not reopened).
-
-Evidence used: the CP9 deployment-fit gate in
-`architecture-explore/docs/qualification/control-plane-candidates.md` ("local-only demos do not
-pass"; a Kubernetes-only topology counted against a candidate), the operator setup, upgrade and
-rollback measurement in `architecture-explore/docs/spec/SPEC.md`, and Grok Bot's single update lease
-and claimed upgrade schedules in `plane-bot-explore/notes/MASTER-RECORD.md` §5. Grok Bot is
-vendor-operated and offers no self-hosted deployment model.
+- M1 is complete ([contract freeze](../docs/architecture/contract-freeze-30.md)): the
+  "build first with deterministic simulator" and "prototype schema is incomplete" labels are stale.
+- ADR-0007: surfaces use the Surface API over HTTPS with replayable events.
+- ADR-0008: every provider role, including the artifact store, is reached through an out-of-process
+  adapter that opens a TLS WebSocket carrying JSON ControlFrames; in-process simulators are for tests
+  only; providers never write PostgreSQL.
+- ADR-0009: deployment detail belongs in the deployment view, not this one.
 
 ## Implementation
 
-- [x] Confirm the open decisions before drafting.
-- [x] Read the entry point, configuration, bootstrap and migration provider.
-- [x] Draft `docs/adr/0009-deployment-unit-and-first-substrate.md`; marked Accepted in the PR so merging records acceptance.
-- [x] Add `docs/architecture/deployment-view.drawio` and export `.svg` and `.png` from it.
-- [x] Describe the deployment view in `docs/architecture/README.md`.
-- [ ] Maintainer review of the draft and the view.
-- [x] Link ADR-0009 from "Source decisions".
+- [x] Read the current view and the README prose that describes it.
+- [x] Edit `container-view.drawio`: remove stale labels, name the Surface API and adapter endpoint,
+  add the provider-adapter container outside the system boundary, and move artifact storage behind it
+  with the other provider roles.
+- [x] Re-export `container-view.svg` and `container-view.png` from the edited source; inspect the
+  render for overlaps and kinks.
+- [x] Update the README: the containers section prose and audience, and the stale statement that the
+  schema is incomplete and the contract freeze is the first task.
+- [x] Open the PR stating what changed and why.
 
 ## Verification
 
 - `git diff --check`
-- Every relative link in the ADR and README resolves on this branch.
-- The `.svg` and `.png` are exported from the committed `.drawio` source.
-
-## Findings carried to implementation issues
-
-- `cmd/dac-plane` has one mode; it needs `serve`, `migrate`, `provision` and `health` subcommands
-  (#73, with `provision` from #71).
-- Startup never checks the schema version; `serve` needs the release-range check (#73).
-- Nothing yet guards that the release binary excludes `internal/simulator`; add a dependency-graph
-  check as a justfile recipe CI calls (#73).
-- Migrations need a declared compatibility range and the expand-then-contract rule (#73, proven in
-  #74).
-
-- The operations listener serves TLS whenever it is bound off loopback; the `health` subcommand probes
-  it on loopback for container health checks (#73).
+- Exports regenerated from the committed source with the draw.io CLI.
+- Every relative link touched in the README resolves.
 
 ## Remaining boundaries
 
-This issue does not choose PostgreSQL high availability or backup tooling, observability export,
-resource sizing, Kubernetes packaging, or an artifact store. No production provider is qualified (#75).
+The responsibility map is unchanged: ownership did not change. No provider is selected, and no
+deployment detail is added to this view.
