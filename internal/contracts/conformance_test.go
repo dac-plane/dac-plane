@@ -77,6 +77,8 @@ func conformanceFixtures(t *testing.T) map[string]fixture {
 		"reply ok":            {frameContract, marshal(Frame{Kind: FrameReply, Reply: &okReply})},
 		"reply unknown":       {frameContract, marshal(Frame{Kind: FrameReply, Reply: &unknownReply})},
 		"event frame":         {frameContract, marshal(Frame{Kind: FrameEvent, Event: &event})},
+		"subscribe":           {frameContract, marshal(Frame{Kind: FrameSubscribe, Subscribe: &Subscribe{Cursor: f.cursor}})},
+		"unsubscribe":         {frameContract, marshal(Frame{Kind: FrameUnsubscribe, Unsubscribe: &Unsubscribe{Operation: f.cursor.Operation, Stream: f.cursor.Stream}})},
 		"event":               {eventContract, marshal(event)},
 		"connected":           {streamContract, marshal(StreamFrame{Kind: StreamConnected, ServerTime: testNow})},
 		"rows":                {streamContract, marshal(rows)},
@@ -139,6 +141,12 @@ func TestContractConformanceInvalidDocuments(t *testing.T) {
 		{"reply unknown failure code", "reply unknown", inner("reply", func(r map[string]any) {
 			r["failure"] = map[string]any{"code": "gateway_exploded", "message": "x"}
 		})},
+		{"subscribe without cursor", "subscribe", inner("subscribe", func(b map[string]any) { delete(b, "cursor") })},
+		{"subscribe zero generation", "subscribe", inner("subscribe", func(b map[string]any) { b["cursor"].(map[string]any)["generation"] = 0 })},
+		{"subscribe extra field", "subscribe", inner("subscribe", func(b map[string]any) { b["provider_id"] = otherID })},
+		{"unsubscribe without stream", "unsubscribe", inner("unsubscribe", func(b map[string]any) { delete(b, "stream") })},
+		{"unsubscribe bad stream name", "unsubscribe", inner("unsubscribe", func(b map[string]any) { b["stream"] = "Bad Stream" })},
+		{"unsubscribe with subscribe body", "unsubscribe", func(d map[string]any) { d["subscribe"] = map[string]any{} }},
 		{"event missing provider", "event", func(d map[string]any) { delete(d, "provider_id") }},
 		{"event zero generation", "event", func(d map[string]any) { d["generation"] = 0 }},
 		{"rows frame without rows", "rows", func(d map[string]any) { delete(d, "rows") }},
