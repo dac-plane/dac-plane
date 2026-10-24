@@ -36,7 +36,7 @@ func TestRunRefusesInvalidArgumentsBeforeOpeningTheDatabase(t *testing.T) {
 		"bind-adapter no provider": {"bind-adapter", "-tenant", tenant, "-issuer", "https://a.example", "-subject", "s"},
 		"bind-adapter principal":   {"bind-adapter", "-tenant", tenant, "-provider", principal, "-principal", principal, "-issuer", "https://a.example", "-subject", "s"},
 		"bind-adapter http issuer": {"bind-adapter", "-tenant", tenant, "-provider", principal, "-role", "runtime", "-issuer", "http://a.example", "-subject", "s"},
-		"bind-adapter no role":    {"bind-adapter", "-tenant", tenant, "-provider", principal, "-issuer", "https://a.example", "-subject", "s"},
+		"bind-adapter no role":     {"bind-adapter", "-tenant", tenant, "-provider", principal, "-issuer", "https://a.example", "-subject", "s"},
 		"unbind-adapter tenant":    {"unbind-adapter", "-tenant", tenant, "-issuer", "https://a.example", "-subject", "s"},
 	} {
 		t.Run(name, func(t *testing.T) {
