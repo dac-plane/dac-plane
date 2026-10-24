@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 )
@@ -23,6 +24,10 @@ operations:
   unbind         -tenant TENANT -issuer URL -subject SUB
   grant-reader   -tenant TENANT -principal ID
   revoke-reader  -tenant TENANT -principal ID
+  register-provider  -tenant TENANT -role ROLE [-id ID] [-artifact-store ID]
+                 roles: runtime, environment, enforcement, artifact_store
+  bind-adapter   -tenant TENANT -provider ID -issuer URL -subject SUB
+  unbind-adapter -issuer URL -subject SUB
 
 Operations are idempotent; pass -id to make creation repeatable. Output is one
 JSON object naming the affected records.`
@@ -72,11 +77,14 @@ func parse(args []string) (operation, error) {
 	}
 	flags := flag.NewFlagSet("provision "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var tenantText, principalText, idText, kind, issuer, subject string
+	var tenantText, principalText, providerText, storeText, idText, kind, role, issuer, subject string
 	flags.StringVar(&tenantText, "tenant", "", "tenant identifier")
 	flags.StringVar(&principalText, "principal", "", "principal identifier")
 	flags.StringVar(&idText, "id", "", "identifier for the record to create")
 	flags.StringVar(&kind, "kind", "", "principal kind: human or service")
+	flags.StringVar(&providerText, "provider", "", "provider identifier")
+	flags.StringVar(&role, "role", "", "provider role")
+	flags.StringVar(&storeText, "artifact-store", "", "artifact store provider a runtime exports to")
 	flags.StringVar(&issuer, "issuer", "", "OpenID Connect issuer URL")
 	flags.StringVar(&subject, "subject", "", "subject identifier within the issuer")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -91,6 +99,12 @@ func parse(args []string) (operation, error) {
 	// reported before any database is opened.
 	if set["kind"] && !slices.Contains(identity.PrincipalKinds(), identity.PrincipalKind(kind)) {
 		return nil, fmt.Errorf("%w: -kind must be human or service", errUsage)
+	}
+	if set["role"] && !slices.Contains(contracts.Roles(), contracts.Role(role)) {
+		return nil, fmt.Errorf("%w: -role must be runtime, environment, enforcement or artifact_store", errUsage)
+	}
+	if set["artifact-store"] && role != string(contracts.RoleRuntime) {
+		return nil, fmt.Errorf("%w: -artifact-store applies only to a runtime", errUsage)
 	}
 	if set["issuer"] && !identity.ValidIssuer(issuer) {
 		return nil, fmt.Errorf("%w: -issuer must be an https URL without query or fragment", errUsage)
@@ -177,6 +191,58 @@ func parse(args []string) (operation, error) {
 		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
 			err := p.SetTenantReader(ctx, tenant, principal, enabled)
 			return map[string]string{"tenant_id": tenant.String(), "principal_id": principal.String()}, err
+		}, nil
+	case "register-provider":
+		if err := need([]string{"tenant", "role"}, "id", "artifact-store"); err != nil {
+			return nil, err
+		}
+		tenant, err := requiredID[ids.Tenant]("tenant", tenantText)
+		if err != nil {
+			return nil, err
+		}
+		id, err := optionalID[ids.Provider]("id", idText)
+		if err != nil {
+			return nil, err
+		}
+		var artifactStore *ids.ProviderID
+		if set["artifact-store"] {
+			store, err := requiredID[ids.Provider]("artifact-store", storeText)
+			if err != nil {
+				return nil, err
+			}
+			artifactStore = &store
+		}
+		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
+			provider, err := p.RegisterProvider(ctx, tenant, id, contracts.Role(role), artifactStore)
+			result := map[string]string{"tenant_id": tenant.String(), "provider_id": provider.String(), "role": role}
+			if artifactStore != nil {
+				result["artifact_store_id"] = artifactStore.String()
+			}
+			return result, err
+		}, nil
+	case "bind-adapter":
+		if err := need([]string{"tenant", "provider", "issuer", "subject"}); err != nil {
+			return nil, err
+		}
+		tenant, err := requiredID[ids.Tenant]("tenant", tenantText)
+		if err != nil {
+			return nil, err
+		}
+		provider, err := requiredID[ids.Provider]("provider", providerText)
+		if err != nil {
+			return nil, err
+		}
+		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
+			err := p.BindAdapter(ctx, tenant, provider, issuer, subject)
+			return map[string]string{"tenant_id": tenant.String(), "provider_id": provider.String(), "issuer": issuer, "subject": subject}, err
+		}, nil
+	case "unbind-adapter":
+		if err := need([]string{"issuer", "subject"}); err != nil {
+			return nil, err
+		}
+		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
+			binding, err := p.UnbindAdapter(ctx, issuer, subject)
+			return map[string]string{"tenant_id": binding.Tenant.String(), "provider_id": binding.Provider.String(), "issuer": issuer, "subject": subject}, err
 		}, nil
 	}
 	return nil, fmt.Errorf("%w: unknown operation %q", errUsage, args[0])

@@ -179,6 +179,62 @@ func TestMigrationRefusesToDropActorIdentity(t *testing.T) {
 	}
 }
 
+// TestMigrationAdapterBindingsAndRefuseDowngrade checks that an adapter
+// identity binds to exactly one registered provider, that only a runtime
+// names an artifact store, that provider provisioning changes carry their
+// provider, and that version 12 cannot be dropped while it holds data.
+func TestMigrationAdapterBindingsAndRefuseDowngrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	store := mustID[ids.Provider](t)
+	exec := func(query string, args ...any) error {
+		_, err := db.ExecContext(ctx, query, args...)
+		return err
+	}
+	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, updated_at) values ($1, $2, 'artifact_store', now())`, f.tenant, store); err != nil {
+		t.Fatalf("register store: %v", err)
+	}
+	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at) values ($1, $2, 'runtime', $3, now())`, f.tenant, f.provider, store); err != nil {
+		t.Fatalf("register runtime: %v", err)
+	}
+	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at) values ($1, $2, 'environment', $3, now())`, f.tenant, mustID[ids.Provider](t), store); err == nil {
+		t.Fatal("schema accepted an artifact store on an environment")
+	}
+	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at) values ($1, $2, 'runtime', $3, now())`, f.tenant, mustID[ids.Provider](t), mustID[ids.Provider](t)); err == nil {
+		t.Fatal("schema accepted an unregistered artifact store")
+	}
+	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, enabled, updated_at) values ('https://issuer.example', 'adapter-1', $1, $2, true, now())`, f.tenant, f.provider); err != nil {
+		t.Fatalf("bind adapter: %v", err)
+	}
+	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, enabled, updated_at) values ('https://issuer.example', 'adapter-1', $1, $2, true, now())`, f.tenant, store); err == nil {
+		t.Fatal("one identity bound to a second provider")
+	}
+	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, enabled, updated_at) values ('https://issuer.example', 'adapter-2', $1, $2, true, now())`, f.tenant, mustID[ids.Provider](t)); err == nil {
+		t.Fatal("identity bound to an unregistered provider")
+	}
+	if err := exec(`insert into provisioning_change (operation, tenant_id, provider_id, issuer, subject) values ('bind_adapter', $1, $2, 'https://issuer.example', 'adapter-1')`, f.tenant, f.provider); err != nil {
+		t.Fatalf("record bind_adapter: %v", err)
+	}
+	if err := exec(`insert into provisioning_change (operation, tenant_id, issuer, subject) values ('bind_adapter', $1, 'https://issuer.example', 'adapter-1')`, f.tenant); err == nil {
+		t.Fatal("bind_adapter recorded without its provider")
+	}
+	if err := exec(`insert into provisioning_change (operation, tenant_id) values ('create_tenant', $1)`, f.tenant); err != nil {
+		t.Fatalf("record create_tenant after version 12: %v", err)
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 12, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade while version 12 adapter registrations exist") {
+		t.Fatalf("ApplyVersion(12, down) error = %v, want registration-preserving refusal", err)
+	}
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != migrations.CurrentVersion {
+		t.Fatalf("version after refused downgrade = %d, %v", version, err)
+	}
+}
+
 func TestMigrationSurfaceEventsPositionAtCommitAndRefuseDowngrade(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

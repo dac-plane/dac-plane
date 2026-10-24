@@ -21,12 +21,14 @@ const (
 )
 
 // ProvisioningChange is one append-only record of what trusted provisioning
-// changed. Issuer and Subject are set only for identity operations; Principal
-// is unset only for tenant creation. It never carries credential material.
+// changed. Issuer and Subject are set only for identity and adapter binding
+// operations; Principal only for principal operations; Provider only for
+// provider operations. It never carries credential material.
 type ProvisioningChange struct {
 	Operation ProvisioningOperation
 	Tenant    ids.TenantID
 	Principal ids.PrincipalID
+	Provider  ids.ProviderID
 	Issuer    string
 	Subject   string
 }
@@ -34,10 +36,14 @@ type ProvisioningChange struct {
 // RecordProvisioningChange appends one provisioning change in the caller's
 // transaction, so the change and its record commit together.
 func RecordProvisioningChange(ctx context.Context, u *UnitOfWork, change ProvisioningChange) error {
-	var principal, issuer, subject *string
+	var principal, provider, issuer, subject *string
 	if !change.Principal.IsZero() {
 		value := change.Principal.String()
 		principal = &value
+	}
+	if !change.Provider.IsZero() {
+		value := change.Provider.String()
+		provider = &value
 	}
 	if change.Issuer != "" {
 		issuer = &change.Issuer
@@ -46,9 +52,9 @@ func RecordProvisioningChange(ctx context.Context, u *UnitOfWork, change Provisi
 		subject = &change.Subject
 	}
 	_, err := u.Exec(ctx, `
-		insert into provisioning_change (operation, tenant_id, principal_id, issuer, subject)
-		values ($1, $2, $3, $4, $5)`,
-		string(change.Operation), change.Tenant.String(), principal, issuer, subject,
+		insert into provisioning_change (operation, tenant_id, principal_id, provider_id, issuer, subject)
+		values ($1, $2, $3, $4, $5, $6)`,
+		string(change.Operation), change.Tenant.String(), principal, provider, issuer, subject,
 	)
 	return err
 }

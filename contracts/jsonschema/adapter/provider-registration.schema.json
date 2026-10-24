@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProviderRegistration",
+  "description": "A provider of one role in a tenant, created only by trusted provisioning (ADR-0008). Only a runtime names the artifact store it exports to, and never itself; the Go contract enforces that it differs from the provider.",
+  "type": "object",
+  "required": ["tenant_id", "provider_id", "role", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store"] },
+    "artifact_store_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "if": { "required": ["artifact_store_id"] },
+  "then": { "properties": { "role": { "const": "runtime" } } }
+}

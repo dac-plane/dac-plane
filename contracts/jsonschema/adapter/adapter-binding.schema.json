@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AdapterBinding",
+  "description": "Maps an adapter's external identity, the pair (issuer, subject) of its client-credentials token, to the one provider it speaks for (ADR-0008). It is the only source of a connection's peer; nothing in a frame changes it.",
+  "type": "object",
+  "required": ["issuer", "subject", "tenant_id", "provider_id", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "issuer": { "$ref": "../identity/common.schema.json#/$defs/issuer" },
+    "subject": { "$ref": "../identity/common.schema.json#/$defs/subject" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "enabled": { "description": "Absent means disabled.", "type": "boolean" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}
