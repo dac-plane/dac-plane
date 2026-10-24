@@ -98,6 +98,8 @@ drain must each make a named test fail.
   suites and by `internal/adapterwire`'s own suite.
 - `cmd/dac-sim-adapter` serves runtime scenarios only; the other roles follow when a test needs
   them. Its conformance fixture and scenario live in `cmd/dac-sim-adapter/testdata/`.
+- The race integration recipes pass `-timeout=30m`: the application suite over the wire now runs
+  10-15 minutes under the race detector, past go test's 10-minute package default.
 - `test-adapterkit` runs vet and unit tests (plain and race) inside the kit module;
   `test-conformance` builds both binaries and runs the kit's conformance runner against the
   simulator as a separate OS process; both are in the `ci` chain, as is `test-adapter-wire`'s
