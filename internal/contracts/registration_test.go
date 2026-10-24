@@ -19,7 +19,7 @@ func registrationFixtures(t *testing.T) map[string]fixture {
 	tenant, store := newID[ids.Tenant](t), newID[ids.Provider](t)
 	runtime := ProviderRegistration{Tenant: tenant, Provider: newID[ids.Provider](t), Role: RoleRuntime, ArtifactStore: &store, UpdatedAt: testNow}
 	environment := ProviderRegistration{Tenant: tenant, Provider: newID[ids.Provider](t), Role: RoleEnvironment, UpdatedAt: testNow}
-	binding := AdapterBinding{Issuer: "https://issuer.example.com/realms/adapters", Subject: "adapter-1", Tenant: tenant, Provider: runtime.Provider, Enabled: true, UpdatedAt: testNow}
+	binding := AdapterBinding{Issuer: "https://issuer.example.com/realms/adapters", Subject: "adapter-1", Tenant: tenant, Provider: runtime.Provider, Role: RoleRuntime, Enabled: true, UpdatedAt: testNow}
 	disabled := binding
 	disabled.Enabled = false
 	marshal := func(v any) []byte { return schematest.Marshal(t, v) }
@@ -62,6 +62,8 @@ func TestRegistrationInvalidDocuments(t *testing.T) {
 		{"binding issuer with query", "adapter binding", func(d map[string]any) { d["issuer"] = "https://issuer.example.com/?a=b" }},
 		{"binding subject with space", "adapter binding", func(d map[string]any) { d["subject"] = "adapter 1" }},
 		{"binding without tenant", "adapter binding", func(d map[string]any) { delete(d, "tenant_id") }},
+		{"binding without role", "adapter binding", func(d map[string]any) { delete(d, "role") }},
+		{"binding unknown role", "adapter binding", func(d map[string]any) { d["role"] = "scheduler" }},
 		{"binding with principal", "adapter binding", func(d map[string]any) { d["principal_id"] = d["provider_id"] }},
 	}
 	for _, tc := range cases {

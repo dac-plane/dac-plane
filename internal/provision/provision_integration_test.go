@@ -282,21 +282,25 @@ func TestProvisionAdapterLifecycle(t *testing.T) {
 	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleRuntime, &artifactStore); err != nil || again != runtime {
 		t.Fatalf("RegisterProvider(add store) = %v, %v", again, err)
 	}
-	if _, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleEnvironment, nil); !errors.Is(err, provision.ErrConflict) {
-		t.Fatalf("RegisterProvider(other role) error = %v, want ErrConflict", err)
+	// A harness provider is both a runtime and an environment.
+	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleEnvironment, nil); err != nil || again != runtime {
+		t.Fatalf("RegisterProvider(second role) = %v, %v", again, err)
 	}
 
-	if err := p.BindAdapter(ctx, tenant, mustID[ids.Provider](t), issuer, subject); !errors.Is(err, store.ErrNotFound) {
+	if err := p.BindAdapter(ctx, tenant, mustID[ids.Provider](t), contracts.RoleRuntime, issuer, subject); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("BindAdapter(unregistered) error = %v, want ErrNotFound", err)
 	}
-	if err := p.BindAdapter(ctx, tenant, runtime, issuer, subject); err != nil {
+	if err := p.BindAdapter(ctx, tenant, artifactStore, contracts.RoleRuntime, issuer, subject); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("BindAdapter(unregistered role) error = %v, want ErrNotFound", err)
+	}
+	if err := p.BindAdapter(ctx, tenant, runtime, contracts.RoleRuntime, issuer, subject); err != nil {
 		t.Fatalf("BindAdapter() error = %v", err)
 	}
-	if err := p.BindAdapter(ctx, tenant, runtime, issuer, subject); err != nil {
+	if err := p.BindAdapter(ctx, tenant, runtime, contracts.RoleRuntime, issuer, subject); err != nil {
 		t.Fatalf("repeated BindAdapter() error = %v", err)
 	}
-	if err := p.BindAdapter(ctx, tenant, environment, issuer, subject); !errors.Is(err, provision.ErrConflict) {
-		t.Fatalf("BindAdapter(second provider) error = %v, want ErrConflict", err)
+	if err := p.BindAdapter(ctx, tenant, runtime, contracts.RoleEnvironment, issuer, subject); !errors.Is(err, provision.ErrConflict) {
+		t.Fatalf("BindAdapter(second registration) error = %v, want ErrConflict", err)
 	}
 	resolved, err := store.ResolveAdapterBinding(ctx, pool, issuer, subject)
 	if err != nil || resolved.Provider != runtime || resolved.Tenant != tenant || resolved.Role != contracts.RoleRuntime ||
@@ -315,7 +319,7 @@ func TestProvisionAdapterLifecycle(t *testing.T) {
 		t.Fatalf("unbind unknown adapter error = %v, want ErrNotFound", err)
 	}
 
-	want := []string{"create_tenant", "register_provider", "register_provider", "register_provider", "register_provider", "bind_adapter", "bind_adapter", "unbind_adapter"}
+	want := []string{"create_tenant", "register_provider", "register_provider", "register_provider", "register_provider", "register_provider", "bind_adapter", "bind_adapter", "unbind_adapter"}
 	if got := changes(t, ctx, pool, tenant); !slices.Equal(got, want) {
 		t.Fatalf("provisioning changes = %v, want %v", got, want)
 	}

@@ -1,32 +1,36 @@
 -- +goose Up
--- ADR-0008: a provider exists in a tenant only through a registration, and an
--- adapter speaks for it only through an explicit binding of its external
--- identity (issuer, subject). Both are created by trusted provisioning.
+-- ADR-0008: a provider plays a role in a tenant only through a registration,
+-- one per role, and an adapter speaks for a registration only through an
+-- explicit binding of its external identity (issuer, subject). Both are
+-- created by trusted provisioning.
 CREATE TABLE provider_registration (
   tenant_id uuid NOT NULL REFERENCES tenant(id),
   provider_id uuid NOT NULL,
   role text NOT NULL CHECK (role IN ('runtime','environment','enforcement','artifact_store')),
   artifact_store_id uuid,
+  -- Lets the foreign key below require the store's artifact_store registration.
+  artifact_store_role text GENERATED ALWAYS AS (CASE WHEN artifact_store_id IS NULL THEN NULL ELSE 'artifact_store' END) STORED,
   updated_at timestamptz NOT NULL,
-  PRIMARY KEY (tenant_id, provider_id),
+  PRIMARY KEY (tenant_id, provider_id, role),
   CHECK (artifact_store_id IS NULL OR (role = 'runtime' AND artifact_store_id <> provider_id)),
-  FOREIGN KEY (tenant_id, artifact_store_id) REFERENCES provider_registration(tenant_id, provider_id)
+  FOREIGN KEY (tenant_id, artifact_store_id, artifact_store_role) REFERENCES provider_registration(tenant_id, provider_id, role)
 );
 
--- One identity speaks for exactly one provider, so a connection needs no
--- tenant in its request; a provider may have several bound identities.
+-- One identity speaks for exactly one registration, so a connection needs no
+-- tenant or role in its request; a registration may have several identities.
 CREATE TABLE adapter_binding (
   issuer text NOT NULL CHECK (length(issuer) <= 2048 AND issuer ~ '^https://[!-~]+$' AND position('?' in issuer) = 0 AND position('#' in issuer) = 0),
   subject text NOT NULL CHECK (subject ~ '^[!-~]{1,255}$'),
   tenant_id uuid NOT NULL,
   provider_id uuid NOT NULL,
+  role text NOT NULL,
   enabled boolean NOT NULL,
   updated_at timestamptz NOT NULL,
   PRIMARY KEY (issuer, subject),
-  FOREIGN KEY (tenant_id, provider_id) REFERENCES provider_registration(tenant_id, provider_id)
+  FOREIGN KEY (tenant_id, provider_id, role) REFERENCES provider_registration(tenant_id, provider_id, role)
 );
 
-CREATE INDEX adapter_binding_provider ON adapter_binding (tenant_id, provider_id);
+CREATE INDEX adapter_binding_registration ON adapter_binding (tenant_id, provider_id, role);
 
 -- Provisioning changes gain the provider operations. The table is
 -- append-only, so its checks are replaced rather than its rows rewritten.

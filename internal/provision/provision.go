@@ -168,10 +168,10 @@ func (p *Provisioner) SetTenantReader(ctx context.Context, tenant ids.TenantID, 
 	})
 }
 
-// RegisterProvider registers provider with role in an existing tenant. A
-// zero provider gets a new identifier. Registering it again with the same
-// role changes only its artifact store; another role is ErrConflict. A
-// runtime's artifact store must already be registered as an artifact store.
+// RegisterProvider registers provider in role in an existing tenant. A zero
+// provider gets a new identifier. A provider may be registered in several
+// roles; registering it again in the same role changes only its artifact
+// store. A runtime's artifact store must already be registered as one.
 func (p *Provisioner) RegisterProvider(ctx context.Context, tenant ids.TenantID, provider ids.ProviderID, role contracts.Role, artifactStore *ids.ProviderID) (ids.ProviderID, error) {
 	if provider.IsZero() {
 		var err error
@@ -188,12 +188,10 @@ func (p *Provisioner) RegisterProvider(ctx context.Context, tenant ids.TenantID,
 			return err
 		}
 		if artifactStore != nil {
-			existing, err := store.GetProviderRegistration(ctx, u, tenant, *artifactStore)
-			if err != nil {
+			if _, err := store.GetProviderRegistration(ctx, u, tenant, *artifactStore, contracts.RoleArtifactStore); errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("%w: provider %s is not registered as an artifact store", ErrConflict, artifactStore)
+			} else if err != nil {
 				return err
-			}
-			if existing.Role != contracts.RoleArtifactStore {
-				return fmt.Errorf("%w: provider %s is not an artifact store", ErrConflict, artifactStore)
 			}
 		}
 		if err := store.PutProviderRegistration(ctx, u, registration); err != nil {
@@ -204,17 +202,17 @@ func (p *Provisioner) RegisterProvider(ctx context.Context, tenant ids.TenantID,
 	return provider, err
 }
 
-// BindAdapter binds the adapter identity (issuer, subject) to a registered
-// provider, enabling an existing binding to the same provider. An identity
-// already bound to another provider is ErrConflict: give each adapter
-// registration its own client.
-func (p *Provisioner) BindAdapter(ctx context.Context, tenant ids.TenantID, provider ids.ProviderID, issuer, subject string) error {
-	binding := contracts.AdapterBinding{Issuer: issuer, Subject: subject, Tenant: tenant, Provider: provider, Enabled: true, UpdatedAt: p.now().UTC()}
+// BindAdapter binds the adapter identity (issuer, subject) to the
+// registration of provider in role, enabling an existing binding to the same
+// registration. An identity already bound to another registration is
+// ErrConflict: give each adapter registration its own client.
+func (p *Provisioner) BindAdapter(ctx context.Context, tenant ids.TenantID, provider ids.ProviderID, role contracts.Role, issuer, subject string) error {
+	binding := contracts.AdapterBinding{Issuer: issuer, Subject: subject, Tenant: tenant, Provider: provider, Role: role, Enabled: true, UpdatedAt: p.now().UTC()}
 	if err := binding.Validate(); err != nil {
 		return err
 	}
 	return p.inTransaction(ctx, func(u *store.UnitOfWork) error {
-		if _, err := store.GetProviderRegistration(ctx, u, tenant, provider); err != nil {
+		if _, err := store.GetProviderRegistration(ctx, u, tenant, provider, role); err != nil {
 			return err
 		}
 		if err := store.PutAdapterBinding(ctx, u, binding); err != nil {

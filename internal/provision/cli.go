@@ -26,7 +26,7 @@ operations:
   revoke-reader  -tenant TENANT -principal ID
   register-provider  -tenant TENANT -role ROLE [-id ID] [-artifact-store ID]
                  roles: runtime, environment, enforcement, artifact_store
-  bind-adapter   -tenant TENANT -provider ID -issuer URL -subject SUB
+  bind-adapter   -tenant TENANT -provider ID -role ROLE -issuer URL -subject SUB
   unbind-adapter -issuer URL -subject SUB
 
 Operations are idempotent; pass -id to make creation repeatable. Output is one
@@ -221,7 +221,7 @@ func parse(args []string) (operation, error) {
 			return result, err
 		}, nil
 	case "bind-adapter":
-		if err := need([]string{"tenant", "provider", "issuer", "subject"}); err != nil {
+		if err := need([]string{"tenant", "provider", "role", "issuer", "subject"}); err != nil {
 			return nil, err
 		}
 		tenant, err := requiredID[ids.Tenant]("tenant", tenantText)
@@ -233,8 +233,8 @@ func parse(args []string) (operation, error) {
 			return nil, err
 		}
 		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
-			err := p.BindAdapter(ctx, tenant, provider, issuer, subject)
-			return map[string]string{"tenant_id": tenant.String(), "provider_id": provider.String(), "issuer": issuer, "subject": subject}, err
+			err := p.BindAdapter(ctx, tenant, provider, contracts.Role(role), issuer, subject)
+			return map[string]string{"tenant_id": tenant.String(), "provider_id": provider.String(), "role": role, "issuer": issuer, "subject": subject}, err
 		}, nil
 	case "unbind-adapter":
 		if err := need([]string{"issuer", "subject"}); err != nil {
@@ -242,7 +242,7 @@ func parse(args []string) (operation, error) {
 		}
 		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
 			binding, err := p.UnbindAdapter(ctx, issuer, subject)
-			return map[string]string{"tenant_id": binding.Tenant.String(), "provider_id": binding.Provider.String(), "issuer": issuer, "subject": subject}, err
+			return map[string]string{"tenant_id": binding.Tenant.String(), "provider_id": binding.Provider.String(), "role": string(binding.Role), "issuer": issuer, "subject": subject}, err
 		}, nil
 	}
 	return nil, fmt.Errorf("%w: unknown operation %q", errUsage, args[0])

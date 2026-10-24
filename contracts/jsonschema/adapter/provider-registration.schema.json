@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ProviderRegistration",
-  "description": "A provider of one role in a tenant, created only by trusted provisioning (ADR-0008). Only a runtime names the artifact store it exports to, and never itself; the Go contract enforces that it differs from the provider.",
+  "description": "A provider in one role in a tenant, created only by trusted provisioning (ADR-0008); a provider may hold one registration per role. Only a runtime names the artifact store it exports to, and never itself; the Go contract enforces that it differs from the provider.",
   "type": "object",
   "required": ["tenant_id", "provider_id", "role", "updated_at"],
   "additionalProperties": false,

@@ -205,14 +205,20 @@ func TestMigrationAdapterBindingsAndRefuseDowngrade(t *testing.T) {
 	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at) values ($1, $2, 'runtime', $3, now())`, f.tenant, mustID[ids.Provider](t), mustID[ids.Provider](t)); err == nil {
 		t.Fatal("schema accepted an unregistered artifact store")
 	}
-	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, enabled, updated_at) values ('https://issuer.example', 'adapter-1', $1, $2, true, now())`, f.tenant, f.provider); err != nil {
+	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, updated_at) values ($1, $2, 'environment', now())`, f.tenant, f.provider); err != nil {
+		t.Fatalf("register the runtime as an environment too: %v", err)
+	}
+	if err := exec(`insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at) values ($1, $2, 'runtime', $3, now())`, f.tenant, mustID[ids.Provider](t), f.provider); err == nil {
+		t.Fatal("schema accepted an artifact store registered only as a runtime and an environment")
+	}
+	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, role, enabled, updated_at) values ('https://issuer.example', 'adapter-1', $1, $2, 'runtime', true, now())`, f.tenant, f.provider); err != nil {
 		t.Fatalf("bind adapter: %v", err)
 	}
-	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, enabled, updated_at) values ('https://issuer.example', 'adapter-1', $1, $2, true, now())`, f.tenant, store); err == nil {
-		t.Fatal("one identity bound to a second provider")
+	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, role, enabled, updated_at) values ('https://issuer.example', 'adapter-1', $1, $2, 'environment', true, now())`, f.tenant, f.provider); err == nil {
+		t.Fatal("one identity bound to a second registration")
 	}
-	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, enabled, updated_at) values ('https://issuer.example', 'adapter-2', $1, $2, true, now())`, f.tenant, mustID[ids.Provider](t)); err == nil {
-		t.Fatal("identity bound to an unregistered provider")
+	if err := exec(`insert into adapter_binding (issuer, subject, tenant_id, provider_id, role, enabled, updated_at) values ('https://issuer.example', 'adapter-2', $1, $2, 'enforcement', true, now())`, f.tenant, f.provider); err == nil {
+		t.Fatal("identity bound to an unregistered role")
 	}
 	if err := exec(`insert into provisioning_change (operation, tenant_id, provider_id, issuer, subject) values ('bind_adapter', $1, $2, 'https://issuer.example', 'adapter-1')`, f.tenant, f.provider); err != nil {
 		t.Fatalf("record bind_adapter: %v", err)
