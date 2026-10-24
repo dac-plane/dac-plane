@@ -91,4 +91,14 @@ drain must each make a named test fail.
 
 ## Deviations and follow-ups
 
-(Recorded as the work proceeds.)
+- The `internal/worker` loopback suites stay in-process: they script the loopback port
+  synchronously and assert on its ledger, and `TestDeliveryRejectsReplyForAnotherDelivery` must
+  stay in-process because the wire endpoint rejects a mismatched reply before the worker sees it.
+  The wire path is covered by the converted `internal/application` and `internal/httpapi`
+  suites and by `internal/adapterwire`'s own suite.
+- `cmd/dac-sim-adapter` serves runtime scenarios only; the other roles follow when a test needs
+  them. Its conformance fixture and scenario live in `cmd/dac-sim-adapter/testdata/`.
+- `test-adapterkit` runs vet and unit tests (plain and race) inside the kit module;
+  `test-conformance` builds both binaries and runs the kit's conformance runner against the
+  simulator as a separate OS process; both are in the `ci` chain, as is `test-adapter-wire`'s
+  package (`internal/adapterwire` also runs in the integration partitions).
