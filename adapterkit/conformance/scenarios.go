@@ -112,6 +112,31 @@ func scenarioReconnect(ctx context.Context, h *harness, _ Fixture) error {
 	return h.open(ctx, reconnectTimeout)
 }
 
+func scenarioReconnectWithOpenStream(ctx context.Context, h *harness, f Fixture) error {
+	if f.Cursor == nil {
+		return nil
+	}
+	cursor := *f.Cursor
+	if err := h.current.write(ctx, wire.Frame{Kind: wire.KindSubscribe, Subscribe: &wire.Subscribe{Cursor: cursor}}); err != nil {
+		return err
+	}
+	wait, cancel := context.WithTimeout(ctx, stepTimeout)
+	defer cancel()
+	frame, err := h.current.next(wait)
+	if err != nil {
+		return fmt.Errorf("waiting for the first event: %w", err)
+	}
+	if frame.Kind != wire.KindEvent || frame.Event.Body.Kind != wire.StreamConnected {
+		return fmt.Errorf("adapter sent %+v, want a connected event", frame)
+	}
+	// The stream stays open: a supported adapter keeps reading it. The kit
+	// must still reconnect after the connection closes, which requires its
+	// session teardown to cancel stream handlers before waiting on them.
+	_ = h.current.conn.Close(websocket.StatusNormalClosure, "token expired")
+	h.current = nil
+	return h.open(ctx, reconnectTimeout)
+}
+
 func scenarioMalformed(ctx context.Context, h *harness, _ Fixture) error {
 	if err := h.current.conn.Write(ctx, websocket.MessageText, []byte(`{"kind":"notify"}`)); err != nil {
 		return err

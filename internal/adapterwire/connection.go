@@ -305,8 +305,24 @@ func (c *connection) deliverEvent(event contracts.Event) {
 		c.logger.Warn("dropped an event bound to another stream", "reason", failureCode(failure))
 		return
 	}
+	frame := event.Body
+	switch {
+	case event.Generation < stream.cursor.Generation:
+		// An event from an older generation is stale: Ingest would ignore
+		// it, so the boundary drops it instead of letting the reconciler
+		// relabel it with the subscribed cursor's generation.
+		c.registry.droppedEvents.Add(1)
+		c.logger.Warn("dropped an event from an older stream generation", "operation", event.Operation.String(), "event_generation", event.Generation, "cursor_generation", stream.cursor.Generation)
+		return
+	case event.Generation > stream.cursor.Generation:
+		// The adapter moved past the subscribed generation without a clear.
+		// Signal rehydration exactly as a cursor_too_old frame would, so the
+		// reconciler resubscribes from zero instead of applying rows the
+		// durable cursor has not advanced to.
+		frame = contracts.StreamFrame{Kind: contracts.StreamCursorTooOld}
+	}
 	select {
-	case stream.frames <- event.Body:
+	case stream.frames <- frame:
 	default:
 		// The reconciler fell behind: end the stream rather than block every
 		// reply behind it. It resumes from its durable cursor.

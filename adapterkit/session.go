@@ -131,7 +131,10 @@ func (s *session) serve(ctx context.Context, renew chan<- struct{}) {
 	go s.keepAlive(ctx)
 	go s.scheduleRenewal(ctx, renew)
 	var handlers sync.WaitGroup
-	defer handlers.Wait()
+	defer func() {
+		cancel()
+		handlers.Wait()
+	}()
 	for {
 		typ, data, err := s.conn.Read(ctx)
 		if err != nil {

@@ -385,7 +385,7 @@ func TestAdapterWireEventsAreBoundToThePeerAndCursor(t *testing.T) {
 	f := setup(t, adapterwire.Options{})
 	a, _ := f.open(t, f.provider)
 	port := f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleRuntime)
-	cursor := contracts.Cursor{Tenant: f.tenant, Attempt: mustID[ids.Attempt](t), Operation: mustID[ids.Operation](t), Stream: "dispatch", Generation: 1}
+	cursor := contracts.Cursor{Tenant: f.tenant, Attempt: mustID[ids.Attempt](t), Operation: mustID[ids.Operation](t), Stream: "dispatch", Generation: 2}
 	stream, err := port.Subscribe(f.ctx, cursor)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
@@ -396,7 +396,7 @@ func TestAdapterWireEventsAreBoundToThePeerAndCursor(t *testing.T) {
 	}
 	connected := contracts.StreamFrame{Kind: contracts.StreamConnected, ServerTime: time.Now().UTC()}
 	event := func(change func(*contracts.Event)) contracts.Event {
-		e := contracts.Event{Tenant: f.tenant, Attempt: cursor.Attempt, Provider: f.provider, Operation: cursor.Operation, Stream: cursor.Stream, Generation: 1, Body: connected}
+		e := contracts.Event{Tenant: f.tenant, Attempt: cursor.Attempt, Provider: f.provider, Operation: cursor.Operation, Stream: cursor.Stream, Generation: cursor.Generation, Body: connected}
 		change(&e)
 		return e
 	}
@@ -420,6 +420,23 @@ func TestAdapterWireEventsAreBoundToThePeerAndCursor(t *testing.T) {
 	}
 	if _, events := f.wire.Registry.Dropped(); events != int64(len(forged)) {
 		t.Fatalf("dropped events = %d, want %d", events, len(forged))
+	}
+	// A raw adapter may stamp events with another generation than the
+	// cursor it was subscribed with. The boundary must not relabel either
+	// as current: an older generation is stale and dropped, and a newer
+	// one signals rehydration instead of applying its rows.
+	stale := event(func(e *contracts.Event) { e.Generation = cursor.Generation - 1 })
+	a.send(t, contracts.Frame{Kind: contracts.FrameEvent, Event: &stale})
+	newer := event(func(e *contracts.Event) { e.Generation = cursor.Generation + 1 })
+	a.send(t, contracts.Frame{Kind: contracts.FrameEvent, Event: &newer})
+	next2, cancel2 := context.WithTimeout(f.ctx, 5*time.Second)
+	defer cancel2()
+	frame, err = stream.Next(next2)
+	if err != nil || frame.Kind != contracts.StreamCursorTooOld {
+		t.Fatalf("Next() = %+v, %v; want cursor_too_old for the newer generation", frame, err)
+	}
+	if _, events := f.wire.Registry.Dropped(); events != int64(len(forged)+1) {
+		t.Fatalf("dropped events = %d, want %d (forged plus the stale generation)", events, len(forged)+1)
 	}
 	_ = stream.Close()
 	if frame := a.next(t); frame.Kind != contracts.FrameUnsubscribe {

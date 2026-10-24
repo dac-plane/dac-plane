@@ -109,6 +109,7 @@ func Check(ctx context.Context, target Target) []Result {
 		{"subscribe streams from the cursor", scenarioSubscribe},
 		{"pings are answered", scenarioLiveness},
 		{"reconnects after a close", scenarioReconnect},
+		{"reconnects with an open stream", scenarioReconnectWithOpenStream},
 		{"malformed frame ends the session", scenarioMalformed},
 		{"binary message ends the session", scenarioBinary},
 		{"frame of the other direction ends the session", scenarioWrongDirection},
