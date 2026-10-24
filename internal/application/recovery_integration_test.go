@@ -99,10 +99,21 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("loss"))
 	rt := f.runtime(t, s.Operation.ID)
+	var mu sync.Mutex
 	effects := 0
+	replaying := false
 	p := &recoveryPort{Port: rt, send: func(context.Context, contracts.Request) (contracts.Reply, error) {
+		mu.Lock()
 		effects++
+		mu.Unlock()
 		return contracts.Reply{}, io.ErrUnexpectedEOF
+	}, subscribe: func(context.Context, contracts.Cursor) (contracts.Stream, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !replaying {
+			return nil, errors.New("transport still lost")
+		}
+		return &recoveryStream{frames: []contracts.StreamFrame{outcomeFrame(1)}}, nil
 	}}
 	if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil {
 		t.Fatal(err)
@@ -122,18 +133,24 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 	if err := w.Reconcile(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if effects != 1 {
-		t.Fatalf("uncertain effect sent %d times", effects)
+	mu.Lock()
+	sent := effects
+	mu.Unlock()
+	if sent != 1 {
+		t.Fatalf("uncertain effect sent %d times", sent)
 	}
-	p.subscribe = func(context.Context, contracts.Cursor) (contracts.Stream, error) {
-		return &recoveryStream{frames: []contracts.StreamFrame{outcomeFrame(1)}}, nil
-	}
+	mu.Lock()
+	replaying = true
+	mu.Unlock()
 	if err := w.Reconcile(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	op, err = store.GetOperation(f.ctx, f.pool, f.tenant, s.Operation.ID)
-	if err != nil || op.State != lifecycle.OperationSucceeded || effects != 1 {
-		t.Fatalf("recovery state=%s effects=%d err=%v", op.State, effects, err)
+	mu.Lock()
+	sent = effects
+	mu.Unlock()
+	if err != nil || op.State != lifecycle.OperationSucceeded || sent != 1 {
+		t.Fatalf("recovery state=%s effects=%d err=%v", op.State, sent, err)
 	}
 }
 

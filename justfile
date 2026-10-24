@@ -83,12 +83,12 @@ test-integration *pkgs="./...":
 [doc('Run integration tests under the race detector (needs Docker)')]
 [group('test')]
 test-integration-race *pkgs="./...":
-    {{ sdkroot }}go test -race -count=1 -tags=integration {{ pkgs }}
+    {{ sdkroot }}go test -race -count=1 -timeout=30m -tags=integration {{ pkgs }}
 
 # Complement of test-security-race; together they cover the complete suite.
 [group('test')]
 test-integration-other-race:
-    {{ sdkroot }}go test -race -count=1 -tags=integration ./... -skip '{{ security_tests }}'
+    {{ sdkroot }}go test -race -count=1 -timeout=30m -tags=integration ./... -skip '{{ security_tests }}'
 
 # The adapter kit is a separate module (ADR-0008): unit tests and the codec
 # and schema agreement tests live in adapterkit/.
@@ -145,7 +145,7 @@ test-security:
 
 [group('test')]
 test-security-race:
-    {{ sdkroot }}go test -race -count=1 -tags=integration ./... -run '{{ security_tests }}'
+    {{ sdkroot }}go test -race -count=1 -timeout=30m -tags=integration ./... -run '{{ security_tests }}'
 
 # Actor authentication, identity bindings and trusted provisioning (ADR-0007).
 [group('test')]
