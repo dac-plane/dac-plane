@@ -98,8 +98,8 @@ func (w *Worker) driveMigrationItems(ctx context.Context, tenant ids.TenantID, c
 	for _, item := range items {
 		switch item.State {
 		case lifecycle.MigrationItemQueued:
-			port := w.ports[pass.From]
-			if port == nil || port.Role() != contracts.RoleRuntime {
+			port := w.port(tenant, pass.From, contracts.RoleRuntime)
+			if port == nil {
 				return nil
 			}
 			ready, err := w.migrationPortsReady(ctx, tenant, pass, item)
@@ -128,8 +128,8 @@ func (w *Worker) driveMigrationItems(ctx context.Context, tenant ids.TenantID, c
 				}
 				return nil
 			}
-			port := w.ports[pass.From]
-			if port == nil || port.Role() != contracts.RoleRuntime {
+			port := w.port(tenant, pass.From, contracts.RoleRuntime)
+			if port == nil {
 				return nil
 			}
 			return w.sendSourceQuiesce(ctx, tenant, claim, port, pass, item)
@@ -145,10 +145,10 @@ func (w *Worker) driveMigrationItems(ctx context.Context, tenant ids.TenantID, c
 }
 
 func (w *Worker) migrationPortsReady(ctx context.Context, tenant ids.TenantID, pass lifecycle.MigrationPass, item lifecycle.MigrationItem) (bool, error) {
-	if runtime := w.ports[pass.To]; runtime == nil || runtime.Role() != contracts.RoleRuntime {
+	if w.port(tenant, pass.To, contracts.RoleRuntime) == nil {
 		return false, nil
 	}
-	if environment := w.environments[pass.To]; environment == nil || environment.Role() != contracts.RoleEnvironment {
+	if w.port(tenant, pass.To, contracts.RoleEnvironment) == nil {
 		return false, nil
 	}
 	bindings, err := store.ListAttemptBindings(ctx, w.pool, tenant, item.SourceAttempt)
@@ -161,7 +161,7 @@ func (w *Worker) migrationPortsReady(ctx context.Context, tenant ids.TenantID, p
 			runtimeBound = true
 		}
 		if binding.Kind == lifecycle.ResourceEnvironmentResource {
-			if port := w.environments[binding.Provider]; port == nil || port.Role() != contracts.RoleEnvironment {
+			if w.port(tenant, binding.Provider, contracts.RoleEnvironment) == nil {
 				return false, nil
 			}
 			environmentBound = true
@@ -678,8 +678,8 @@ func stepTransition(version uint64, at time.Time) (store.Transition, error) {
 
 func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, pass lifecycle.MigrationPass) error {
 	if item.EnvironmentRef == "" {
-		port := w.environments[pass.To]
-		if port == nil || port.Role() != contracts.RoleEnvironment {
+		port := w.port(tenant, pass.To, contracts.RoleEnvironment)
+		if port == nil {
 			return nil
 		}
 		if item.EnvironmentEpoch == 0 {
@@ -701,8 +701,8 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 		}
 		return w.settleMigrationEnvironment(ctx, tenant, claim, item, pass, receipt)
 	}
-	port := w.ports[pass.To]
-	if port == nil || port.Role() != contracts.RoleRuntime {
+	port := w.port(tenant, pass.To, contracts.RoleRuntime)
+	if port == nil {
 		return nil
 	}
 	if item.RestartEpoch == 0 {
@@ -960,8 +960,8 @@ func (w *Worker) driveMigrationAbortCleanup(ctx context.Context, tenant ids.Tena
 			return err
 		}
 		if op.State != lifecycle.OperationAccepted {
-			port := w.environments[pass.To]
-			if port == nil || port.Role() != contracts.RoleEnvironment {
+			port := w.port(tenant, pass.To, contracts.RoleEnvironment)
+			if port == nil {
 				return nil
 			}
 			if item.TargetCleanupEpoch == 0 {
@@ -1000,8 +1000,8 @@ func (w *Worker) driveMigrationAbortCleanup(ctx context.Context, tenant ids.Tena
 		if sourceEnvironment == nil {
 			return store.ErrNotFound
 		}
-		port := w.environments[sourceOperation.Provider]
-		if port == nil || port.Role() != contracts.RoleEnvironment {
+		port := w.port(tenant, sourceOperation.Provider, contracts.RoleEnvironment)
+		if port == nil {
 			return nil
 		}
 		if item.CleanupEpoch == 0 {
@@ -1176,8 +1176,8 @@ func (w *Worker) driveMigrationCleanup(ctx context.Context, tenant ids.TenantID,
 	if !found {
 		return store.ErrNotFound
 	}
-	port := w.environments[op.Provider]
-	if port == nil || port.Role() != contracts.RoleEnvironment {
+	port := w.port(tenant, op.Provider, contracts.RoleEnvironment)
+	if port == nil {
 		return nil
 	}
 	if item.CleanupEpoch == 0 {

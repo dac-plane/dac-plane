@@ -51,9 +51,9 @@ func (w *Worker) artifactRow(ctx context.Context, tenant ids.TenantID, row store
 	if work.Manifest.Artifact.Untyped() != row.RecordID || row.Attempt != work.Manifest.Attempt {
 		return w.poison(ctx, tenant, row, time.Now().UTC(), reasonOperationMismatch)
 	}
-	binding, ok := w.artifacts[work.Manifest.Producer]
-	runtime, hasRuntime := w.ports[work.Manifest.Producer]
-	if !ok || !hasRuntime || binding.Port == nil || binding.Provider.IsZero() {
+	binding, ok := w.artifactStore(tenant, work.Manifest.Producer)
+	runtime := w.port(tenant, work.Manifest.Producer, contracts.RoleRuntime)
+	if !ok || runtime == nil || binding.Port == nil || binding.Provider.IsZero() {
 		w.stats.SkippedNoPort.Add(1)
 		return nil
 	}

@@ -48,11 +48,8 @@ func (w *Worker) governedRow(ctx context.Context, tenant ids.TenantID, row store
 	if a.Use.Outcome != identity.UseAllowed || a.Execution.Validate() != nil || body.Operation.String() != row.RecordID.String() || body.Role != contracts.RoleEnforcement || body.Method != contracts.MethodExecuteAction {
 		return w.poison(ctx, tenant, row, now, reasonInvalidBody)
 	}
-	port := w.enforcement[a.Use.Provider]
+	port := w.port(tenant, a.Use.Provider, contracts.RoleEnforcement)
 	if port == nil {
-		port = w.ports[a.Use.Provider]
-	}
-	if port == nil || port.Role() != contracts.RoleEnforcement {
 		w.stats.SkippedNoPort.Add(1)
 		return nil
 	}
@@ -237,11 +234,8 @@ func (w *Worker) hookStageRow(ctx context.Context, tenant ids.TenantID, row stor
 		}
 		return err
 	}
-	port := w.enforcement[action.Use.Provider]
+	port := w.port(tenant, action.Use.Provider, contracts.RoleEnforcement)
 	if port == nil {
-		port = w.ports[action.Use.Provider]
-	}
-	if port == nil || port.Role() != contracts.RoleEnforcement {
 		w.stats.SkippedNoPort.Add(1)
 		return nil
 	}
