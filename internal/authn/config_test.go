@@ -19,7 +19,9 @@ const minimalConfig = `{"issuers":[{"issuer":"https://issuer.example","audience"
 
 const fullConfig = `{"issuers":[
  {"issuer":"https://issuer.example/realms/a","audience":"dac-plane","algorithms":["ES256","RS256"],"max_token_lifetime_seconds":3600,"clock_skew_seconds":0,"require_access_token_type":false},
- {"issuer":"https://other.example","audience":"dac-plane","algorithms":["EdDSA"],"max_token_lifetime_seconds":60,"clock_skew_seconds":300,"require_access_token_type":true}]}`
+ {"issuer":"https://other.example","audience":"dac-plane","algorithms":["EdDSA"],"max_token_lifetime_seconds":60,"clock_skew_seconds":300,"require_access_token_type":true}],
+ "adapter_issuers":[
+ {"issuer":"https://issuer.example/realms/a","audience":"dac-plane-adapters","algorithms":["ES256"],"max_token_lifetime_seconds":900}]}`
 
 func TestConfigSchemasAcceptValidGoDocuments(t *testing.T) {
 	schema := schematest.Compile(t, configSchema)
@@ -64,6 +66,10 @@ func TestConfigSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"skew above five minutes", issuer(func(i map[string]any) { i["clock_skew_seconds"] = 301 })},
 		{"string typing flag", issuer(func(i map[string]any) { i["require_access_token_type"] = "no" })},
 		{"unknown issuer field", issuer(func(i map[string]any) { i["jwks_uri"] = "https://issuer.example/keys" })},
+		{"adapter issuers not a list", func(d map[string]any) { d["adapter_issuers"] = map[string]any{} }},
+		{"adapter issuer without audience", func(d map[string]any) {
+			d["adapter_issuers"] = []any{map[string]any{"issuer": "https://adapters.example", "algorithms": []any{"ES256"}, "max_token_lifetime_seconds": 60}}
+		}},
 	}
 	schema := schematest.Compile(t, configSchema)
 	for _, tc := range cases {
@@ -92,6 +98,19 @@ func TestParseConfigRejectsDuplicateIssuersAndTrailingDocuments(t *testing.T) {
 		`{"issuer":"https://issuer.example","audience":"b","algorithms":["RS256"],"max_token_lifetime_seconds":60}]}`
 	if _, err := ParseConfig([]byte(duplicate)); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("ParseConfig(duplicate) error = %v", err)
+	}
+	duplicateAdapter := `{"issuers":[{"issuer":"https://issuer.example","audience":"a","algorithms":["RS256"],"max_token_lifetime_seconds":60}],"adapter_issuers":[` +
+		`{"issuer":"https://adapters.example","audience":"b","algorithms":["RS256"],"max_token_lifetime_seconds":60},` +
+		`{"issuer":"https://adapters.example","audience":"c","algorithms":["RS256"],"max_token_lifetime_seconds":60}]}`
+	if _, err := ParseConfig([]byte(duplicateAdapter)); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ParseConfig(duplicate adapter issuer) error = %v", err)
+	}
+	// One issuer and one audience for both would let a Surface API token
+	// open an adapter connection.
+	sharedAudience := `{"issuers":[{"issuer":"https://issuer.example","audience":"a","algorithms":["RS256"],"max_token_lifetime_seconds":60}],` +
+		`"adapter_issuers":[{"issuer":"https://issuer.example","audience":"a","algorithms":["RS256"],"max_token_lifetime_seconds":60}]}`
+	if _, err := ParseConfig([]byte(sharedAudience)); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ParseConfig(shared audience) error = %v", err)
 	}
 	for name, document := range map[string]string{
 		"two documents": minimalConfig + minimalConfig, "trailing bracket": minimalConfig + "]",

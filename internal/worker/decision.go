@@ -37,8 +37,8 @@ func (w *Worker) decisionRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil || prepared == nil {
 		return err
 	}
-	port, ok := w.ports[prepared.operation.Provider]
-	if !ok {
+	port := w.port(tenant, prepared.operation.Provider, contracts.RoleRuntime)
+	if port == nil {
 		w.stats.SkippedNoPort.Add(1)
 		return w.releaseDecision(ctx, tenant, row, prepared, now)
 	}

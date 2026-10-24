@@ -35,10 +35,13 @@ func SigningAlgorithms() []string {
 }
 
 // Config lists the identity providers whose access tokens the control plane
-// accepts. It is loaded from the file DAC_IDENTITY_CONFIG_FILE names and
-// mirrors contracts/jsonschema/config/identity-config.schema.json.
+// accepts: Issuers for Surface API callers (ADR-0007) and AdapterIssuers for
+// provider adapters (ADR-0008). It is loaded from the file
+// DAC_IDENTITY_CONFIG_FILE names and mirrors
+// contracts/jsonschema/config/identity-config.schema.json.
 type Config struct {
-	Issuers []IssuerConfig `json:"issuers"`
+	Issuers        []IssuerConfig `json:"issuers"`
+	AdapterIssuers []IssuerConfig `json:"adapter_issuers,omitempty"`
 }
 
 // IssuerConfig is how one trusted issuer's access tokens are verified.
@@ -59,17 +62,38 @@ func (c Config) Validate() error {
 	if len(c.Issuers) == 0 {
 		return fmt.Errorf("%w: at least one issuer is required", ErrInvalidConfig)
 	}
-	seen := map[string]bool{}
-	for i, issuer := range c.Issuers {
-		if err := issuer.validate(); err != nil {
-			return fmt.Errorf("issuer %d: %w", i, err)
+	surface, err := validateIssuers("issuer", c.Issuers)
+	if err != nil {
+		return err
+	}
+	adapters, err := validateIssuers("adapter issuer", c.AdapterIssuers)
+	if err != nil {
+		return err
+	}
+	// An issuer trusted for both must use a distinct audience for each, or a
+	// Surface API token could open an adapter connection and the reverse.
+	for issuer, audience := range adapters {
+		if surface[issuer] == audience {
+			return fmt.Errorf("%w: issuer %s uses one audience for the Surface API and adapters", ErrInvalidConfig, issuer)
 		}
-		if seen[issuer.Issuer] {
-			return fmt.Errorf("%w: issuer %d is configured twice", ErrInvalidConfig, i)
-		}
-		seen[issuer.Issuer] = true
 	}
 	return nil
+}
+
+// validateIssuers validates each issuer, refuses one configured twice, and
+// returns each issuer's audience.
+func validateIssuers(label string, issuers []IssuerConfig) (map[string]string, error) {
+	audiences := map[string]string{}
+	for i, issuer := range issuers {
+		if err := issuer.validate(); err != nil {
+			return nil, fmt.Errorf("%s %d: %w", label, i, err)
+		}
+		if _, seen := audiences[issuer.Issuer]; seen {
+			return nil, fmt.Errorf("%w: %s %d is configured twice", ErrInvalidConfig, label, i)
+		}
+		audiences[issuer.Issuer] = issuer.Audience
+	}
+	return audiences, nil
 }
 
 func (c IssuerConfig) validate() error {

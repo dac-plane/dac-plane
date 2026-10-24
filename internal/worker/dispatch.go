@@ -167,8 +167,8 @@ func (w *Worker) cancelRow(ctx context.Context, tenant ids.TenantID, row store.O
 	}
 	committed = true
 
-	port, ok := w.ports[operation.Provider]
-	if !ok {
+	port := w.port(tenant, operation.Provider, body.Role)
+	if port == nil {
 		w.stats.SkippedNoPort.Add(1)
 		return w.release(ctx, tenant, row, claim, now)
 	}
@@ -190,7 +190,7 @@ func (w *Worker) cancelRow(ctx context.Context, tenant ids.TenantID, row store.O
 func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, body DispatchBody, now time.Time) error {
 	// Missing wiring is known before the durable send marker, not uncertainty.
 	if op, err := store.GetOperation(ctx, w.pool, tenant, body.Operation); err == nil {
-		if _, ok := w.ports[op.Provider]; !ok {
+		if w.port(tenant, op.Provider, body.Role) == nil {
 			w.stats.SkippedNoPort.Add(1)
 			return nil
 		}
@@ -199,10 +199,10 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil || prepared == nil {
 		return err
 	}
-	port, ok := w.ports[prepared.operation.Provider]
-	if !ok {
+	port := w.port(tenant, prepared.operation.Provider, body.Role)
+	if port == nil {
 		w.stats.SkippedNoPort.Add(1)
-		return w.releasePrepared(ctx, tenant, row, prepared, now)
+		return w.releasePrepared(ctx, tenant, row, prepared, now, true)
 	}
 	delivery, err := ids.New[ids.Delivery]()
 	if err != nil {
@@ -220,6 +220,11 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
 	defer cancel()
 	reply, err := port.Send(sendCtx, request)
+	if errors.Is(err, contracts.ErrNotDelivered) {
+		// The transport wrote nothing, so nothing can have taken effect.
+		w.stats.SkippedNoPort.Add(1)
+		return w.releasePrepared(ctx, tenant, row, prepared, now, true)
+	}
 	if err != nil {
 		reply = uncertainReply(request.Operation, delivery)
 	}
@@ -906,8 +911,11 @@ func (w *Worker) releaseCommitted(ctx context.Context, uow *store.UnitOfWork, te
 	return nil
 }
 
-// releasePrepared releases a claimed dispatch row and drops its lease.
-func (w *Worker) releasePrepared(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, now time.Time) error {
+// releasePrepared releases a claimed dispatch row and drops its lease. A
+// proven-not-delivered release also clears the committed send marker: the
+// transport wrote nothing, so the next claim must retry the send, not take
+// the takeover path that abandons the operation as uncertain.
+func (w *Worker) releasePrepared(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, now time.Time, clearSendMarker bool) error {
 	uow, err := store.Begin(ctx, w.pool)
 	if err != nil {
 		return err
@@ -920,6 +928,11 @@ func (w *Worker) releasePrepared(ctx context.Context, tenant ids.TenantID, row s
 	}()
 	if err := store.ReleaseOutboxRow(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now); err != nil && !errors.Is(err, store.ErrStaleVersion) {
 		return err
+	}
+	if clearSendMarker {
+		if _, err := uow.Exec(ctx, `update outbox set last_error='' where tenant_id=$1 and outbox_id=$2 and last_error=$3`, tenant.String(), row.ID.String(), reasonSendStarted); err != nil {
+			return err
+		}
 	}
 	if err := w.releaseLease(ctx, uow, tenant, prepared, now); err != nil {
 		return err

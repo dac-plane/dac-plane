@@ -1,0 +1,21 @@
+{
+  "provider_id": "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10",
+  "role": "runtime",
+  "request": {
+    "operation_id": "01a167fd-51d9-7c11-9f2e-5b4b3c2a1d00",
+    "tenant_id": "01a167fd-51d9-76ba-b563-496e2bd89646",
+    "attempt_id": "01a167fd-51d9-76be-8ef5-39a7e14723c0",
+    "role": "runtime",
+    "method": "start_turn",
+    "arguments": {"prompt": "hello"},
+    "demand": "person",
+    "deadline": "2026-10-24T12:00:00Z"
+  },
+  "cursor": {
+    "tenant_id": "01a167fd-51d9-76ba-b563-496e2bd89646",
+    "attempt_id": "01a167fd-51d9-76be-8ef5-39a7e14723c0",
+    "operation_id": "01a167fd-51d9-7c11-9f2e-5b4b3c2a1d00",
+    "stream": "dispatch",
+    "generation": 1
+  }
+}

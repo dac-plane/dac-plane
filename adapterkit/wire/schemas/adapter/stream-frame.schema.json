@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StreamFrame",
+  "description": "One message of a provider event stream. Entries and tombstones are each in strictly increasing updated-sequence order and inline payloads hash to payload_hash; the Go contract enforces both.",
+  "type": "object",
+  "required": ["kind"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["connected", "rows", "cleared", "cursor_too_old", "heartbeat"] },
+    "server_time": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "rows": { "$ref": "#/$defs/rows" },
+    "new_generation": { "$ref": "../identity/common.schema.json#/$defs/generation" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "rows" } } },
+      "then": { "required": ["rows"] },
+      "else": { "not": { "required": ["rows"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "cleared" } } },
+      "then": { "required": ["new_generation"] },
+      "else": { "not": { "required": ["new_generation"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "enum": ["connected", "heartbeat"] } } },
+      "then": { "required": ["server_time"] }
+    }
+  ],
+  "$defs": {
+    "sequence": { "type": "integer", "minimum": 1 },
+    "entry": {
+      "type": "object",
+      "required": ["sequence", "updated_sequence", "kind", "payload_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "updated_sequence": { "$ref": "#/$defs/sequence" },
+        "kind": { "$ref": "common.schema.json#/$defs/name" },
+        "payload_hash": { "$ref": "../identity/common.schema.json#/$defs/digest" },
+        "payload": {},
+        "payload_omitted": { "const": true }
+      },
+      "oneOf": [
+        { "required": ["payload"], "not": { "required": ["payload_omitted"] } },
+        { "required": ["payload_omitted"], "not": { "required": ["payload"] } }
+      ]
+    },
+    "tombstone": {
+      "type": "object",
+      "required": ["sequence", "updated_sequence"],
+      "additionalProperties": false,
+      "properties": {
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "updated_sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "rows": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } },
+        "tombstones": { "type": "array", "items": { "$ref": "#/$defs/tombstone" } },
+        "replay": { "type": "boolean" }
+      },
+      "anyOf": [
+        { "required": ["entries"], "properties": { "entries": { "minItems": 1 } } },
+        { "required": ["tombstones"], "properties": { "tombstones": { "minItems": 1 } } }
+      ]
+    }
+  }
+}

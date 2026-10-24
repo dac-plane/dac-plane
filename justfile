@@ -6,6 +6,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 go_dirs := "cmd internal"
+adapterkit_dirs := "adapterkit"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
@@ -25,7 +26,7 @@ default:
 
 # Run every check CI runs, in CI's order
 [group('ci')]
-ci: fmt-check mod-check vet vet-integration test test-race test-integration-other-race test-security-race vuln lint-workflows
+ci: fmt-check mod-check vet vet-integration test test-race test-adapterkit test-integration-other-race test-security-race test-conformance vuln lint-workflows
 
 # Rewrite Go files into gofmt style
 [group('dev')]
@@ -43,11 +44,13 @@ fmt-check:
 mod-check:
     go mod verify
     go mod tidy -diff
+    cd adapterkit && go mod verify && go mod tidy -diff
 
 # Run go vet on every package
 [group('check')]
 vet:
     go vet ./...
+    cd adapterkit && go vet ./...
 
 # Unit files build without tags; integration files only build behind the
 # integration tag, so they need their own vet pass.
@@ -59,11 +62,13 @@ vet-integration:
 [group('test')]
 test:
     go test ./...
+    cd adapterkit && go test ./...
 
 # Run unit tests under the race detector
 [group('test')]
 test-race:
     go test -race ./...
+    cd adapterkit && go test -race ./...
 
 # -count=1 bypasses the test cache, which cannot see the container and would
 # otherwise report a pass without starting PostgreSQL. Pass package paths to
@@ -78,12 +83,33 @@ test-integration *pkgs="./...":
 [doc('Run integration tests under the race detector (needs Docker)')]
 [group('test')]
 test-integration-race *pkgs="./...":
-    {{ sdkroot }}go test -race -count=1 -tags=integration {{ pkgs }}
+    {{ sdkroot }}go test -race -count=1 -timeout=30m -tags=integration {{ pkgs }}
 
 # Complement of test-security-race; together they cover the complete suite.
 [group('test')]
 test-integration-other-race:
-    {{ sdkroot }}go test -race -count=1 -tags=integration ./... -skip '{{ security_tests }}'
+    {{ sdkroot }}go test -race -count=1 -timeout=30m -tags=integration ./... -skip '{{ security_tests }}'
+
+# The adapter kit is a separate module (ADR-0008): unit tests and the codec
+# and schema agreement tests live in adapterkit/.
+[group('test')]
+test-adapterkit:
+    cd adapterkit && go test ./...
+    cd adapterkit && go test -race ./...
+
+# The conformance suite runs the simulator adapter as a separate OS process,
+# the way a real provider adapter runs outside the control plane.
+[group('test')]
+test-conformance:
+    go build -o .work/dac-sim-adapter ./cmd/dac-sim-adapter
+    cd adapterkit && go build -o ../.work/adapter-conformance ./cmd/adapter-conformance
+    ./.work/adapter-conformance -fixture cmd/dac-sim-adapter/testdata/conformance.json -- ./.work/dac-sim-adapter cmd/dac-sim-adapter/testdata/scenario.json
+
+# End-to-end transport suite: the Surface API, the dispatch worker and the
+# simulators talk over real TLS WebSockets (ADR-0008, ADR-0010).
+[group('test')]
+test-adapter-wire:
+    {{ sdkroot }}go test -count=1 -tags=integration ./internal/adapterwire/
 
 # Recovery acceptance and its existing command, cursor and fencing regressions.
 [group('test')]
@@ -119,7 +145,7 @@ test-security:
 
 [group('test')]
 test-security-race:
-    {{ sdkroot }}go test -race -count=1 -tags=integration ./... -run '{{ security_tests }}'
+    {{ sdkroot }}go test -race -count=1 -timeout=30m -tags=integration ./... -run '{{ security_tests }}'
 
 # Actor authentication, identity bindings and trusted provisioning (ADR-0007).
 [group('test')]
@@ -151,6 +177,7 @@ test-contracts:
 [group('check')]
 vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_version)
     {{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
+    cd adapterkit && ../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
 
 # Lint GitHub Actions workflows
 [group('check')]

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/adapterwire"
 	"github.com/AssahBismarkabah/dac-plane/internal/config"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
@@ -18,14 +19,15 @@ import (
 type Application struct {
 	logger    *slog.Logger
 	pool      *pgxpool.Pool
+	adapters  *adapterwire.Registry
 	worker    *worker.Worker
 	closeOnce sync.Once
 }
 
 // New validates PostgreSQL connectivity and constructs the application. The
-// worker starts with no registered provider ports: dispatchable rows wait
-// until adapters register in later issues; the reaper and reconciler run
-// from the start.
+// worker resolves provider ports through the adapter registry: a provider's
+// rows wait until its adapter connects to this replica (ADR-0008); the reaper
+// and reconciler run from the start.
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Application, error) {
 	if logger == nil {
 		return nil, errors.New("logger is required")
@@ -44,13 +46,24 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		pool.Close()
 		return nil, err
 	}
-	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "control-plane-"+ownerID.String())
+	adapters, err := adapterwire.NewRegistry(adapterwire.StoreResolver(pool), adapterwire.Options{})
 	if err != nil {
 		pool.Close()
 		return nil, err
 	}
+	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "control-plane-"+ownerID.String(), worker.WithPorts(adapters))
+	if err != nil {
+		adapters.Close()
+		pool.Close()
+		return nil, err
+	}
 
-	return &Application{logger: logger, pool: pool, worker: dispatchWorker}, nil
+	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker}, nil
+}
+
+// Adapters is the registry the adapter endpoint registers connections in.
+func (application *Application) Adapters() *adapterwire.Registry {
+	return application.adapters
 }
 
 // Run keeps the application alive until cancellation, driving fenced
@@ -80,6 +93,9 @@ func (application *Application) Run(ctx context.Context) error {
 // Close releases process-scoped resources. It is safe to call more than once.
 func (application *Application) Close() {
 	application.closeOnce.Do(func() {
+		if application.adapters != nil {
+			application.adapters.Close()
+		}
 		application.pool.Close()
 	})
 }
