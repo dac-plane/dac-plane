@@ -5,6 +5,8 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
+	github.com/AssahBismarkabah/dac-plane/adapterkit v0.0.0
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/google/uuid v1.6.0
@@ -74,3 +76,5 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
+
+replace github.com/AssahBismarkabah/dac-plane/adapterkit => ./adapterkit
