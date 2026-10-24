@@ -92,17 +92,26 @@ func TestKitAdapterPassesConformance(t *testing.T) {
 	conformance.Run(t, conformance.Target{
 		Fixture: fixture(),
 		Start: func(ctx context.Context, endpoint conformance.Endpoint) (func(), error) {
-			ctx, cancel := context.WithCancel(ctx)
+			stop := make(chan struct{})
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
+				ctx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				go func() {
+					select {
+					case <-stop:
+						cancel()
+					case <-ctx.Done():
+					}
+				}()
 				_ = adapterkit.Run(ctx, adapterkit.Config{
 					URL: endpoint.URL, Token: testToken(), Provider: provider, Role: wire.RoleRuntime,
 					Handler: &echoHandler{}, TLS: &tls.Config{RootCAs: endpoint.RootCAs, MinVersion: tls.VersionTLS12},
 					BackoffBase: 50 * time.Millisecond, BackoffMax: 500 * time.Millisecond,
 				})
 			}()
-			return func() { cancel(); <-done }, nil
+			return func() { close(stop); <-done }, nil
 		},
 	})
 }
@@ -113,17 +122,26 @@ func TestConformanceFailsAnAdapterThatIgnoresRedelivery(t *testing.T) {
 	results := conformance.Check(context.Background(), conformance.Target{
 		Fixture: fixture(),
 		Start: func(ctx context.Context, endpoint conformance.Endpoint) (func(), error) {
-			ctx, cancel := context.WithCancel(ctx)
+			stop := make(chan struct{})
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
+				ctx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				go func() {
+					select {
+					case <-stop:
+						cancel()
+					case <-ctx.Done():
+					}
+				}()
 				_ = adapterkit.Run(ctx, adapterkit.Config{
 					URL: endpoint.URL, Token: testToken(), Provider: provider, Role: wire.RoleRuntime,
 					Handler: &forgetfulHandler{}, TLS: &tls.Config{RootCAs: endpoint.RootCAs, MinVersion: tls.VersionTLS12},
 					BackoffBase: 50 * time.Millisecond, BackoffMax: 500 * time.Millisecond,
 				})
 			}()
-			return func() { cancel(); <-done }, nil
+			return func() { close(stop); <-done }, nil
 		},
 	})
 	for _, result := range results {

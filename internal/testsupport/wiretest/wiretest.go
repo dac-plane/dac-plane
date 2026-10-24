@@ -135,10 +135,9 @@ func start(t testing.TB, pool *pgxpool.Pool, options adapterwire.Options) *Wire 
 		t.Fatalf("wiretest: endpoint: %v", err)
 	}
 	server := httptest.NewTLSServer(endpoint)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx := t.Context()
 	w.Registry, w.server, w.ctx = registry, server, ctx
 	t.Cleanup(func() {
-		cancel()
 		w.clients.Wait()
 		registry.Close()
 		server.Close()

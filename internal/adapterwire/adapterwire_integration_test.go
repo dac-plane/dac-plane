@@ -504,6 +504,7 @@ func TestAdapterWireDisabledBindingClosesLiveConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = u.Rollback(f.ctx) }()
 	binding, err := store.GetAdapterBinding(f.ctx, u, f.wire.Issuer().URL(), subject)
 	if err != nil {
 		t.Fatal(err)
