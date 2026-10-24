@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,10 +182,18 @@ func TestRecoveryReconcileReopensLostCursor(t *testing.T) {
 			s, rt := f.lost(t, "loss")
 			f.ingest(t, rt.Event(s.Attempt.ID, s.Operation.ID, "dispatch", 1, simulator.RowsFrame(false, row(10, "progress", map[string]int{}))))
 			f.reopen(t)
+			// The wire port runs this subscribe closure on the adapter kit's
+			// session goroutine, so the captured cursors need a lock: the
+			// unavailable path returns before any wire traffic orders the
+			// write against this goroutine's read.
+			var mu sync.Mutex
 			var seen []contracts.Cursor
 			p := &recoveryPort{Port: rt, subscribe: func(_ context.Context, c contracts.Cursor) (contracts.Stream, error) {
+				mu.Lock()
 				seen = append(seen, c)
-				if len(seen) == 1 {
+				first := len(seen) == 1
+				mu.Unlock()
+				if first {
 					frame := simulator.CursorTooOldFrame()
 					if kind == "cleared" {
 						frame = simulator.ClearedFrame(2)
@@ -199,8 +208,11 @@ func TestRecoveryReconcileReopensLostCursor(t *testing.T) {
 			if err := recoveryWorker(t, f, p).Reconcile(f.ctx); err != nil {
 				t.Fatal(err)
 			}
-			if len(seen) != 2 || seen[0].After != 10 || seen[1].After != 0 {
-				t.Fatalf("subscriptions=%+v", seen)
+			mu.Lock()
+			subscriptions := append([]contracts.Cursor(nil), seen...)
+			mu.Unlock()
+			if len(subscriptions) != 2 || subscriptions[0].After != 10 || subscriptions[1].After != 0 {
+				t.Fatalf("subscriptions=%+v", subscriptions)
 			}
 			op, err := store.GetOperation(f.ctx, f.pool, f.tenant, s.Operation.ID)
 			want := lifecycle.OperationSucceeded
