@@ -25,6 +25,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -456,8 +457,9 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 				t.Fatal(err)
 			}
 		}
-		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: quiescePort, cmd.To: targetRuntime}, worker.DefaultConfig(), fmt.Sprintf("migration-exhausted-%d", cycle),
-			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment}))
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("migration-exhausted-%d", cycle),
+			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: quiescePort, cmd.To: targetRuntime},
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment})))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -561,8 +563,9 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime}, worker.DefaultConfig(), fmt.Sprintf("migration-budget-recheck-%d", pass),
-			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: droppingSourceStop, cmd.To: droppingTargetStop}))
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("migration-budget-recheck-%d", pass),
+			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime},
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: droppingSourceStop, cmd.To: droppingTargetStop})))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -753,8 +756,9 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		w, err := worker.New(restartedPool, slog.New(slog.NewTextHandler(&workerLog, nil)), map[ids.ProviderID]contracts.Port{f.provider: droppingRuntime, cmd.To: targetRuntime}, worker.DefaultConfig(), "migration-e2e",
-			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: corruptingEnvironment}))
+		w, err := worker.New(restartedPool, slog.New(slog.NewTextHandler(&workerLog, nil)), nil, worker.DefaultConfig(), "migration-e2e",
+			wiretest.Ports(t, restartedPool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: droppingRuntime, cmd.To: targetRuntime},
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: corruptingEnvironment})))
 		if err != nil {
 			restartedPool.Close()
 			t.Fatal(err)
@@ -902,8 +906,9 @@ func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
 	blocked := &blockFirstMigrationReply{Port: runtime, started: make(chan struct{}), release: make(chan struct{})}
 	newWorker := func(owner string, source contracts.Port) *worker.Worker {
 		t.Helper()
-		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: source, cmd.To: targetRuntime}, worker.DefaultConfig(), owner,
-			worker.WithEnvironmentPorts(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment}))
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), owner,
+			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: source, cmd.To: targetRuntime},
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment})))
 		if err != nil {
 			t.Fatal(err)
 		}

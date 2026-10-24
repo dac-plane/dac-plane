@@ -24,6 +24,7 @@ import (
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
 	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -157,7 +158,7 @@ func (f *fixture) runtime(t *testing.T, operations ...ids.OperationID) *simulato
 func (f *fixture) tick(t *testing.T, port contracts.Port) {
 	t.Helper()
 	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		map[ids.ProviderID]contracts.Port{f.provider: port}, worker.DefaultConfig(), "test-worker")
+		nil, worker.DefaultConfig(), "test-worker", wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: port}))
 	if err != nil {
 		t.Fatalf("worker.New() error = %v", err)
 	}

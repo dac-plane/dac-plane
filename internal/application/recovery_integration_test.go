@@ -16,6 +16,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -53,7 +54,7 @@ func (*recoveryStream) Close() error { return nil }
 
 func recoveryWorker(t *testing.T, f *fixture, p contracts.Port) *worker.Worker {
 	t.Helper()
-	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: p}, worker.DefaultConfig(), "recovery")
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "recovery", wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: p}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +70,9 @@ func (f *fixture) reopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.pool = p
+	// The adapter endpoint resolves bindings through the current pool, so a
+	// restart that reopens it must hand the wire the new pool.
+	_ = wiretest.For(t, f.pool)
 	t.Cleanup(p.Close)
 }
 

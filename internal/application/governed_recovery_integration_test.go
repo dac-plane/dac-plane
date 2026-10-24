@@ -21,6 +21,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -280,7 +281,8 @@ func TestGovernedActionReceiptRehydrateUnavailable(t *testing.T) {
 
 func governedRecoveryWorker(t *testing.T, g *governedFixture, port contracts.Port) *worker.Worker {
 	t.Helper()
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery", worker.WithEnforcementPorts(map[ids.ProviderID]contracts.Port{g.provider: port}))
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery",
+		wiretest.Ports(t, g.pool, g.tenant, nil, wiretest.Enforcement(map[ids.ProviderID]contracts.Port{g.provider: port})))
 	if err != nil {
 		t.Fatal(err)
 	}

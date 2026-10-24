@@ -68,9 +68,10 @@ type servedKey struct {
 
 // served is the adapter currently serving a registration.
 type served struct {
-	port contracts.Port
-	stop context.CancelFunc
-	done chan struct{}
+	port  contracts.Port
+	store *ids.ProviderID
+	stop  context.CancelFunc
+	done  chan struct{}
 }
 
 var (
@@ -230,8 +231,10 @@ func (w *Wire) Bind(t testing.TB, tenant ids.TenantID, provider ids.ProviderID, 
 
 // Serve runs port as the adapter of provider in the port's role and waits
 // until the registry holds its connection. Serving the same port again adds
-// nothing; serving another port for the registration first disconnects the
-// adapter serving it, as a test that swaps providers between passes expects.
+// nothing unless the registration's artifact store changed, which needs a new
+// connection to take effect; serving another port for the registration first
+// disconnects the adapter serving it, as a test that swaps providers between
+// passes expects.
 func (w *Wire) Serve(t testing.TB, tenant ids.TenantID, provider ids.ProviderID, port contracts.Port) {
 	t.Helper()
 	key := servedKey{tenant, provider, port.Role()}
@@ -243,7 +246,7 @@ func (w *Wire) Serve(t testing.TB, tenant ids.TenantID, provider ids.ProviderID,
 	}
 	w.mu.Unlock()
 	if previous != nil {
-		if samePort(previous.port, port) {
+		if samePort(previous.port, port) && sameStore(previous.store, artifactStore) {
 			return
 		}
 		previous.stop()
@@ -252,6 +255,7 @@ func (w *Wire) Serve(t testing.TB, tenant ids.TenantID, provider ids.ProviderID,
 	}
 	subject := w.Bind(t, tenant, provider, port.Role(), artifactStore)
 	next := w.connect(t, subject, provider, port, 30*time.Minute)
+	next.store = artifactStore
 	w.mu.Lock()
 	w.served[key] = next
 	w.mu.Unlock()
@@ -263,6 +267,15 @@ func samePort(a, b contracts.Port) bool {
 		return false
 	}
 	return a == b
+}
+
+func sameStore(a, b *ids.ProviderID) bool {
+	switch {
+	case a == nil || b == nil:
+		return a == b
+	default:
+		return *a == *b
+	}
 }
 
 func (w *Wire) waitDisconnected(t testing.TB, key servedKey) {
