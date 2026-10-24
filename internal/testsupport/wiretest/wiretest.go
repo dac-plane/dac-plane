@@ -17,8 +17,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,7 +45,7 @@ const Audience = "https://dac-plane.example/adapters"
 type Wire struct {
 	Registry *adapterwire.Registry
 
-	pool   *pgxpool.Pool
+	pool   atomic.Pointer[pgxpool.Pool]
 	issuer *oidctest.Issuer
 	key    *rsa.PrivateKey
 	server *httptest.Server
@@ -52,7 +54,7 @@ type Wire struct {
 	logs *syncBuffer
 
 	mu      sync.Mutex
-	served  map[servedKey]bool
+	served  map[servedKey]*served
 	stores  map[servedKey]ids.ProviderID
 	clients sync.WaitGroup
 	next    int
@@ -64,17 +66,27 @@ type servedKey struct {
 	role     contracts.Role
 }
 
+// served is the adapter currently serving a registration.
+type served struct {
+	port contracts.Port
+	stop context.CancelFunc
+	done chan struct{}
+}
+
 var (
 	wiresMu sync.Mutex
 	wires   = map[testing.TB]*Wire{}
 )
 
-// For returns the test's wire, starting it on first use against pool.
+// For returns the test's wire, starting it on first use against pool. A
+// test that reopens its pool to simulate a restart passes the new one, and
+// bindings resolve through it from then on.
 func For(t testing.TB, pool *pgxpool.Pool) *Wire {
 	t.Helper()
 	wiresMu.Lock()
 	defer wiresMu.Unlock()
 	if w := wires[t]; w != nil {
+		w.pool.Store(pool)
 		return w
 	}
 	w := start(t, pool, adapterwire.Options{})
@@ -108,17 +120,22 @@ func start(t testing.TB, pool *pgxpool.Pool, options adapterwire.Options) *Wire 
 	if err != nil {
 		t.Fatalf("wiretest: verifier: %v", err)
 	}
-	registry, err := adapterwire.NewRegistry(adapterwire.StoreResolver(pool), options)
+	w := &Wire{issuer: issuer, key: key, logs: logs, served: map[servedKey]*served{}, stores: map[servedKey]ids.ProviderID{}}
+	w.pool.Store(pool)
+	resolve := func(ctx context.Context, issuer, subject string) (contracts.ProviderRegistration, error) {
+		return adapterwire.StoreResolver(w.pool.Load())(ctx, issuer, subject)
+	}
+	registry, err := adapterwire.NewRegistry(resolve, options)
 	if err != nil {
 		t.Fatalf("wiretest: registry: %v", err)
 	}
-	endpoint, err := adapterwire.NewEndpoint(verifier, adapterwire.StoreResolver(pool), registry, logger)
+	endpoint, err := adapterwire.NewEndpoint(verifier, resolve, registry, logger)
 	if err != nil {
 		t.Fatalf("wiretest: endpoint: %v", err)
 	}
 	server := httptest.NewTLSServer(endpoint)
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &Wire{Registry: registry, pool: pool, issuer: issuer, key: key, server: server, ctx: ctx, logs: logs, served: map[servedKey]bool{}, stores: map[servedKey]ids.ProviderID{}}
+	w.Registry, w.server, w.ctx = registry, server, ctx
 	t.Cleanup(func() {
 		cancel()
 		w.clients.Wait()
@@ -193,7 +210,7 @@ func (w *Wire) Bind(t testing.TB, tenant ids.TenantID, provider ids.ProviderID, 
 	subject := fmt.Sprintf("adapter-%d", w.next)
 	w.mu.Unlock()
 	ctx := context.Background()
-	u, err := store.Begin(ctx, w.pool)
+	u, err := store.Begin(ctx, w.pool.Load())
 	if err != nil {
 		t.Fatalf("wiretest: begin: %v", err)
 	}
@@ -211,26 +228,52 @@ func (w *Wire) Bind(t testing.TB, tenant ids.TenantID, provider ids.ProviderID, 
 	return subject
 }
 
-// Serve runs port as an adapter for provider in the port's role and waits
-// until the registry holds its connection. Serving the same registration
-// again adds nothing.
+// Serve runs port as the adapter of provider in the port's role and waits
+// until the registry holds its connection. Serving the same port again adds
+// nothing; serving another port for the registration first disconnects the
+// adapter serving it, as a test that swaps providers between passes expects.
 func (w *Wire) Serve(t testing.TB, tenant ids.TenantID, provider ids.ProviderID, port contracts.Port) {
 	t.Helper()
 	key := servedKey{tenant, provider, port.Role()}
 	w.mu.Lock()
-	if w.served[key] {
-		w.mu.Unlock()
-		return
-	}
-	w.served[key] = true
+	previous := w.served[key]
 	var artifactStore *ids.ProviderID
 	if store, ok := w.stores[key]; ok {
 		artifactStore = &store
 	}
 	w.mu.Unlock()
+	if previous != nil {
+		if samePort(previous.port, port) {
+			return
+		}
+		previous.stop()
+		<-previous.done
+		w.waitDisconnected(t, key)
+	}
 	subject := w.Bind(t, tenant, provider, port.Role(), artifactStore)
-	w.Connect(t, subject, provider, port)
+	next := w.connect(t, subject, provider, port, 30*time.Minute)
+	w.mu.Lock()
+	w.served[key] = next
+	w.mu.Unlock()
 	w.WaitConnected(t, tenant, provider, port.Role())
+}
+
+func samePort(a, b contracts.Port) bool {
+	if reflect.TypeOf(a) != reflect.TypeOf(b) || !reflect.TypeOf(a).Comparable() {
+		return false
+	}
+	return a == b
+}
+
+func (w *Wire) waitDisconnected(t testing.TB, key servedKey) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for w.Registry.Connections(key.tenant, key.provider, key.role) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("wiretest: replaced %s adapter for provider %s never disconnected", key.role, key.provider)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 // Connect starts an adapter for subject serving port; it runs until the test
@@ -244,6 +287,11 @@ func (w *Wire) Connect(t testing.TB, subject string, provider ids.ProviderID, po
 // adapter renews its connection before each expiry.
 func (w *Wire) ConnectWithTokens(t testing.TB, subject string, provider ids.ProviderID, port contracts.Port, lifetime time.Duration) {
 	t.Helper()
+	w.connect(t, subject, provider, port, lifetime)
+}
+
+func (w *Wire) connect(t testing.TB, subject string, provider ids.ProviderID, port contracts.Port, lifetime time.Duration) *served {
+	t.Helper()
 	config := adapterkit.Config{
 		URL: w.URL(), Provider: provider.String(), Role: wire.Role(port.Role()), Handler: simulator.Handler(port),
 		Token: func(context.Context) (adapterkit.Token, error) {
@@ -251,7 +299,13 @@ func (w *Wire) ConnectWithTokens(t testing.TB, subject string, provider ids.Prov
 		},
 		TLS: w.TLS(), BackoffBase: 20 * time.Millisecond, BackoffMax: 200 * time.Millisecond,
 	}
-	w.clients.Go(func() { _ = adapterkit.Run(w.ctx, config) })
+	ctx, stop := context.WithCancel(w.ctx)
+	next := &served{port: port, stop: stop, done: make(chan struct{})}
+	w.clients.Go(func() {
+		defer close(next.done)
+		_ = adapterkit.Run(ctx, config)
+	})
+	return next
 }
 
 // WaitConnected waits until the registration has a live connection.
