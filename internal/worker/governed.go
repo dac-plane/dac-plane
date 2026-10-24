@@ -319,6 +319,13 @@ func (w *Worker) hookStageRow(ctx context.Context, tenant ids.TenantID, row stor
 	var response contracts.HookResponse
 	responseDecoder := json.NewDecoder(bytes.NewReader(reply.Result))
 	responseDecoder.DisallowUnknownFields()
+	// A failed reply with unknown durability is the wire form of a lost
+	// reply: the hook may have applied, so the row retries and the
+	// redelivery answers from the provider's own record. Only a coherent
+	// reply that is malformed is poison.
+	if reply.Validate() == nil && reply.Operation == body.Operation && reply.Delivery == delivery && reply.Durability == lifecycle.SendUnknown {
+		return w.retryHookStage(ctx, tenant, row, claim, now, contracts.FailureTransportUnavailable)
+	}
 	if reply.Validate() != nil || reply.Operation != body.Operation || reply.Delivery != delivery || reply.Durability != lifecycle.SendAccepted || !decodeSingle(responseDecoder, &response) || response.Validate() != nil || response.Kind != hook.Kind {
 		return w.retryHookStage(ctx, tenant, row, claim, now, contracts.FailureMalformedFrame)
 	}
