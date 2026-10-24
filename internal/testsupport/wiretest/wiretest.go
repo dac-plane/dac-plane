@@ -377,3 +377,37 @@ func Ports(t testing.TB, pool *pgxpool.Pool, tenant ids.TenantID, ports map[ids.
 	}
 	return worker.WithPorts(w.Registry)
 }
+
+// Wrap serves port as the provider's adapter and returns the worker option
+// that resolves the wire port wrapped by wrap. Faults a test injects on the
+// resolved port are exactly the frame-level losses the worker observes:
+// the wire protocol has no cancel reply and the kit answers handler errors
+// for the worker, so a decorator around the adapter port can no longer
+// reach the worker.
+func Wrap(t testing.TB, pool *pgxpool.Pool, tenant ids.TenantID, provider ids.ProviderID, port contracts.Port, wrap func(contracts.Port) contracts.Port) func(*worker.Worker) {
+	t.Helper()
+	w := For(t, pool)
+	w.Serve(t, tenant, provider, port)
+	return worker.WithPorts(wrappedPorts{registry: w.Registry, tenant: tenant, wrap: wrap})
+}
+
+type wrappedPorts struct {
+	registry *adapterwire.Registry
+	tenant   ids.TenantID
+	wrap     func(contracts.Port) contracts.Port
+}
+
+func (p wrappedPorts) Port(tenant ids.TenantID, provider ids.ProviderID, role contracts.Role) contracts.Port {
+	if tenant != p.tenant {
+		return nil
+	}
+	port := p.registry.Port(tenant, provider, role)
+	if port == nil {
+		return nil
+	}
+	return p.wrap(port)
+}
+
+func (p wrappedPorts) ArtifactStore(tenant ids.TenantID, producer ids.ProviderID) (worker.ArtifactStorePort, bool) {
+	return p.registry.ArtifactStore(tenant, producer)
+}
