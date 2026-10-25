@@ -11,6 +11,7 @@ const (
 	ProvisionRegisterProvider ProvisioningOperation = "register_provider"
 	ProvisionBindAdapter      ProvisioningOperation = "bind_adapter"
 	ProvisionUnbindAdapter    ProvisioningOperation = "unbind_adapter"
+	ProvisionQualifyHarness   ProvisioningOperation = "qualify_harness"
 )
 
 // PutProviderRegistration creates a registration of a provider in one role,

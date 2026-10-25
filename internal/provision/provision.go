@@ -21,6 +21,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 )
 
@@ -247,6 +248,44 @@ func (p *Provisioner) UnbindAdapter(ctx context.Context, issuer, subject string)
 		})
 	})
 	return binding, err
+}
+
+// QualifyHarness seeds the first harness qualification of a registered
+// runtime, which dispatch requires before it sends anything. Repeating it
+// with the same mode is a no-op. A provider already qualified in another mode
+// is ErrConflict: later moves go through the fenced migration passes
+// (ADR-0005), never through provisioning.
+func (p *Provisioner) QualifyHarness(ctx context.Context, tenant ids.TenantID, provider ids.ProviderID, mode lifecycle.HarnessMode) (lifecycle.HarnessQualification, error) {
+	if mode != lifecycle.HarnessLive && mode != lifecycle.HarnessShadow {
+		return lifecycle.HarnessQualification{}, fmt.Errorf("%w: harness mode must be live or shadow", identity.ErrInvalid)
+	}
+	harness := lifecycle.HarnessQualification{Tenant: tenant, Provider: provider, Mode: mode, Version: 1, UpdatedAt: p.now().UTC()}
+	err := p.inTransaction(ctx, func(u *store.UnitOfWork) error {
+		if err := p.requireTenant(ctx, u, tenant); err != nil {
+			return err
+		}
+		if _, err := store.GetProviderRegistration(ctx, u, tenant, provider, contracts.RoleRuntime); errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: provider %s is not registered as a runtime", ErrConflict, provider)
+		} else if err != nil {
+			return err
+		}
+		existing, err := store.GetHarness(ctx, u, tenant, provider)
+		if err == nil {
+			if existing.Mode != mode {
+				return fmt.Errorf("%w: provider %s is already qualified %s; change it through a migration pass", ErrConflict, provider, existing.Mode)
+			}
+			harness = existing
+			return nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if _, err := store.UpsertHarness(ctx, u, harness); err != nil {
+			return err
+		}
+		return store.RecordProvisioningChange(ctx, u, store.ProvisioningChange{Operation: store.ProvisionQualifyHarness, Tenant: tenant, Provider: provider})
+	})
+	return harness, err
 }
 
 func (p *Provisioner) requireTenant(ctx context.Context, u *store.UnitOfWork, tenant ids.TenantID) error {

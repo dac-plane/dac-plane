@@ -18,6 +18,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/provision"
@@ -322,5 +323,42 @@ func TestProvisionAdapterLifecycle(t *testing.T) {
 	want := []string{"create_tenant", "register_provider", "register_provider", "register_provider", "register_provider", "register_provider", "bind_adapter", "bind_adapter", "unbind_adapter"}
 	if got := changes(t, ctx, pool, tenant); !slices.Equal(got, want) {
 		t.Fatalf("provisioning changes = %v, want %v", got, want)
+	}
+}
+
+func TestProvisionQualifyHarnessSeedsOnce(t *testing.T) {
+	ctx, pool, p := setup(t)
+	tenant, err := p.CreateTenant(ctx, ids.TenantID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactStore, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleArtifactStore, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.QualifyHarness(ctx, tenant, artifactStore, lifecycle.HarnessLive); !errors.Is(err, provision.ErrConflict) {
+		t.Fatalf("QualifyHarness(not a runtime) error = %v, want ErrConflict", err)
+	}
+	runtime, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness, err := p.QualifyHarness(ctx, tenant, runtime, lifecycle.HarnessLive)
+	if err != nil || harness.Mode != lifecycle.HarnessLive || harness.Version != 1 {
+		t.Fatalf("QualifyHarness() = %+v, %v", harness, err)
+	}
+	if again, err := p.QualifyHarness(ctx, tenant, runtime, lifecycle.HarnessLive); err != nil || !again.UpdatedAt.Equal(harness.UpdatedAt) {
+		t.Fatalf("repeated QualifyHarness() = %+v, %v; want the existing qualification", again, err)
+	}
+	if _, err := p.QualifyHarness(ctx, tenant, runtime, lifecycle.HarnessShadow); !errors.Is(err, provision.ErrConflict) {
+		t.Fatalf("QualifyHarness(other mode) error = %v, want ErrConflict", err)
+	}
+	stored, err := store.GetHarness(ctx, pool, tenant, runtime)
+	if err != nil || stored.Mode != lifecycle.HarnessLive {
+		t.Fatalf("stored harness = %+v, %v", stored, err)
+	}
+	var changes int
+	if err := pool.QueryRow(ctx, `select count(*) from provisioning_change where operation = 'qualify_harness' and tenant_id = $1 and provider_id = $2`, tenant.String(), runtime.String()).Scan(&changes); err != nil || changes != 1 {
+		t.Fatalf("qualify_harness changes = %d, %v; want one", changes, err)
 	}
 }

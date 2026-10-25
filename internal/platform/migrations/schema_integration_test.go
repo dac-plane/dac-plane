@@ -12,6 +12,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
+	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -592,5 +593,82 @@ func TestMigrationCommandRecordScopesNoncesAndChecksShape(t *testing.T) {
 		if err := insert(args[0], args[1], args[2], args[3], args[4]); err == nil {
 			t.Errorf("%s: insert succeeded", name)
 		}
+	}
+}
+
+// TestMigrationQualifyHarnessAndRefuseDowngrade checks that a harness
+// qualification provisioning change carries its provider and that version 13
+// cannot be dropped while one is recorded.
+func TestMigrationQualifyHarnessAndRefuseDowngrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `insert into provisioning_change (operation, tenant_id) values ('qualify_harness', $1)`, f.tenant); err == nil {
+		t.Fatal("qualify_harness recorded without its provider")
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.ApplyVersion(ctx, 13, false); err != nil {
+		t.Fatalf("ApplyVersion(13, down) on an empty history: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `insert into provisioning_change (operation, tenant_id, provider_id) values ('qualify_harness', $1, $2)`, f.tenant, f.provider); err != nil {
+		t.Fatalf("record qualify_harness: %v", err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 13, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade while version 13 harness qualifications exist") {
+		t.Fatalf("ApplyVersion(13, down) error = %v, want qualification-preserving refusal", err)
+	}
+}
+
+// TestLockedMigrationRunsWaitAndSchemaVersionReadsWithoutDDL runs two locked
+// migrators at once against a fresh database: both finish at the current
+// version, neither fails on a half-applied schema, and the serve-time read
+// reports the version.
+func TestLockedMigrationRunsWaitAndSchemaVersionReadsWithoutDDL(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	url := testpostgres.Start(t)
+	pool, err := store.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if version, err := store.SchemaVersion(ctx, pool); err != nil || version != 0 {
+		t.Fatalf("SchemaVersion() before migrate = %d, %v; want 0", version, err)
+	}
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			db, err := sql.Open("pgx", url)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer func() { _ = db.Close() }()
+			provider, err := migrations.NewLockedProvider(db, migrations.Source)
+			if err != nil {
+				errs <- err
+				return
+			}
+			_, err = provider.Up(ctx)
+			errs <- err
+		}()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent locked Up() error = %v", err)
+		}
+	}
+	version, err := store.SchemaVersion(ctx, pool)
+	if err != nil || version != migrations.CurrentVersion {
+		t.Fatalf("SchemaVersion() = %d, %v; want %d", version, err, migrations.CurrentVersion)
+	}
+	if err := migrations.CheckServable(version); err != nil {
+		t.Fatal(err)
 	}
 }
