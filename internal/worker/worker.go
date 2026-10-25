@@ -25,12 +25,17 @@ var errInvalidConfig = errors.New("invalid worker config")
 // the suspect threshold and the claim TTL matches a missed-heartbeat window.
 type Config struct {
 	// PollInterval paces dispatch ticks; ReconcileInterval paces uncertain
-	// reconciliation; ReaperInterval paces claim takeover.
+	// reconciliation; ReaperInterval paces claim takeover; ObserveInterval
+	// paces following the event streams of accepted operations.
 	PollInterval      time.Duration
 	ReconcileInterval time.Duration
 	ReaperInterval    time.Duration
+	ObserveInterval   time.Duration
 	StreamTimeout     time.Duration
-	SendTimeout       time.Duration
+	// ObserveIdle ends one operation's follow when its stream stays quiet
+	// that long, so a pass moves on; the next pass resumes from the cursor.
+	ObserveIdle time.Duration
+	SendTimeout time.Duration
 	// BatchLimit caps outbox rows read per tenant per tick.
 	BatchLimit int
 	// ClaimTTL is the outbox and attempt lease window a tick holds.
@@ -48,7 +53,9 @@ func DefaultConfig() Config {
 		PollInterval:      5 * time.Second,
 		ReconcileInterval: 15 * time.Second,
 		ReaperInterval:    30 * time.Second,
+		ObserveInterval:   2 * time.Second,
 		StreamTimeout:     10 * time.Second,
+		ObserveIdle:       2 * time.Second,
 		SendTimeout:       30 * time.Second,
 		BatchLimit:        100,
 		ClaimTTL:          time.Minute,
@@ -59,10 +66,10 @@ func DefaultConfig() Config {
 
 // Validate reports whether the config can drive a loop.
 func (c Config) Validate() error {
-	if c.PollInterval <= 0 || c.ReconcileInterval <= 0 || c.ReaperInterval <= 0 {
+	if c.PollInterval <= 0 || c.ReconcileInterval <= 0 || c.ReaperInterval <= 0 || c.ObserveInterval <= 0 {
 		return fmt.Errorf("worker intervals must be positive: %w", errInvalidConfig)
 	}
-	if c.StreamTimeout <= 0 || c.SendTimeout <= 0 || c.ClaimTTL <= 0 {
+	if c.StreamTimeout <= 0 || c.ObserveIdle <= 0 || c.SendTimeout <= 0 || c.ClaimTTL <= 0 {
 		return fmt.Errorf("worker timeouts must be positive: %w", errInvalidConfig)
 	}
 	if c.BatchLimit <= 0 || c.BackgroundBudget < 0 {
@@ -135,10 +142,11 @@ func SystemActor() lifecycle.Actor {
 // Run drives the dispatch, reconcile and reaper loops until ctx ends.
 func (w *Worker) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go w.loop(ctx, &wg, w.cfg.PollInterval, "dispatch", func(ctx context.Context) error { return w.Tick(ctx) })
 	go w.loop(ctx, &wg, w.cfg.ReconcileInterval, "reconcile", func(ctx context.Context) error { return w.Reconcile(ctx) })
 	go w.loop(ctx, &wg, w.cfg.ReaperInterval, "reaper", func(ctx context.Context) error { return w.ReapClaims(ctx) })
+	go w.loop(ctx, &wg, w.cfg.ObserveInterval, "observe", func(ctx context.Context) error { return w.Observe(ctx) })
 	<-ctx.Done()
 	wg.Wait()
 	return nil

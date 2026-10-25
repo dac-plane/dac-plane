@@ -621,3 +621,55 @@ func TestSurfaceStreamNeverRepeatsEventsAcrossHeartbeats(t *testing.T) {
 		t.Fatalf("stream sent %d heartbeats and %d events, want >= 3 and %d", heartbeats, len(seen), len(want.Events))
 	}
 }
+
+// TestSurfaceFollowsTheRuntimeStreamOverTheWire proves the deployed path for
+// provider observations: the worker subscribes to the accepted turn's stream
+// over the adapter wire and ingests what the runtime streams, with no direct
+// Ingest. A second pass resumes from the durable cursor and applies nothing
+// twice.
+func TestSurfaceFollowsTheRuntimeStreamOverTheWire(t *testing.T) {
+	s := newSurface(t)
+	sub := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-o", body: s.submitBody()}), http.StatusCreated)
+	stream := &simulator.StreamScript{Frames: []contracts.StreamFrame{
+		simulator.ConnectedFrame(time.Now().UTC()),
+		simulator.RowsFrame(false,
+			row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-1"}),
+			row(2, contracts.EntryAttentionRequested, contracts.AttentionRequested{NativeRef: "q-1", Kind: lifecycle.AttentionQuestion, ExpiresAt: time.Now().Add(time.Hour)}),
+		),
+	}}
+	rt, err := simulator.NewRuntime(simulator.Config{Tenant: s.tenant, Provider: s.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{sub.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted, Stream: stream}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := worker.DefaultConfig()
+	cfg.ObserveIdle = 500 * time.Millisecond
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "surface-observer",
+		wiretest.Ports(t, s.pool, s.tenant, map[ids.ProviderID]contracts.Port{s.provider: rt}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if list := decodeInto[httpapi.AttentionListBody](t, s.do(t, call{method: "GET", path: "/attention", as: "owner"}), http.StatusOK); len(list.Attention) != 0 {
+		t.Fatalf("attention before any observation = %d", len(list.Attention))
+	}
+	for pass := range 2 {
+		if err := w.Observe(s.ctx); err != nil {
+			t.Fatal(err)
+		}
+		list := decodeInto[httpapi.AttentionListBody](t, s.do(t, call{method: "GET", path: "/attention", as: "owner"}), http.StatusOK)
+		if len(list.Attention) != 1 {
+			t.Fatalf("pass %d: open attention = %d, want the one the runtime streamed", pass, len(list.Attention))
+		}
+		cursor, err := store.GetCursor(s.ctx, s.pool, s.tenant, sub.Operation.ID, "events")
+		if err != nil || cursor.After != 2 {
+			t.Fatalf("pass %d: cursor = %+v, %v; want after 2", pass, cursor, err)
+		}
+	}
+	if subscriptions := len(rt.Ledger().Subscriptions()); subscriptions != 2 {
+		t.Fatalf("runtime saw %d subscriptions, want one per pass", subscriptions)
+	}
+}
