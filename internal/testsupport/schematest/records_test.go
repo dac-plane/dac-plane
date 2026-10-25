@@ -28,6 +28,8 @@ var nestedRecords = map[string]string{
 	"Request":     "adapter/frame.schema.json#/$defs/request",
 	"Cancel":      "adapter/frame.schema.json#/$defs/cancel",
 	"Reply":       "adapter/frame.schema.json#/$defs/reply",
+	"Subscribe":   "adapter/frame.schema.json#/$defs/subscribe",
+	"Unsubscribe": "adapter/frame.schema.json#/$defs/unsubscribe",
 	"Entry":       "adapter/stream-frame.schema.json#/$defs/entry",
 	"Tombstone":   "adapter/stream-frame.schema.json#/$defs/tombstone",
 }

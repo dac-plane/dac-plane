@@ -48,11 +48,8 @@ func (w *Worker) governedRow(ctx context.Context, tenant ids.TenantID, row store
 	if a.Use.Outcome != identity.UseAllowed || a.Execution.Validate() != nil || body.Operation.String() != row.RecordID.String() || body.Role != contracts.RoleEnforcement || body.Method != contracts.MethodExecuteAction {
 		return w.poison(ctx, tenant, row, now, reasonInvalidBody)
 	}
-	port := w.enforcement[a.Use.Provider]
+	port := w.port(tenant, a.Use.Provider, contracts.RoleEnforcement)
 	if port == nil {
-		port = w.ports[a.Use.Provider]
-	}
-	if port == nil || port.Role() != contracts.RoleEnforcement {
 		w.stats.SkippedNoPort.Add(1)
 		return nil
 	}
@@ -76,6 +73,13 @@ func (w *Worker) governedRow(ctx context.Context, tenant ids.TenantID, row store
 	defer cancel()
 	actionStarted := time.Now()
 	reply, sendErr := port.Send(sctx, request)
+	if errors.Is(sendErr, contracts.ErrNotDelivered) {
+		// The transport wrote nothing, so nothing can have taken effect and
+		// there is no uncertainty to reconcile: release the row exactly as
+		// dispatchRow does, and the next claim retries the send.
+		w.stats.SkippedNoPort.Add(1)
+		return w.releasePrepared(ctx, tenant, row, prepared, now, true)
+	}
 	var receipt *contracts.EnforcementReceipt
 	outcome := lifecycle.SendUnknown
 	code := contracts.FailureTransportUnavailable
@@ -237,11 +241,8 @@ func (w *Worker) hookStageRow(ctx context.Context, tenant ids.TenantID, row stor
 		}
 		return err
 	}
-	port := w.enforcement[action.Use.Provider]
+	port := w.port(tenant, action.Use.Provider, contracts.RoleEnforcement)
 	if port == nil {
-		port = w.ports[action.Use.Provider]
-	}
-	if port == nil || port.Role() != contracts.RoleEnforcement {
 		w.stats.SkippedNoPort.Add(1)
 		return nil
 	}
@@ -325,6 +326,13 @@ func (w *Worker) hookStageRow(ctx context.Context, tenant ids.TenantID, row stor
 	var response contracts.HookResponse
 	responseDecoder := json.NewDecoder(bytes.NewReader(reply.Result))
 	responseDecoder.DisallowUnknownFields()
+	// A failed reply with unknown durability is the wire form of a lost
+	// reply: the hook may have applied, so the row retries and the
+	// redelivery answers from the provider's own record. Only a coherent
+	// reply that is malformed is poison.
+	if reply.Validate() == nil && reply.Operation == body.Operation && reply.Delivery == delivery && reply.Durability == lifecycle.SendUnknown {
+		return w.retryHookStage(ctx, tenant, row, claim, now, contracts.FailureTransportUnavailable)
+	}
 	if reply.Validate() != nil || reply.Operation != body.Operation || reply.Delivery != delivery || reply.Durability != lifecycle.SendAccepted || !decodeSingle(responseDecoder, &response) || response.Validate() != nil || response.Kind != hook.Kind {
 		return w.retryHookStage(ctx, tenant, row, claim, now, contracts.FailureMalformedFrame)
 	}

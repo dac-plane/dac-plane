@@ -33,6 +33,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
 	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/oidctest"
 	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -234,7 +235,8 @@ func (s *surface) dispatch(t *testing.T, operation ids.OperationID) *simulator.R
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{s.provider: rt}, worker.DefaultConfig(), "surface-worker")
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "surface-worker",
+		wiretest.Ports(t, s.pool, s.tenant, map[ids.ProviderID]contracts.Port{s.provider: rt}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,8 +464,9 @@ func TestSurfaceResultReviewThroughHTTP(t *testing.T) {
 	)
 	cfg := worker.DefaultConfig()
 	cfg.Policy.BaseBackoff, cfg.Policy.MaxBackoff = time.Millisecond, time.Millisecond
-	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{s.provider: rt}, cfg, "surface-artifacts",
-		worker.WithArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{s.provider: {Provider: storeID, Port: bytesStore}}))
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "surface-artifacts",
+		wiretest.Ports(t, s.pool, s.tenant, map[ids.ProviderID]contracts.Port{s.provider: rt},
+			wiretest.ArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{s.provider: {Provider: storeID, Port: bytesStore}})))
 	if err != nil {
 		t.Fatal(err)
 	}

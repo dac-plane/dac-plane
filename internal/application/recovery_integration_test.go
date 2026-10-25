@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -53,7 +55,7 @@ func (*recoveryStream) Close() error { return nil }
 
 func recoveryWorker(t *testing.T, f *fixture, p contracts.Port) *worker.Worker {
 	t.Helper()
-	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{f.provider: p}, worker.DefaultConfig(), "recovery")
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "recovery", wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: p}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +71,9 @@ func (f *fixture) reopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.pool = p
+	// The adapter endpoint resolves bindings through the current pool, so a
+	// restart that reopens it must hand the wire the new pool.
+	_ = wiretest.For(t, f.pool)
 	t.Cleanup(p.Close)
 }
 
@@ -94,10 +99,21 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("loss"))
 	rt := f.runtime(t, s.Operation.ID)
+	var mu sync.Mutex
 	effects := 0
+	replaying := false
 	p := &recoveryPort{Port: rt, send: func(context.Context, contracts.Request) (contracts.Reply, error) {
+		mu.Lock()
 		effects++
+		mu.Unlock()
 		return contracts.Reply{}, io.ErrUnexpectedEOF
+	}, subscribe: func(context.Context, contracts.Cursor) (contracts.Stream, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !replaying {
+			return nil, errors.New("transport still lost")
+		}
+		return &recoveryStream{frames: []contracts.StreamFrame{outcomeFrame(1)}}, nil
 	}}
 	if err := recoveryWorker(t, f, p).Tick(f.ctx); err != nil {
 		t.Fatal(err)
@@ -117,18 +133,24 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 	if err := w.Reconcile(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if effects != 1 {
-		t.Fatalf("uncertain effect sent %d times", effects)
+	mu.Lock()
+	sent := effects
+	mu.Unlock()
+	if sent != 1 {
+		t.Fatalf("uncertain effect sent %d times", sent)
 	}
-	p.subscribe = func(context.Context, contracts.Cursor) (contracts.Stream, error) {
-		return &recoveryStream{frames: []contracts.StreamFrame{outcomeFrame(1)}}, nil
-	}
+	mu.Lock()
+	replaying = true
+	mu.Unlock()
 	if err := w.Reconcile(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	op, err = store.GetOperation(f.ctx, f.pool, f.tenant, s.Operation.ID)
-	if err != nil || op.State != lifecycle.OperationSucceeded || effects != 1 {
-		t.Fatalf("recovery state=%s effects=%d err=%v", op.State, effects, err)
+	mu.Lock()
+	sent = effects
+	mu.Unlock()
+	if err != nil || op.State != lifecycle.OperationSucceeded || sent != 1 {
+		t.Fatalf("recovery state=%s effects=%d err=%v", op.State, sent, err)
 	}
 }
 
@@ -177,10 +199,18 @@ func TestRecoveryReconcileReopensLostCursor(t *testing.T) {
 			s, rt := f.lost(t, "loss")
 			f.ingest(t, rt.Event(s.Attempt.ID, s.Operation.ID, "dispatch", 1, simulator.RowsFrame(false, row(10, "progress", map[string]int{}))))
 			f.reopen(t)
+			// The wire port runs this subscribe closure on the adapter kit's
+			// session goroutine, so the captured cursors need a lock: the
+			// unavailable path returns before any wire traffic orders the
+			// write against this goroutine's read.
+			var mu sync.Mutex
 			var seen []contracts.Cursor
 			p := &recoveryPort{Port: rt, subscribe: func(_ context.Context, c contracts.Cursor) (contracts.Stream, error) {
+				mu.Lock()
 				seen = append(seen, c)
-				if len(seen) == 1 {
+				first := len(seen) == 1
+				mu.Unlock()
+				if first {
 					frame := simulator.CursorTooOldFrame()
 					if kind == "cleared" {
 						frame = simulator.ClearedFrame(2)
@@ -195,8 +225,11 @@ func TestRecoveryReconcileReopensLostCursor(t *testing.T) {
 			if err := recoveryWorker(t, f, p).Reconcile(f.ctx); err != nil {
 				t.Fatal(err)
 			}
-			if len(seen) != 2 || seen[0].After != 10 || seen[1].After != 0 {
-				t.Fatalf("subscriptions=%+v", seen)
+			mu.Lock()
+			subscriptions := append([]contracts.Cursor(nil), seen...)
+			mu.Unlock()
+			if len(subscriptions) != 2 || subscriptions[0].After != 10 || subscriptions[1].After != 0 {
+				t.Fatalf("subscriptions=%+v", subscriptions)
 			}
 			op, err := store.GetOperation(f.ctx, f.pool, f.tenant, s.Operation.ID)
 			want := lifecycle.OperationSucceeded

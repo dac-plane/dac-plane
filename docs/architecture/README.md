@@ -161,6 +161,7 @@ providers and deployable, without changing lifecycle ownership.
 - [ADR-0007: versioned HTTP Surface API authenticated by external OpenID Connect](../adr/0007-surface-api-transport-and-authentication.md)
 - [ADR-0008: out-of-process provider adapters over an adapter-initiated ControlFrame connection](../adr/0008-adapter-process-boundary-and-wire-transport.md)
 - [ADR-0009: one container image, migrated by an explicit step, on a reference Compose stack](../adr/0009-deployment-unit-and-first-substrate.md)
+- [ADR-0010: open provider event streams with subscribe and unsubscribe frames](../adr/0010-controlframe-stream-subscription.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

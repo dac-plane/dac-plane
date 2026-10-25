@@ -89,26 +89,30 @@ func failure(code FailureCode, format string, args ...any) *Failure {
 type FrameKind string
 
 const (
-	FrameLifecycle FrameKind = "lifecycle"
-	FrameRequest   FrameKind = "request"
-	FrameCancel    FrameKind = "cancel"
-	FrameReply     FrameKind = "reply"
-	FrameEvent     FrameKind = "event"
+	FrameLifecycle   FrameKind = "lifecycle"
+	FrameRequest     FrameKind = "request"
+	FrameCancel      FrameKind = "cancel"
+	FrameReply       FrameKind = "reply"
+	FrameEvent       FrameKind = "event"
+	FrameSubscribe   FrameKind = "subscribe"
+	FrameUnsubscribe FrameKind = "unsubscribe"
 )
 
 // FrameKinds lists every FrameKind.
 func FrameKinds() []FrameKind {
-	return []FrameKind{FrameLifecycle, FrameRequest, FrameCancel, FrameReply, FrameEvent}
+	return []FrameKind{FrameLifecycle, FrameRequest, FrameCancel, FrameReply, FrameEvent, FrameSubscribe, FrameUnsubscribe}
 }
 
 // Frame is one control-protocol message: exactly one body matching Kind.
 type Frame struct {
-	Kind      FrameKind  `json:"kind"`
-	Lifecycle *Lifecycle `json:"lifecycle,omitempty"`
-	Request   *Request   `json:"request,omitempty"`
-	Cancel    *Cancel    `json:"cancel,omitempty"`
-	Reply     *Reply     `json:"reply,omitempty"`
-	Event     *Event     `json:"event,omitempty"`
+	Kind        FrameKind    `json:"kind"`
+	Lifecycle   *Lifecycle   `json:"lifecycle,omitempty"`
+	Request     *Request     `json:"request,omitempty"`
+	Cancel      *Cancel      `json:"cancel,omitempty"`
+	Reply       *Reply       `json:"reply,omitempty"`
+	Event       *Event       `json:"event,omitempty"`
+	Subscribe   *Subscribe   `json:"subscribe,omitempty"`
+	Unsubscribe *Unsubscribe `json:"unsubscribe,omitempty"`
 }
 
 // Validate reports whether exactly the body named by Kind is present and valid.
@@ -116,6 +120,7 @@ func (f Frame) Validate() error {
 	bodies := map[FrameKind]bool{
 		FrameLifecycle: f.Lifecycle != nil, FrameRequest: f.Request != nil, FrameCancel: f.Cancel != nil,
 		FrameReply: f.Reply != nil, FrameEvent: f.Event != nil,
+		FrameSubscribe: f.Subscribe != nil, FrameUnsubscribe: f.Unsubscribe != nil,
 	}
 	for kind, present := range bodies {
 		if present != (kind == f.Kind) {
@@ -133,6 +138,10 @@ func (f Frame) Validate() error {
 		return f.Reply.Validate()
 	case FrameEvent:
 		return f.Event.Validate()
+	case FrameSubscribe:
+		return f.Subscribe.Validate()
+	case FrameUnsubscribe:
+		return f.Unsubscribe.Validate()
 	}
 	return fmt.Errorf("%w: unknown frame kind", ErrInvalid)
 }
@@ -268,6 +277,33 @@ type Cancel struct {
 func (c Cancel) Validate() error {
 	if c.Operation.IsZero() || c.Delivery.IsZero() {
 		return fmt.Errorf("%w: cancel requires the target operation and its delivery", ErrInvalid)
+	}
+	return nil
+}
+
+// Subscribe opens a provider's event stream from a cursor on the session that
+// sends it. The provider answers with event frames for the cursor's operation
+// and stream, starting with connected, until either side unsubscribes or the
+// session ends.
+type Subscribe struct {
+	Cursor Cursor `json:"cursor"`
+}
+
+// Validate reports whether the cursor is complete.
+func (s Subscribe) Validate() error {
+	return s.Cursor.Validate()
+}
+
+// Unsubscribe closes the stream a subscribe opened on the same session.
+type Unsubscribe struct {
+	Operation ids.OperationID `json:"operation_id"`
+	Stream    string          `json:"stream"`
+}
+
+// Validate reports whether the unsubscribe names its stream.
+func (u Unsubscribe) Validate() error {
+	if u.Operation.IsZero() || !validName(u.Stream) {
+		return fmt.Errorf("%w: unsubscribe requires the operation and a named stream", ErrInvalid)
 	}
 	return nil
 }

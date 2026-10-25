@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cursor",
+  "description": "Ingestion progress on one provider stream. Acknowledging it records ingestion only, never a provider effect or a lifecycle transition.",
+  "type": "object",
+  "required": ["tenant_id", "attempt_id", "operation_id", "stream", "generation", "after_updated_sequence"],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "stream": { "$ref": "common.schema.json#/$defs/name" },
+    "generation": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "after_updated_sequence": { "type": "integer", "minimum": 0 }
+  }
+}

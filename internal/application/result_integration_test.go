@@ -18,6 +18,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -63,7 +64,9 @@ func (g *resultFixture) artifactWorker(t *testing.T, port contracts.Port) *worke
 	cfg := worker.DefaultConfig()
 	cfg.Policy.BaseBackoff = time.Millisecond
 	cfg.Policy.MaxBackoff = time.Millisecond
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{g.provider: g.rt}, cfg, "artifact-worker", worker.WithArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{g.provider: {Provider: g.storeID, Port: port}}))
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "artifact-worker",
+		wiretest.Ports(t, g.pool, g.tenant, map[ids.ProviderID]contracts.Port{g.provider: g.rt},
+			wiretest.ArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{g.provider: {Provider: g.storeID, Port: port}})))
 	if err != nil {
 		t.Fatal(err)
 	}

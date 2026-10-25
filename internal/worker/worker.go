@@ -95,6 +95,7 @@ type Worker struct {
 	environments map[ids.ProviderID]contracts.Port
 	enforcement  map[ids.ProviderID]contracts.Port
 	artifacts    map[ids.ProviderID]ArtifactStorePort
+	lookup       Ports
 	owner        string
 	cfg          Config
 	stats        Stats

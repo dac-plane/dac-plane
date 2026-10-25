@@ -22,6 +22,7 @@ import (
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -434,7 +435,9 @@ func TestArtifactRenewsLeaseAcrossSlowStages(t *testing.T) {
 	cfg.ClaimTTL = 2 * time.Second
 	cfg.SendTimeout = time.Second
 	port := delayedArtifactPort{Port: g.bytes, delay: 750 * time.Millisecond}
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{g.provider: g.rt}, cfg, "slow-worker", worker.WithArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{g.provider: {Provider: g.storeID, Port: port}}))
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "slow-worker",
+		wiretest.Ports(t, g.pool, g.tenant, map[ids.ProviderID]contracts.Port{g.provider: g.rt},
+			wiretest.ArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{g.provider: {Provider: g.storeID, Port: port}})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +496,9 @@ func TestArtifactExpiryDuringFinalBudgetLockRollsBackAdmission(t *testing.T) {
 	cfg := worker.DefaultConfig()
 	cfg.ClaimTTL = 2 * time.Second
 	cfg.SendTimeout = time.Second
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{g.provider: g.rt}, cfg, "expiry-worker", worker.WithArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{g.provider: {Provider: g.storeID, Port: g.bytes}}))
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "expiry-worker",
+		wiretest.Ports(t, g.pool, g.tenant, map[ids.ProviderID]contracts.Port{g.provider: g.rt},
+			wiretest.ArtifactStores(map[ids.ProviderID]worker.ArtifactStorePort{g.provider: {Provider: g.storeID, Port: g.bytes}})))
 	if err != nil {
 		t.Fatal(err)
 	}

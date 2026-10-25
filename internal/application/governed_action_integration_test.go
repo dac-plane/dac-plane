@@ -13,6 +13,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 	"io"
 	"log/slog"
@@ -476,7 +477,8 @@ func TestGovernedActionLostReplyNeverRepeatsEffect(t *testing.T) {
 	if g.resource.Ledger().Effects(g.cmd.Request.Operation) != 1 {
 		t.Fatal("effect repeated or missing")
 	}
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "reconciler", worker.WithEnforcementPorts(map[ids.ProviderID]contracts.Port{g.provider: e}))
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "reconciler",
+		wiretest.Ports(t, g.pool, g.tenant, nil, wiretest.Enforcement(map[ids.ProviderID]contracts.Port{g.provider: e})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +524,8 @@ func TestGovernedActionSerialResourceAndEffectBoundary(t *testing.T) {
 			g.enforce(t, e, g.cmd)
 			g.enforce(t, e, second)
 			pause := e.Control().Pause(g.cmd.Request.Operation, simulator.BeforeEffect)
-			w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{g.provider: e}, worker.DefaultConfig(), "first")
+			w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "first",
+				wiretest.Ports(t, g.pool, g.tenant, map[ids.ProviderID]contracts.Port{g.provider: e}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -581,7 +584,8 @@ func TestGovernedActionCrashMarkerNeverResends(t *testing.T) {
 	g.enforce(t, e, g.cmd)
 	pause := e.Control().Pause(g.cmd.Request.Operation, simulator.AfterEffect)
 	cfg := worker.DefaultConfig()
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), map[ids.ProviderID]contracts.Port{g.provider: e}, cfg, "crashing-worker")
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "crashing-worker",
+		wiretest.Ports(t, g.pool, g.tenant, map[ids.ProviderID]contracts.Port{g.provider: e}))
 	if err != nil {
 		t.Fatal(err)
 	}

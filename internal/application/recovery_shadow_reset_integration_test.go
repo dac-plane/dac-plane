@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
@@ -33,10 +34,18 @@ func TestRecoveryShadowResetReopensLocalReplay(t *testing.T) {
 				}
 				for range 2 {
 					f.reopen(t)
+					// The wire port runs this subscribe closure on the
+					// adapter kit's session goroutine; the unavailable path
+					// returns before wire traffic can order the captured
+					// writes against this goroutine's reads.
+					var mu sync.Mutex
 					var cursors []contracts.Cursor
 					p := &recoveryPort{Port: rt, subscribe: func(_ context.Context, c contracts.Cursor) (contracts.Stream, error) {
+						mu.Lock()
 						cursors = append(cursors, c)
-						if len(cursors) == 1 || reset == "reset_loop" {
+						first := len(cursors) == 1
+						mu.Unlock()
+						if first || reset == "reset_loop" {
 							return &recoveryStream{frames: []contracts.StreamFrame{frame}}, nil
 						}
 						if reset == "unavailable" {
@@ -53,11 +62,14 @@ func TestRecoveryShadowResetReopensLocalReplay(t *testing.T) {
 					if mode == "off" {
 						wantSubscriptions = 1
 					}
-					if len(cursors) != wantSubscriptions || cursors[0].After != 10 || cursors[0].Generation != 1 {
-						t.Fatalf("subscriptions=%+v", cursors)
+					mu.Lock()
+					subscriptions := append([]contracts.Cursor(nil), cursors...)
+					mu.Unlock()
+					if len(subscriptions) != wantSubscriptions || subscriptions[0].After != 10 || subscriptions[0].Generation != 1 {
+						t.Fatalf("subscriptions=%+v", subscriptions)
 					}
-					if mode == "shadow" && (cursors[1].After != 0 || cursors[1].Generation != generation) {
-						t.Fatalf("shadow replay cursor=%+v", cursors[1])
+					if mode == "shadow" && (subscriptions[1].After != 0 || subscriptions[1].Generation != generation) {
+						t.Fatalf("shadow replay cursor=%+v", subscriptions[1])
 					}
 					if !reflect.DeepEqual(before, f.recoverySnapshot(t)) {
 						t.Fatal("local replay changed primary state or durable cursor")

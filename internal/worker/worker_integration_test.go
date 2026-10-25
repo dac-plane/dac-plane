@@ -368,6 +368,63 @@ func TestWorkerStaleRacerLoses(t *testing.T) {
 	}
 }
 
+// notDeliveredOnce proves a release for a proven-not-delivered send clears
+// the committed send marker: the next tick must retry the send instead of
+// taking the takeover path that abandons the operation as uncertain.
+func TestWorkerRetriesAfterNotDeliveredRelease(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	opID, _ := f.dispatchableOp(t, ctx, now, contracts.DemandPerson, 1)
+	var sendAttempts int
+	w := testWorkerWithPort(t, f, worker.DefaultConfig(), &notDeliveredOncePort{inner: f.loopback, attempts: &sendAttempts})
+
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("first Tick() error = %v", err)
+	}
+	if sendAttempts != 1 {
+		t.Fatalf("send attempts = %d, want the first failed send", sendAttempts)
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationDispatched {
+		t.Fatalf("operation state after a not-delivered send = %s, want dispatched", operation.State)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("second Tick() error = %v", err)
+	}
+	if sendAttempts != 2 {
+		t.Fatalf("send attempts = %d, want the transport retried on the next tick", sendAttempts)
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationAccepted {
+		t.Fatalf("operation state = %s, want accepted after the retried send", operation.State)
+	}
+	if got := f.readyCount(t, ctx, now.Add(24*time.Hour)); got != 0 {
+		t.Fatalf("OutboxReadyDispatch() = %d rows, want the row acked", got)
+	}
+}
+
+// notDeliveredOncePort proves the first send wrote nothing, then delegates.
+type notDeliveredOncePort struct {
+	inner    contracts.Port
+	attempts *int
+}
+
+func (p *notDeliveredOncePort) Role() contracts.Role { return p.inner.Role() }
+
+func (p *notDeliveredOncePort) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	*p.attempts++
+	if *p.attempts == 1 {
+		return contracts.Reply{}, contracts.ErrNotDelivered
+	}
+	return p.inner.Send(ctx, request)
+}
+
+func (p *notDeliveredOncePort) Cancel(ctx context.Context, cancel contracts.Cancel) error {
+	return p.inner.Cancel(ctx, cancel)
+}
+
+func (p *notDeliveredOncePort) Subscribe(ctx context.Context, cursor contracts.Cursor) (contracts.Stream, error) {
+	return p.inner.Subscribe(ctx, cursor)
+}
+
 func TestWorkerRestartRecovery(t *testing.T) {
 	ctx, f := setupFixture(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)

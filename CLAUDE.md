@@ -39,11 +39,15 @@ Read, in this order:
 docs/architecture/    the baseline: README, views (.drawio/.svg/.png), responsibility map
 docs/adr/             accepted architecture decisions, numbered sequentially
 cmd/dac-plane/        the control-plane process entry point
+adapterkit/           the separate adapter kit module (ADR-0008): wire codec, client, handler
+                      interface and the ControlFrame conformance suite
+cmd/dac-sim-adapter/  the simulator as a standalone reference adapter for the conformance runner
 internal/             application modules: bootstrap, config, ids, identity, lifecycle, contracts
                       (provider adapter protocol), platform (postgres store, migrations), worker
                       (dispatch loop), simulator (deterministic providers), application
                       (command boundary and owner-scoped reads), authn (actor authentication),
-                      provision (trusted provisioning), httpapi (Surface API v1)
+                      provision (trusted provisioning), httpapi (Surface API v1), adapterwire
+                      (the adapter endpoint and connection registry)
 contracts/jsonschema/ language-neutral JSON Schema 2020-12 contracts, tested against the Go types
 contracts/openapi/    the Surface API v1 OpenAPI 3.1 document, tested against the served routes
 tasks/plan.md         the plan for the issue currently in progress, rewritten per issue

@@ -1,6 +1,15 @@
 package contracts
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotDelivered reports that a transport wrote nothing of a request or
+// cancel: no connection could carry it. Nothing can have taken effect, so the
+// caller may release the work and send it again later. Any other Send error
+// leaves the outcome uncertain.
+var ErrNotDelivered = errors.New("not delivered to the provider")
 
 // Role is the part a provider plays behind a port.
 type Role string
@@ -68,7 +77,8 @@ func AllMethods() []Method {
 // Port is the transport-neutral boundary to one provider. Send delivers a
 // request and returns its reply; a transport that loses the reply after
 // delivery must return an error, never a guessed outcome, so the operation
-// is reconciled instead of resent. Cancel asks for the operation to stop;
+// is reconciled instead of resent. Only a transport that wrote nothing may
+// return ErrNotDelivered. Cancel asks for the operation to stop;
 // the stop is confirmed by observation, not by Cancel returning. Subscribe
 // opens the provider's event stream from a cursor.
 type Port interface {

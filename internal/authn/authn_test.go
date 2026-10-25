@@ -536,3 +536,42 @@ func (h *harness) holdKeys(t *testing.T) (chan struct{}, chan struct{}) {
 }
 
 func release(hold chan struct{}) { oidctest.Release(hold) }
+
+// TestVerifierReturnsExpiryAndKeepsAudiencesApart checks the verifier an
+// adapter connection uses: it returns the token's expiry, so a connection can
+// end with its token, and refuses a token issued for the Surface API.
+func TestVerifierReturnsExpiryAndKeepsAudiencesApart(t *testing.T) {
+	issuer := newTestIssuer(t)
+	key := newRSAKey(t)
+	issuer.publish("k1", key)
+	const adapterAudience = "https://dac-plane.example/adapters"
+	var logs bytes.Buffer
+	verifier, err := NewVerifier(context.Background(),
+		[]IssuerConfig{{Issuer: issuer.url(), Audience: adapterAudience, Algorithms: []string{"RS256"}, MaxTokenLifetimeSeconds: 900}},
+		slog.New(slog.NewJSONHandler(&logs, nil)), WithHTTPClient(issuer.Client()), WithClock(func() time.Time { return testNow }))
+	if err != nil {
+		t.Fatalf("NewVerifier() error = %v", err)
+	}
+	expiry := testNow.Add(4 * time.Minute).Truncate(time.Second)
+	token := issuer.token(t, tokenSpec{Key: key, Claims: map[string]any{"aud": adapterAudience, "sub": "adapter-1", "exp": expiry.Unix()}})
+	verified, err := verifier.Verify(context.Background(), token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v; log %s", err, logs.String())
+	}
+	if verified.Issuer != issuer.url() || verified.Subject != "adapter-1" || !verified.Expiry.Equal(expiry) {
+		t.Fatalf("Verify() = %+v, want subject adapter-1 expiring %v", verified, expiry)
+	}
+	if _, err := verifier.Verify(context.Background(), issuer.token(t, tokenSpec{Key: key})); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("Verify(Surface API token) error = %v, want ErrUnauthenticated", err)
+	}
+	if !strings.Contains(logs.String(), string(ReasonWrongAudience)) || strings.Contains(logs.String(), token) {
+		t.Fatalf("refusal log = %s, want the reason and no token", logs.String())
+	}
+	empty, err := NewVerifier(context.Background(), nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := empty.Verify(context.Background(), token); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("Verify() with no adapter issuers error = %v, want ErrUnauthenticated", err)
+	}
+}

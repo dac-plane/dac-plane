@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "IdentityConfig",
-  "description": "The identity providers whose access tokens the control plane accepts, loaded from the file DAC_IDENTITY_CONFIG_FILE names.",
+  "description": "The identity providers whose access tokens the control plane accepts, loaded from the file DAC_IDENTITY_CONFIG_FILE names: Surface API callers (ADR-0007) and provider adapters' client-credentials tokens (ADR-0008). An issuer listed in both must use a different audience in each; the Go contract enforces that.",
   "type": "object",
   "required": ["issuers"],
   "additionalProperties": false,
@@ -9,6 +9,11 @@
     "issuers": {
       "type": "array",
       "minItems": 1,
+      "items": { "$ref": "#/$defs/issuer" }
+    },
+    "adapter_issuers": {
+      "description": "Issuers of adapter client-credentials tokens; the audience names the adapter endpoint. Absent means no adapter can connect.",
+      "type": "array",
       "items": { "$ref": "#/$defs/issuer" }
     }
   },

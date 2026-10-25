@@ -1,0 +1,15 @@
+{
+  "tenant_id": "01a167fd-51d9-76ba-b563-496e2bd89646",
+  "provider_id": "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10",
+  "role": "runtime",
+  "operations": [
+    {
+      "operation_id": "01a167fd-51d9-7c11-9f2e-5b4b3c2a1d00",
+      "effect": "turn_started",
+      "stream": [
+        {"kind": "connected", "body": {"kind": "connected", "server_time": "2026-10-24T12:00:00Z"}},
+        {"kind": "cursor_too_old", "body": {"kind": "cursor_too_old"}}
+      ]
+    }
+  ]
+}

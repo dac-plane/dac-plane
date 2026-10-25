@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
 	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
@@ -157,6 +159,121 @@ func TestGovernedActionNeverSentReclaimRejects(t *testing.T) {
 	}
 }
 
+// notDeliveredEnforcement proves the first send wrote nothing and then
+// delegates, so the retry is the delivery the provider records.
+type notDeliveredOnce struct {
+	inner        contracts.Port
+	notDelivered *atomic.Bool
+}
+
+func (p *notDeliveredOnce) Role() contracts.Role { return p.inner.Role() }
+
+func (p *notDeliveredOnce) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	if p.notDelivered.CompareAndSwap(false, true) {
+		return contracts.Reply{}, contracts.ErrNotDelivered
+	}
+	return p.inner.Send(ctx, request)
+}
+
+func (p *notDeliveredOnce) Cancel(ctx context.Context, cancel contracts.Cancel) error {
+	return p.inner.Cancel(ctx, cancel)
+}
+
+func (p *notDeliveredOnce) Subscribe(ctx context.Context, cursor contracts.Cursor) (contracts.Stream, error) {
+	return p.inner.Subscribe(ctx, cursor)
+}
+
+// TestGovernedActionNotDeliveredIsRetriedNotUncertain proves a governed send
+// the transport delivered nothing of is released, not resolved as an outcome:
+// the operation stays dispatched, the send marker is cleared, and the next
+// tick retries the send to its once-per-operation effect. Recording it as
+// send_unknown would park the action on reconciliation that can never see a
+// receipt for a request the provider never received.
+func TestGovernedActionNotDeliveredIsRetriedNotUncertain(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	e := g.enforcement(t, simulator.AllowHook(), nil)
+	g.enforce(t, e, g.cmd)
+	var sawNotDelivered atomic.Bool
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery",
+		wiretest.Wrap(t, g.pool, g.tenant, g.provider, e, func(p contracts.Port) contracts.Port {
+			return &notDeliveredOnce{inner: p, notDelivered: &sawNotDelivered}
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !sawNotDelivered.Load() {
+		t.Fatal("the first send never returned proven not-delivered")
+	}
+	op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationDispatched {
+		t.Fatalf("not-delivered operation=%+v, %v; want dispatched", op, err)
+	}
+	var marker string
+	if err := g.pool.QueryRow(g.ctx, `select last_error from outbox where tenant_id=$1 and record_id=$2`, g.tenant.String(), g.cmd.Request.Operation.String()).Scan(&marker); err != nil || marker != "" {
+		t.Fatalf("released marker=%q, %v; want the send marker cleared", marker, err)
+	}
+	if got := e.Ledger().Deliveries(g.cmd.Request.Operation); got != 1 {
+		// One delivery is the pre-action hook the submission enforced; the
+		// not-delivered execute send must not have reached the provider.
+		t.Fatalf("deliveries=%d after a not-delivered send, want only the hook", got)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Ledger().Deliveries(g.cmd.Request.Operation); got != 2 {
+		t.Fatalf("deliveries=%d, want the retried delivery on top of the hook", got)
+	}
+	if got := e.Ledger().Effects(g.cmd.Request.Operation); got != 2 {
+		// One effect is the hook's own decision record; the retried execute
+		// adds exactly one resource.mutate — never a duplicate execution.
+		t.Fatalf("effects=%d, want the hook decision plus one execution", got)
+	}
+	op, err = store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationSucceeded {
+		t.Fatalf("retried operation=%+v, %v; want succeeded", op, err)
+	}
+}
+
+// TestGovernedActionNotDeliveredThenRevokedRejects proves the cleared send
+// marker carries into a give-up: an action the transport proved it never
+// delivered, whose grant is revoked before the retry, is rejected rather than
+// left uncertain waiting for a receipt the provider can never produce.
+func TestGovernedActionNotDeliveredThenRevokedRejects(t *testing.T) {
+	g := newGovernedFixture(t, true)
+	e := g.enforcement(t, simulator.AllowHook(), nil)
+	g.enforce(t, e, g.cmd)
+	var sawNotDelivered atomic.Bool
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery",
+		wiretest.Wrap(t, g.pool, g.tenant, g.provider, e, func(p contracts.Port) contracts.Port {
+			return &notDeliveredOnce{inner: p, notDelivered: &sawNotDelivered}
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !sawNotDelivered.Load() {
+		t.Fatal("the first send never returned proven not-delivered")
+	}
+	if err := application.Revoke(g.ctx, g.pool, application.RevokeAuthority{Command: application.Command{Actor: g.actor, Nonce: "revoke-unsent"}, Grant: g.cmd.Grant, At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationRejected {
+		t.Fatalf("revoked not-delivered operation=%+v, %v; want rejected", op, err)
+	}
+	if got := g.resource.Ledger().Effects(g.cmd.Request.Operation); got != 0 {
+		t.Fatalf("revoked action produced %d effects", got)
+	}
+}
+
 type receiptResetPort struct {
 	contracts.Port
 	tooOld            bool
@@ -280,7 +397,8 @@ func TestGovernedActionReceiptRehydrateUnavailable(t *testing.T) {
 
 func governedRecoveryWorker(t *testing.T, g *governedFixture, port contracts.Port) *worker.Worker {
 	t.Helper()
-	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery", worker.WithEnforcementPorts(map[ids.ProviderID]contracts.Port{g.provider: port}))
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery",
+		wiretest.Ports(t, g.pool, g.tenant, nil, wiretest.Enforcement(map[ids.ProviderID]contracts.Port{g.provider: port})))
 	if err != nil {
 		t.Fatal(err)
 	}

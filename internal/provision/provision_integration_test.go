@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
@@ -251,5 +252,75 @@ func TestProvisionCommandWritesJSON(t *testing.T) {
 	code := provision.Run(ctx, []string{"bind", "-tenant", tenant, "-principal", principal, "-issuer", "http://plain.example", "-subject", "x"}, &stdout, &stderr, open)
 	if code != provision.ExitUsage || stdout.Len() != 0 {
 		t.Fatalf("plaintext issuer: code %d stdout %q", code, stdout.String())
+	}
+}
+
+func TestProvisionAdapterLifecycle(t *testing.T) {
+	ctx, pool, p := setup(t)
+	tenant, err := p.CreateTenant(ctx, ids.TenantID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.RegisterProvider(ctx, mustID[ids.Tenant](t), ids.ProviderID{}, contracts.RoleRuntime, nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RegisterProvider(unknown tenant) error = %v, want ErrNotFound", err)
+	}
+	environment, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleEnvironment, nil)
+	if err != nil {
+		t.Fatalf("RegisterProvider(environment) error = %v", err)
+	}
+	if _, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, &environment); !errors.Is(err, provision.ErrConflict) {
+		t.Fatalf("RegisterProvider(store is an environment) error = %v, want ErrConflict", err)
+	}
+	artifactStore, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleArtifactStore, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleRuntime, &artifactStore); err != nil || again != runtime {
+		t.Fatalf("RegisterProvider(add store) = %v, %v", again, err)
+	}
+	// A harness provider is both a runtime and an environment.
+	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleEnvironment, nil); err != nil || again != runtime {
+		t.Fatalf("RegisterProvider(second role) = %v, %v", again, err)
+	}
+
+	if err := p.BindAdapter(ctx, tenant, mustID[ids.Provider](t), contracts.RoleRuntime, issuer, subject); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("BindAdapter(unregistered) error = %v, want ErrNotFound", err)
+	}
+	if err := p.BindAdapter(ctx, tenant, artifactStore, contracts.RoleRuntime, issuer, subject); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("BindAdapter(unregistered role) error = %v, want ErrNotFound", err)
+	}
+	if err := p.BindAdapter(ctx, tenant, runtime, contracts.RoleRuntime, issuer, subject); err != nil {
+		t.Fatalf("BindAdapter() error = %v", err)
+	}
+	if err := p.BindAdapter(ctx, tenant, runtime, contracts.RoleRuntime, issuer, subject); err != nil {
+		t.Fatalf("repeated BindAdapter() error = %v", err)
+	}
+	if err := p.BindAdapter(ctx, tenant, runtime, contracts.RoleEnvironment, issuer, subject); !errors.Is(err, provision.ErrConflict) {
+		t.Fatalf("BindAdapter(second registration) error = %v, want ErrConflict", err)
+	}
+	resolved, err := store.ResolveAdapterBinding(ctx, pool, issuer, subject)
+	if err != nil || resolved.Provider != runtime || resolved.Tenant != tenant || resolved.Role != contracts.RoleRuntime ||
+		resolved.ArtifactStore == nil || *resolved.ArtifactStore != artifactStore {
+		t.Fatalf("ResolveAdapterBinding() = %+v, %v", resolved, err)
+	}
+
+	unbound, err := p.UnbindAdapter(ctx, issuer, subject)
+	if err != nil || unbound.Provider != runtime || unbound.Enabled {
+		t.Fatalf("UnbindAdapter() = %+v, %v", unbound, err)
+	}
+	if _, err := store.ResolveAdapterBinding(ctx, pool, issuer, subject); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("resolve after unbind error = %v, want ErrNotFound", err)
+	}
+	if _, err := p.UnbindAdapter(ctx, issuer, "never-bound"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unbind unknown adapter error = %v, want ErrNotFound", err)
+	}
+
+	want := []string{"create_tenant", "register_provider", "register_provider", "register_provider", "register_provider", "register_provider", "bind_adapter", "bind_adapter", "unbind_adapter"}
+	if got := changes(t, ctx, pool, tenant); !slices.Equal(got, want) {
+		t.Fatalf("provisioning changes = %v, want %v", got, want)
 	}
 }

@@ -1,24 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Frame",
-  "description": "One control-protocol message carrying exactly the body its kind names. A provider's first frame is a hello; nothing but lifecycle frames are processed before ready. A hello's required capabilities must be offered; the Go contract enforces that.",
+  "description": "One control-protocol message carrying exactly the body its kind names. A provider's first frame is a hello; nothing but lifecycle frames are processed before ready. Subscribe and unsubscribe open and close a provider event stream on the session that sends them (ADR-0010). A hello's required capabilities must be offered; the Go contract enforces that.",
   "type": "object",
   "required": ["kind"],
   "additionalProperties": false,
   "properties": {
-    "kind": { "enum": ["lifecycle", "request", "cancel", "reply", "event"] },
+    "kind": { "enum": ["lifecycle", "request", "cancel", "reply", "event", "subscribe", "unsubscribe"] },
     "lifecycle": { "$ref": "#/$defs/lifecycle" },
     "request": { "$ref": "#/$defs/request" },
     "cancel": { "$ref": "#/$defs/cancel" },
     "reply": { "$ref": "#/$defs/reply" },
-    "event": { "$ref": "event.schema.json" }
+    "event": { "$ref": "event.schema.json" },
+    "subscribe": { "$ref": "#/$defs/subscribe" },
+    "unsubscribe": { "$ref": "#/$defs/unsubscribe" }
   },
   "oneOf": [
     { "properties": { "kind": { "const": "lifecycle" } }, "required": ["lifecycle"], "maxProperties": 2 },
     { "properties": { "kind": { "const": "request" } }, "required": ["request"], "maxProperties": 2 },
     { "properties": { "kind": { "const": "cancel" } }, "required": ["cancel"], "maxProperties": 2 },
     { "properties": { "kind": { "const": "reply" } }, "required": ["reply"], "maxProperties": 2 },
-    { "properties": { "kind": { "const": "event" } }, "required": ["event"], "maxProperties": 2 }
+    { "properties": { "kind": { "const": "event" } }, "required": ["event"], "maxProperties": 2 },
+    { "properties": { "kind": { "const": "subscribe" } }, "required": ["subscribe"], "maxProperties": 2 },
+    { "properties": { "kind": { "const": "unsubscribe" } }, "required": ["unsubscribe"], "maxProperties": 2 }
   ],
   "$defs": {
     "version": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
@@ -91,6 +95,23 @@
           "then": { "properties": { "method": { "enum": ["authorize_upload", "stat_object", "commit_manifest"] } } }
         }
       ]
+    },
+    "subscribe": {
+      "type": "object",
+      "required": ["cursor"],
+      "additionalProperties": false,
+      "properties": {
+        "cursor": { "$ref": "cursor.schema.json" }
+      }
+    },
+    "unsubscribe": {
+      "type": "object",
+      "required": ["operation_id", "stream"],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "stream": { "$ref": "common.schema.json#/$defs/name" }
+      }
     },
     "cancel": {
       "type": "object",
