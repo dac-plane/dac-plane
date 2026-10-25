@@ -53,6 +53,10 @@
         "require_access_token_type": {
           "description": "Require the at+jwt type (RFC 9068). Defaults to true; false only for an issuer that cannot type its access tokens, whose audience must then be issued for this API alone.",
           "type": "boolean"
+        },
+        "development": {
+          "description": "Marks a test issuer of the development profile (ADR-0009). A production deployment refuses a configuration that trusts one.",
+          "type": "boolean"
         }
       }
     }

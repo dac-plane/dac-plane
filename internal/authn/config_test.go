@@ -21,7 +21,7 @@ const fullConfig = `{"issuers":[
  {"issuer":"https://issuer.example/realms/a","audience":"dac-plane","algorithms":["ES256","RS256"],"max_token_lifetime_seconds":3600,"clock_skew_seconds":0,"require_access_token_type":false},
  {"issuer":"https://other.example","audience":"dac-plane","algorithms":["EdDSA"],"max_token_lifetime_seconds":60,"clock_skew_seconds":300,"require_access_token_type":true}],
  "adapter_issuers":[
- {"issuer":"https://issuer.example/realms/a","audience":"dac-plane-adapters","algorithms":["ES256"],"max_token_lifetime_seconds":900}]}`
+ {"issuer":"https://issuer.example/realms/a","audience":"dac-plane-adapters","algorithms":["ES256"],"max_token_lifetime_seconds":900,"development":true}]}`
 
 func TestConfigSchemasAcceptValidGoDocuments(t *testing.T) {
 	schema := schematest.Compile(t, configSchema)
@@ -65,6 +65,7 @@ func TestConfigSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"negative skew", issuer(func(i map[string]any) { i["clock_skew_seconds"] = -1 })},
 		{"skew above five minutes", issuer(func(i map[string]any) { i["clock_skew_seconds"] = 301 })},
 		{"string typing flag", issuer(func(i map[string]any) { i["require_access_token_type"] = "no" })},
+		{"string development flag", issuer(func(i map[string]any) { i["development"] = "yes" })},
 		{"unknown issuer field", issuer(func(i map[string]any) { i["jwks_uri"] = "https://issuer.example/keys" })},
 		{"adapter issuers not a list", func(d map[string]any) { d["adapter_issuers"] = map[string]any{} }},
 		{"adapter issuer without audience", func(d map[string]any) {
@@ -130,6 +131,13 @@ func TestParseConfigDefaults(t *testing.T) {
 	issuer := config.Issuers[0]
 	if !issuer.requiresAccessTokenType() || issuer.clockSkew().Seconds() != defaultClockSkewSecs || issuer.maxLifetime().Seconds() != 900 {
 		t.Fatalf("defaults = type %v, skew %v, lifetime %v", issuer.requiresAccessTokenType(), issuer.clockSkew(), issuer.maxLifetime())
+	}
+	if config.Development() {
+		t.Fatal("a configuration without a development issuer reports one")
+	}
+	full, err := ParseConfig([]byte(fullConfig))
+	if err != nil || !full.Development() {
+		t.Fatalf("development adapter issuer not reported: %v", err)
 	}
 }
 
