@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -45,19 +47,29 @@ type RuntimeScenario struct {
 	MigrationReceipts bool
 	// Decisions script distinct native steers on an existing runtime operation.
 	Decisions map[ids.DecisionID]RuntimeOp
+	// Default scripts every operation Operations does not name, for a
+	// runtime whose operation identities are only known once work is
+	// submitted, as in a deployed stack. Its reply answers each method, and a
+	// set Effect applies the delivered method's own effect.
+	Default *RuntimeOp
+	// DefaultDecision scripts every steer Decisions does not name.
+	DefaultDecision *RuntimeOp
 }
 
 // RuntimeOp is one operation's script. Reply answers Send. Effect is applied
 // once, on the first delivery, and must be the effect of the delivered
 // method. SendError replaces the reply after the effect, the way a transport
 // loses an acknowledgement. CancelError fails Cancel. Stream is what
-// Subscribe serves until the frames end.
+// Subscribe serves until the frames end; AfterDecision follows it once a
+// decision on the operation was delivered, the way a runtime continues its
+// turn after the answer it waited for.
 type RuntimeOp struct {
-	Reply       Reply
-	Effect      EffectKind
-	SendError   error
-	CancelError error
-	Stream      *StreamScript
+	Reply         Reply
+	Effect        EffectKind
+	SendError     error
+	CancelError   error
+	Stream        *StreamScript
+	AfterDecision *StreamScript
 }
 
 // Runtime is a deterministic runtime provider behind contracts.Port.
@@ -70,6 +82,7 @@ type Runtime struct {
 	mu             sync.Mutex
 	decisions      map[ids.DecisionID]*deliveries
 	fingerprints   map[runtimeWork]identity.Digest
+	decided        map[ids.OperationID]bool
 }
 
 type runtimeWork struct {
@@ -88,7 +101,14 @@ func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
 			return nil, fmt.Errorf("%w: %s is not a runtime effect", ErrInvalidScenario, step.Effect)
 		}
 	}
-	for _, step := range scenario.Decisions {
+	if scenario.Default != nil && scenario.Default.Effect != "" && !validRuntimeEffect(scenario.Default.Effect) {
+		return nil, fmt.Errorf("%w: %s is not a runtime effect", ErrInvalidScenario, scenario.Default.Effect)
+	}
+	decisions := slices.Collect(maps.Values(scenario.Decisions))
+	if scenario.DefaultDecision != nil {
+		decisions = append(decisions, *scenario.DefaultDecision)
+	}
+	for _, step := range decisions {
 		if step.Effect != "" && step.Effect != TurnSteered {
 			return nil, fmt.Errorf("%w: decision requires a steer effect", ErrInvalidScenario)
 		}
@@ -100,6 +120,7 @@ func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
 		deliveries:   newDeliveries(),
 		decisions:    map[ids.DecisionID]*deliveries{},
 		fingerprints: map[runtimeWork]identity.Digest{},
+		decided:      map[ids.OperationID]bool{},
 	}, nil
 }
 
@@ -145,7 +166,7 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		return r.exportArtifact(ctx, request)
 	}
 	r.ledger.recordRequest(request)
-	step, ok := r.scenario.Operations[request.Operation]
+	step, ok := r.operation(request.Operation, request.Method)
 	if r.scenario.MigrationReceipts {
 		var migration contracts.MigrationRequest
 		if json.Unmarshal(request.Arguments, &migration) == nil && migration.Validate() == nil && migration.Operation == request.Operation {
@@ -182,6 +203,8 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		key.decision = body.Decision
 		if decision, exists := r.scenario.Decisions[body.Decision]; exists {
 			step, ok = decision, true
+		} else if r.scenario.DefaultDecision != nil {
+			step, ok = *r.scenario.DefaultDecision, true
 		}
 	}
 	if !ok {
@@ -216,6 +239,11 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 			Role: contracts.RoleRuntime, Operation: request.Operation, Method: request.Method, Kind: step.Effect,
 		})
 		deliveries.finish(request.Operation, request.Method, reply)
+		if !key.decision.IsZero() {
+			r.mu.Lock()
+			r.decided[request.Operation] = true
+			r.mu.Unlock()
+		}
 		if err := r.config.Control.reach(ctx, request.Operation, AfterEffect); err != nil {
 			return contracts.Reply{}, err
 		}
@@ -224,6 +252,23 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 		return contracts.Reply{}, step.SendError
 	}
 	return reply, nil
+}
+
+// operation returns the script of an operation: its own, or the default. A
+// default's effect becomes the delivered method's own, so one default script
+// answers a start, a steer or an interrupt alike.
+func (r *Runtime) operation(id ids.OperationID, method contracts.Method) (RuntimeOp, bool) {
+	if step, ok := r.scenario.Operations[id]; ok {
+		return step, true
+	}
+	if r.scenario.Default == nil {
+		return RuntimeOp{}, false
+	}
+	step := *r.scenario.Default
+	if step.Effect != "" && method != "" {
+		step.Effect = runtimeEffect[method]
+	}
+	return step, true
 }
 
 // deliveryScope keeps decision idempotency separate from the parent turn and
@@ -271,7 +316,7 @@ func (r *Runtime) Cancel(ctx context.Context, cancel contracts.Cancel) error {
 	if err := recordCancel(r.ledger, cancel); err != nil {
 		return err
 	}
-	if step, ok := r.scenario.Operations[cancel.Operation]; ok && step.CancelError != nil {
+	if step, ok := r.operation(cancel.Operation, ""); ok && step.CancelError != nil {
 		return step.CancelError
 	}
 	return nil
@@ -290,14 +335,20 @@ func (r *Runtime) Subscribe(ctx context.Context, cursor contracts.Cursor) (contr
 	if cursor.Tenant != r.config.Tenant {
 		return nil, fmt.Errorf("%w: %s is not this runtime's stream", ErrForeignRequest, cursor.Operation)
 	}
-	step, ok := r.scenario.Operations[cursor.Operation]
+	step, ok := r.operation(cursor.Operation, "")
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnscripted, cursor.Operation)
 	}
 	r.ledger.recordSubscription(cursor)
 	var frames []contracts.StreamFrame
 	if step.Stream != nil {
-		frames = step.Stream.Frames
+		frames = append(frames, step.Stream.Frames...)
+	}
+	r.mu.Lock()
+	decided := r.decided[cursor.Operation]
+	r.mu.Unlock()
+	if decided && step.AfterDecision != nil {
+		frames = append(frames, step.AfterDecision.Frames...)
 	}
 	return &scriptStream{control: r.config.Control, operation: cursor.Operation, frames: frames}, nil
 }
