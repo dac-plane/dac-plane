@@ -162,3 +162,10 @@ func secret(lookup func(string) (string, bool), name string) (string, error) {
 	}
 	return string(bytes.TrimRight(data, "\r\n")), nil
 }
+
+// LoadOperations reads only what probing the operations listener needs: its
+// address and the certificate it serves off loopback. Unlike Load it reads no
+// secrets, so a health check needs no database credentials.
+func LoadOperations(lookup func(string) (string, bool)) Config {
+	return Config{OpsAddr: setting(lookup, opsAddrEnv, defaultOpsAddr), TLSCertFile: setting(lookup, tlsCertFileEnv, "")}
+}
