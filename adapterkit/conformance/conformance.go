@@ -40,6 +40,10 @@ type Fixture struct {
 	Request wire.Request `json:"request"`
 	// Cursor, when set, is a stream the adapter serves.
 	Cursor *wire.Cursor `json:"cursor,omitempty"`
+	// StaleCursor, when set, is a stream the adapter answers with connected
+	// followed by cursor_too_old, as its provider scripts it. The resubscribe
+	// scenario runs only against it.
+	StaleCursor *wire.Cursor `json:"stale_cursor,omitempty"`
 }
 
 // Endpoint is where the adapter must connect.

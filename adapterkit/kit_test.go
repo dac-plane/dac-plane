@@ -25,7 +25,8 @@ const (
 
 // echoHandler is a minimal runtime adapter: it accepts each operation once
 // and answers redeliveries from the first reply, and serves a stream that
-// starts with connected.
+// starts with connected. Its stale stream follows connected with
+// cursor_too_old, as a provider that lost the cursor would.
 type echoHandler struct {
 	mu      sync.Mutex
 	replies map[string]wire.Reply
@@ -54,22 +55,30 @@ func (h *echoHandler) Cancel(context.Context, wire.Cancel) error {
 	return nil
 }
 
-func (h *echoHandler) Subscribe(context.Context, wire.Cursor) (adapterkit.Stream, error) {
-	return &connectedStream{}, nil
+func (h *echoHandler) Subscribe(_ context.Context, cursor wire.Cursor) (adapterkit.Stream, error) {
+	stream := &scriptedStream{script: []wire.StreamFrame{{Kind: wire.StreamConnected, ServerTime: time.Now().UTC()}}}
+	if cursor.Stream == staleStream {
+		stream.script = append(stream.script, wire.StreamFrame{Kind: wire.StreamCursorTooOld})
+	}
+	return stream, nil
 }
 
-type connectedStream struct{ sent bool }
+const staleStream = "stale"
 
-func (s *connectedStream) Next(ctx context.Context) (wire.StreamFrame, error) {
-	if !s.sent {
-		s.sent = true
-		return wire.StreamFrame{Kind: wire.StreamConnected, ServerTime: time.Now().UTC()}, nil
+// scriptedStream serves its script, then waits for cancellation.
+type scriptedStream struct{ script []wire.StreamFrame }
+
+func (s *scriptedStream) Next(ctx context.Context) (wire.StreamFrame, error) {
+	if len(s.script) > 0 {
+		frame := s.script[0]
+		s.script = s.script[1:]
+		return frame, nil
 	}
 	<-ctx.Done()
 	return wire.StreamFrame{}, io.EOF
 }
 
-func (s *connectedStream) Close() error { return nil }
+func (s *scriptedStream) Close() error { return nil }
 
 func testToken() adapterkit.TokenSource {
 	return func(context.Context) (adapterkit.Token, error) {
@@ -84,7 +93,8 @@ func fixture() conformance.Fixture {
 			Operation: operation, Tenant: tenant, Attempt: attempt, Role: wire.RoleRuntime, Method: "start_turn",
 			Arguments: json.RawMessage(`{"prompt":"hello"}`), Demand: "person",
 		},
-		Cursor: &wire.Cursor{Tenant: tenant, Attempt: attempt, Operation: operation, Stream: "dispatch", Generation: 1},
+		Cursor:      &wire.Cursor{Tenant: tenant, Attempt: attempt, Operation: operation, Stream: "dispatch", Generation: 1},
+		StaleCursor: &wire.Cursor{Tenant: tenant, Attempt: attempt, Operation: operation, Stream: staleStream, Generation: 1},
 	}
 }
 
