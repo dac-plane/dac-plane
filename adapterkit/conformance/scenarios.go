@@ -101,6 +101,90 @@ func scenarioSubscribe(ctx context.Context, h *harness, f Fixture) error {
 	return h.ping(ctx)
 }
 
+// cessationWindow bounds how long an unsubscribed stream must stay silent.
+// The scripted provider stream ends before an unsubscribe, so this closes
+// only what the kit does after cancelling a stream handler, but a kit that
+// keeps serving a cancelled subscription fails here deterministically.
+const cessationWindow = 2 * time.Second
+
+// event reads one event from the current connection, within the deadline.
+func event(ctx context.Context, h *harness, deadline time.Time) (*wire.Event, error) {
+	wait, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	frame, err := h.current.next(wait)
+	if err != nil {
+		return nil, err
+	}
+	if frame.Kind != wire.KindEvent {
+		return nil, fmt.Errorf("streamed a %s frame, want an event", frame.Kind)
+	}
+	return frame.Event, nil
+}
+
+// boundsCursor reports whether the event claims the subscribed stream.
+func boundsCursor(e *wire.Event, cursor wire.Cursor, provider string) bool {
+	return e.Tenant == cursor.Tenant && e.Attempt == cursor.Attempt && e.Operation == cursor.Operation &&
+		e.Stream == cursor.Stream && e.Provider == provider
+}
+
+// scenarioResubscribeRelay resubscribes the fixture cursor after the earlier
+// subscribe left the stream closed, and requires the kit to serve the script
+// again without state from the previous subscription. The cursor_too_old body
+// the provider scripts must travel verbatim for the control plane to decide
+// rehydration (ADR-0010). An unsubscribed stream then stays silent for the
+// bounded window; at most one stray event from the subscription cancelled a
+// moment before is tolerated while it drains on the shared connection.
+func scenarioResubscribeRelay(ctx context.Context, h *harness, f Fixture) error {
+	if f.Cursor == nil {
+		return nil
+	}
+	cursor := *f.Cursor
+	unsubscribe := wire.Frame{Kind: wire.KindUnsubscribe, Unsubscribe: &wire.Unsubscribe{Operation: cursor.Operation, Stream: cursor.Stream}}
+	for range 2 {
+		deadline := time.Now().Add(stepTimeout)
+		if err := h.current.write(ctx, wire.Frame{Kind: wire.KindSubscribe, Subscribe: &wire.Subscribe{Cursor: cursor}}); err != nil {
+			return err
+		}
+		connected := false
+		strays := 0
+		for !connected {
+			e, err := event(ctx, h, deadline)
+			if err != nil {
+				return err
+			}
+			if e.Body.Kind != wire.StreamConnected || e.Generation != cursor.Generation {
+				if strays++; strays > 1 {
+					return fmt.Errorf("event %+v, want the new subscription's connected event", e)
+				}
+				continue
+			}
+			if !boundsCursor(e, cursor, f.Provider) {
+				return fmt.Errorf("event binding %+v does not match the subscribed cursor", e)
+			}
+			connected = true
+		}
+		pushed, err := event(ctx, h, deadline)
+		if err != nil {
+			return fmt.Errorf("waiting for the relayed cursor_too_old: %w", err)
+		}
+		if pushed.Body.Kind != wire.StreamCursorTooOld || pushed.Generation != cursor.Generation {
+			return fmt.Errorf("streamed %+v, want the provider's cursor_too_old at the cursor", pushed)
+		}
+		if err := h.current.write(ctx, unsubscribe); err != nil {
+			return err
+		}
+		if err := h.ping(ctx); err != nil {
+			return err
+		}
+	}
+	// After the final unsubscribe, no event may arrive within the window.
+	deadline := time.Now().Add(cessationWindow)
+	if _, err := event(ctx, h, deadline); err == nil {
+		return errors.New("a cancelled subscription streamed an event")
+	}
+	return nil
+}
+
 func scenarioLiveness(ctx context.Context, h *harness, _ Fixture) error {
 	return h.ping(ctx)
 }

@@ -314,6 +314,10 @@ func (c *connection) deliverEvent(event contracts.Event) {
 		c.registry.droppedEvents.Add(1)
 		c.logger.Warn("dropped an event from an older stream generation", "operation", event.Operation.String(), "event_generation", event.Generation, "cursor_generation", stream.cursor.Generation)
 		return
+	case event.Body.Kind == contracts.StreamCleared:
+		// A cleared body survives a newer tagged generation: its NewGeneration
+		// names where the durable cursor advances to, and Ingest refuses one
+		// that does not exceed the cursor, so nothing else is accepted.
 	case event.Generation > stream.cursor.Generation:
 		// The adapter moved past the subscribed generation without a clear.
 		// Signal rehydration exactly as a cursor_too_old frame would, so the

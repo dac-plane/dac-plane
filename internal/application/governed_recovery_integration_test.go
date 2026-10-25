@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -155,6 +156,84 @@ func TestGovernedActionNeverSentReclaimRejects(t *testing.T) {
 	}
 	if n := len(e.Ledger().Subscriptions()); n != 0 {
 		t.Fatalf("never-sent action polled %d receipt streams", n)
+	}
+}
+
+// notDeliveredEnforcement proves the first send wrote nothing and then
+// delegates, so the retry is the delivery the provider records.
+type notDeliveredOnce struct {
+	inner        contracts.Port
+	notDelivered *atomic.Bool
+}
+
+func (p *notDeliveredOnce) Role() contracts.Role { return p.inner.Role() }
+
+func (p *notDeliveredOnce) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	if p.notDelivered.CompareAndSwap(false, true) {
+		return contracts.Reply{}, contracts.ErrNotDelivered
+	}
+	return p.inner.Send(ctx, request)
+}
+
+func (p *notDeliveredOnce) Cancel(ctx context.Context, cancel contracts.Cancel) error {
+	return p.inner.Cancel(ctx, cancel)
+}
+
+func (p *notDeliveredOnce) Subscribe(ctx context.Context, cursor contracts.Cursor) (contracts.Stream, error) {
+	return p.inner.Subscribe(ctx, cursor)
+}
+
+// TestGovernedActionNotDeliveredIsRetriedNotUncertain proves a governed send
+// the transport delivered nothing of is released, not resolved as an outcome:
+// the operation stays dispatched, the send marker is cleared, and the next
+// tick retries the send to its once-per-operation effect. Recording it as
+// send_unknown would park the action on reconciliation that can never see a
+// receipt for a request the provider never received.
+func TestGovernedActionNotDeliveredIsRetriedNotUncertain(t *testing.T) {
+	g := newGovernedFixture(t, false)
+	e := g.enforcement(t, simulator.AllowHook(), nil)
+	g.enforce(t, e, g.cmd)
+	var sawNotDelivered atomic.Bool
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery",
+		wiretest.Wrap(t, g.pool, g.tenant, g.provider, e, func(p contracts.Port) contracts.Port {
+			return &notDeliveredOnce{inner: p, notDelivered: &sawNotDelivered}
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !sawNotDelivered.Load() {
+		t.Fatal("the first send never returned proven not-delivered")
+	}
+	op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationDispatched {
+		t.Fatalf("not-delivered operation=%+v, %v; want dispatched", op, err)
+	}
+	var marker string
+	if err := g.pool.QueryRow(g.ctx, `select last_error from outbox where tenant_id=$1 and record_id=$2`, g.tenant.String(), g.cmd.Request.Operation.String()).Scan(&marker); err != nil || marker != "" {
+		t.Fatalf("released marker=%q, %v; want the send marker cleared", marker, err)
+	}
+	if got := e.Ledger().Deliveries(g.cmd.Request.Operation); got != 1 {
+		// One delivery is the pre-action hook the submission enforced; the
+		// not-delivered execute send must not have reached the provider.
+		t.Fatalf("deliveries=%d after a not-delivered send, want only the hook", got)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Ledger().Deliveries(g.cmd.Request.Operation); got != 2 {
+		t.Fatalf("deliveries=%d, want the retried delivery on top of the hook", got)
+	}
+	if got := e.Ledger().Effects(g.cmd.Request.Operation); got != 2 {
+		// One effect is the hook's own decision record; the retried execute
+		// adds exactly one resource.mutate — never a duplicate execution.
+		t.Fatalf("effects=%d, want the hook decision plus one execution", got)
+	}
+	op, err = store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationSucceeded {
+		t.Fatalf("retried operation=%+v, %v; want succeeded", op, err)
 	}
 }
 

@@ -352,9 +352,12 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		}
 		return nil, commit()
 	}
-	if row.Record == lifecycle.RecordAuthorityUse && operation.State != lifecycle.OperationRecorded {
+	if row.Record == lifecycle.RecordAuthorityUse && operation.State != lifecycle.OperationRecorded && (claim.Row.LastError != "" || row.Status == "processing") {
 		// A previous claim committed the send marker. Its effect is unknown
 		// after a crash; a replacement worker must never issue the action again.
+		// A released claim clears that marker, which proves the transport
+		// wrote nothing: the retry below sends it again, which the provider
+		// idempotently answers per operation.
 		event := lifecycle.OperationSendUnknown
 		if operation.State == lifecycle.OperationAccepted {
 			event = lifecycle.OperationOutcomeUnknown
@@ -462,12 +465,14 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			Role: body.Role, Method: body.Method, Arguments: body.Arguments, Demand: row.Demand, Deadline: body.Deadline}).Validate(); err != nil {
 			return exhaust(claim, reasonInvalidBody)
 		}
-		// Submission already records OperationDispatched when enqueueing.
-		// This static outbox marker distinguishes an actual send attempt from
-		// earlier yielded claims without changing the public lifecycle/schema.
-		if _, err := uow.Exec(ctx, `update outbox set last_error=$3 where tenant_id=$1 and outbox_id=$2`, tenant.String(), row.ID.String(), reasonSendStarted); err != nil {
-			return nil, err
-		}
+	}
+	// Submission already records OperationDispatched when enqueueing. This
+	// static outbox marker distinguishes an actual send attempt from earlier
+	// yielded claims; governed rows need the same distinction so a release for
+	// a proven-not-delivered send can retry it, while a lapsed claim must
+	// never issue the action again. It changes no public lifecycle/schema.
+	if _, err := uow.Exec(ctx, `update outbox set last_error=$3 where tenant_id=$1 and outbox_id=$2`, tenant.String(), row.ID.String(), reasonSendStarted); err != nil {
+		return nil, err
 	}
 	if err := store.CheckOutboxClaim(ctx, uow, tenant, row.ID, claim.Epoch); err != nil {
 		return nil, err

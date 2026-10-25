@@ -438,6 +438,21 @@ func TestAdapterWireEventsAreBoundToThePeerAndCursor(t *testing.T) {
 	if _, events := f.wire.Registry.Dropped(); events != int64(len(forged)+1) {
 		t.Fatalf("dropped events = %d, want %d (forged plus the stale generation)", events, len(forged)+1)
 	}
+	// A cleared body is not an observation: its NewGeneration names the
+	// generation the durable cursor advances to, so the boundary must keep
+	// it instead of relabeling it cursor_too_old and stalling recovery on a
+	// generation the replays never reach.
+	cleared := event(func(e *contracts.Event) {
+		e.Generation = cursor.Generation + 1
+		e.Body = contracts.StreamFrame{Kind: contracts.StreamCleared, NewGeneration: cursor.Generation + 1}
+	})
+	a.send(t, contracts.Frame{Kind: contracts.FrameEvent, Event: &cleared})
+	next3, cancel3 := context.WithTimeout(f.ctx, 5*time.Second)
+	defer cancel3()
+	frame, err = stream.Next(next3)
+	if err != nil || frame.Kind != contracts.StreamCleared || frame.NewGeneration != cursor.Generation+1 {
+		t.Fatalf("Next() = %+v, %v; want the preserved cleared body", frame, err)
+	}
 	_ = stream.Close()
 	if frame := a.next(t); frame.Kind != contracts.FrameUnsubscribe {
 		t.Fatalf("adapter received %s after Close, want unsubscribe", frame.Kind)

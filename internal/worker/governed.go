@@ -73,6 +73,13 @@ func (w *Worker) governedRow(ctx context.Context, tenant ids.TenantID, row store
 	defer cancel()
 	actionStarted := time.Now()
 	reply, sendErr := port.Send(sctx, request)
+	if errors.Is(sendErr, contracts.ErrNotDelivered) {
+		// The transport wrote nothing, so nothing can have taken effect and
+		// there is no uncertainty to reconcile: release the row exactly as
+		// dispatchRow does, and the next claim retries the send.
+		w.stats.SkippedNoPort.Add(1)
+		return w.releasePrepared(ctx, tenant, row, prepared, now, true)
+	}
 	var receipt *contracts.EnforcementReceipt
 	outcome := lifecycle.SendUnknown
 	code := contracts.FailureTransportUnavailable

@@ -3,7 +3,9 @@
 // control plane: it listens over TLS, waits for the adapter under test to
 // dial in, and drives scenarios over that connection: negotiation, request
 // and reply correlation, idempotent redelivery, rejection of foreign methods,
-// cancellation, subscription, liveness, reconnection after a close, and
+// cancellation, subscription, resubscription replaying the cursor's stream
+// with provider bodies such as cursor_too_old relayed verbatim, bounded
+// silence after an unsubscribe, liveness, reconnection after a close, and
 // refusal of malformed, binary, out-of-direction and mismatched frames.
 //
 // The harness checks protocol behavior only. Whether a provider's effects
@@ -107,6 +109,7 @@ func Check(ctx context.Context, target Target) []Result {
 		{"foreign method is rejected", scenarioForeignMethod},
 		{"cancel keeps the session", scenarioCancel},
 		{"subscribe streams from the cursor", scenarioSubscribe},
+		{"resubscribe replays the cursor and relays cursor_too_old", scenarioResubscribeRelay},
 		{"pings are answered", scenarioLiveness},
 		{"reconnects after a close", scenarioReconnect},
 		{"reconnects with an open stream", scenarioReconnectWithOpenStream},
