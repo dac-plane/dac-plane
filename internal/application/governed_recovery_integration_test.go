@@ -237,6 +237,43 @@ func TestGovernedActionNotDeliveredIsRetriedNotUncertain(t *testing.T) {
 	}
 }
 
+// TestGovernedActionNotDeliveredThenRevokedRejects proves the cleared send
+// marker carries into a give-up: an action the transport proved it never
+// delivered, whose grant is revoked before the retry, is rejected rather than
+// left uncertain waiting for a receipt the provider can never produce.
+func TestGovernedActionNotDeliveredThenRevokedRejects(t *testing.T) {
+	g := newGovernedFixture(t, true)
+	e := g.enforcement(t, simulator.AllowHook(), nil)
+	g.enforce(t, e, g.cmd)
+	var sawNotDelivered atomic.Bool
+	w, err := worker.New(g.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "governed-recovery",
+		wiretest.Wrap(t, g.pool, g.tenant, g.provider, e, func(p contracts.Port) contracts.Port {
+			return &notDeliveredOnce{inner: p, notDelivered: &sawNotDelivered}
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !sawNotDelivered.Load() {
+		t.Fatal("the first send never returned proven not-delivered")
+	}
+	if err := application.Revoke(g.ctx, g.pool, application.RevokeAuthority{Command: application.Command{Actor: g.actor, Nonce: "revoke-unsent"}, Grant: g.cmd.Grant, At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	op, err := store.GetOperation(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation)
+	if err != nil || op.State != lifecycle.OperationRejected {
+		t.Fatalf("revoked not-delivered operation=%+v, %v; want rejected", op, err)
+	}
+	if got := g.resource.Ledger().Effects(g.cmd.Request.Operation); got != 0 {
+		t.Fatalf("revoked action produced %d effects", got)
+	}
+}
+
 type receiptResetPort struct {
 	contracts.Port
 	tooOld            bool

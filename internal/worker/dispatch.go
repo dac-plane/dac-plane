@@ -279,7 +279,11 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		if err := store.ExhaustOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, reason, now); err != nil {
 			return nil, err
 		}
-		if err := w.abandonDispatch(ctx, uow, tenant, row, body.Operation, claim.Epoch == 1, now); err != nil {
+		// A governed row commits its send marker only for a send, and a
+		// proven-not-delivered release clears it again: without the marker no
+		// earlier claim reached the provider, whatever the epoch.
+		neverSent := claim.Epoch == 1 || (row.Record == lifecycle.RecordAuthorityUse && claim.Row.LastError == "" && row.Status != "processing")
+		if err := w.abandonDispatch(ctx, uow, tenant, row, body.Operation, neverSent, now); err != nil {
 			return nil, err
 		}
 		w.stats.Exhausts.Add(1)
