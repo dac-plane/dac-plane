@@ -1,3 +1,5 @@
+//go:build !operationstest
+
 package migrations
 
 import (
