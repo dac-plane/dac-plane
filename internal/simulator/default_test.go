@@ -94,9 +94,14 @@ func TestRuntimeWithoutDefaultStillRefusesUnscriptedWork(t *testing.T) {
 func TestRuntimeDefaultBindsNativeReferencesToEachOperation(t *testing.T) {
 	cfg := testConfig(t)
 	row := simulator.Row{Sequence: 1, Updated: 1, Kind: contracts.EntryRuntimeStarted, Payload: `{"native_ref":"session-${operation_id}"}`}
+	frame := simulator.RowsFrame(false, row)
+	omittedHash := identity.DigestOf([]byte("omitted payload"))
+	frame.Rows.Entries = append(frame.Rows.Entries, contracts.Entry{
+		Sequence: 2, UpdatedSequence: 2, Kind: "progress", PayloadHash: omittedHash, PayloadOmitted: true,
+	})
 	rt, err := simulator.NewRuntime(cfg, simulator.RuntimeScenario{Default: &simulator.RuntimeOp{
 		Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted,
-		Stream: &simulator.StreamScript{Frames: []contracts.StreamFrame{simulator.RowsFrame(false, row)}},
+		Stream: &simulator.StreamScript{Frames: []contracts.StreamFrame{frame}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +123,9 @@ func TestRuntimeDefaultBindsNativeReferencesToEachOperation(t *testing.T) {
 		want := `{"native_ref":"session-` + operation.String() + `"}`
 		if string(entry.Payload) != want || entry.PayloadHash != identity.DigestOf([]byte(want)) {
 			t.Fatalf("bound entry = %+v, want payload %s and its digest", entry, want)
+		}
+		if omitted := frame.Rows.Entries[1]; omitted.PayloadHash != omittedHash || !omitted.PayloadOmitted || len(omitted.Payload) != 0 {
+			t.Fatalf("omitted entry changed during binding: %+v", omitted)
 		}
 	}
 }

@@ -375,6 +375,9 @@ func bindDefaultStream(step RuntimeOp, operation ids.OperationID) RuntimeOp {
 			rows := *frame.Rows
 			rows.Entries = append([]contracts.Entry(nil), frame.Rows.Entries...)
 			for j := range rows.Entries {
+				if rows.Entries[j].PayloadOmitted {
+					continue
+				}
 				payload := bytes.ReplaceAll(rows.Entries[j].Payload, []byte("${operation_id}"), []byte(operation.String()))
 				rows.Entries[j].Payload = payload
 				rows.Entries[j].PayloadHash = identity.DigestOf(payload)
