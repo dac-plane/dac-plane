@@ -50,9 +50,9 @@ func TestMultiReplicaFencing(t *testing.T) {
 	h := newHarness(t, currentImage, currentImage)
 	h.start()
 	h.startSimulator()
+	h.registerNextPause("after_effect")
 	submitted := h.submit()
-	h.registerPause(submitted.Operation.ID, "after_effect")
-	h.waitPause(submitted.Operation.ID, "after_effect")
+	h.waitNextPause("after_effect")
 
 	first := h.waitClaim(submitted.Operation.ID, 1)
 	claimant := h.replicaForOwner(first.owner)
@@ -63,11 +63,11 @@ func TestMultiReplicaFencing(t *testing.T) {
 	if winning.owner == first.owner {
 		t.Fatalf("claim owner stayed %q after forced takeover", first.owner)
 	}
-	h.releasePause(submitted.Operation.ID, "after_effect")
+	h.releaseNextPause("after_effect")
 	t.Logf("released after-effect pause; operation=%s outbox=%s", h.operationState(submitted.Operation.ID), h.outboxState(submitted.Operation.ID))
 	h.waitOperationState(submitted.Operation.ID, lifecycle.OperationAccepted)
 	h.compose("unpause", claimant)
-	time.Sleep(500 * time.Millisecond)
+	h.waitStaleSettlement(claimant, submitted.Operation.ID)
 
 	h.assertLedger(submitted.Operation.ID, 1)
 	if evidence := h.ledgerEvidence(submitted.Operation.ID); evidence.Deliveries < 2 {
@@ -82,9 +82,9 @@ func TestProcessKillAndRestart(t *testing.T) {
 	h := newHarness(t, currentImage, currentImage)
 	h.start()
 	h.startSimulator()
+	h.registerNextPause("before_effect")
 	submitted := h.submit()
-	h.registerPause(submitted.Operation.ID, "before_effect")
-	h.waitPause(submitted.Operation.ID, "before_effect")
+	h.waitNextPause("before_effect")
 
 	first := h.waitClaim(submitted.Operation.ID, 1)
 	claimant := h.replicaForOwner(first.owner)
@@ -154,11 +154,15 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	attention := h.waitAttention()
 
 	h.replicaA = nextImage
+	connectionsA := h.adapterConnections("replica-a")
 	h.recreate("replica-a")
-	h.task(submitted.Task.ID)
+	h.waitAdapterReconnect("replica-a", connectionsA)
+	h.taskOn("replica-a", submitted.Task.ID)
 	h.replicaB = nextImage
+	connectionsB := h.adapterConnections("replica-b")
 	h.recreate("replica-b")
-	h.task(submitted.Task.ID)
+	h.waitAdapterReconnect("replica-b", connectionsB)
+	h.taskOn("replica-b", submitted.Task.ID)
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")
@@ -175,8 +179,6 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.review(submitted.Task.ID, ready)
 	h.waitTask(submitted.Task.ID, lifecycle.TaskSucceeded)
 	h.assertEffectKind(submitted.Operation.ID, "turn_started", 1)
-	h.waitAdapterReconnect("replica-a")
-	h.waitAdapterReconnect("replica-b")
 	t.Logf("upgrade evidence: schema=14 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
 }
 
@@ -242,18 +244,18 @@ func (h *harness) health(service string) {
 	}
 }
 
-func (h *harness) registerPause(operation ids.OperationID, boundary string) {
-	body := mustJSON(h.t, map[string]string{"role": "runtime", "operation_id": operation.String(), "boundary": boundary})
+func (h *harness) registerNextPause(boundary string) {
+	body := mustJSON(h.t, map[string]string{"role": "runtime", "boundary": boundary})
 	response := plainRequest(h.t, http.MethodPost, controlRoot+"/v1/pauses", body)
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(response.Body)
-		h.t.Fatalf("register pause = %d: %s", response.StatusCode, data)
+		h.t.Fatalf("register next pause = %d: %s", response.StatusCode, data)
 	}
 }
 
-func (h *harness) waitPause(operation ids.OperationID, boundary string) {
-	path := fmt.Sprintf("%s/v1/pauses/runtime/%s/%s", controlRoot, operation, boundary)
+func (h *harness) waitNextPause(boundary string) {
+	path := fmt.Sprintf("%s/v1/pauses/runtime/next/%s", controlRoot, boundary)
 	h.wait("simulator pause", func() bool {
 		response := plainRequest(h.t, http.MethodGet, path, nil)
 		defer func() { _ = response.Body.Close() }()
@@ -264,12 +266,12 @@ func (h *harness) waitPause(operation ids.OperationID, boundary string) {
 	})
 }
 
-func (h *harness) releasePause(operation ids.OperationID, boundary string) {
-	path := fmt.Sprintf("%s/v1/pauses/runtime/%s/%s/release", controlRoot, operation, boundary)
+func (h *harness) releaseNextPause(boundary string) {
+	path := fmt.Sprintf("%s/v1/pauses/runtime/next/%s/release", controlRoot, boundary)
 	response := plainRequest(h.t, http.MethodPost, path, nil)
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		h.t.Fatalf("release pause = %d", response.StatusCode)
+		h.t.Fatalf("release next pause = %d", response.StatusCode)
 	}
 }
 
@@ -371,10 +373,42 @@ func (h *harness) assertEffectKind(operation ids.OperationID, kind string, count
 	})
 }
 
-func (h *harness) waitAdapterReconnect(replica string) {
+type adapterConnectionCounts struct {
+	runtime  int
+	artifact int
+}
+
+func (h *harness) adapterConnections(replica string) adapterConnectionCounts {
+	logs, err := h.composeOutput("logs", "--no-color", "sim-adapter-operations")
+	if err != nil {
+		return adapterConnectionCounts{}
+	}
+	var counts adapterConnectionCounts
+	for line := range strings.Lines(logs) {
+		if !strings.Contains(line, `msg="adapter connected"`) || !strings.Contains(line, "endpoint=wss://"+replica+":9443") {
+			continue
+		}
+		switch {
+		case strings.Contains(line, "role=runtime"):
+			counts.runtime++
+		case strings.Contains(line, "role=artifact_store"):
+			counts.artifact++
+		}
+	}
+	return counts
+}
+
+func (h *harness) waitAdapterReconnect(replica string, before adapterConnectionCounts) {
 	h.wait("adapter reconnect to "+replica, func() bool {
-		logs, err := h.composeOutput("logs", "--no-color", "sim-adapter-operations")
-		return err == nil && strings.Count(logs, "adapter connected") >= 4 && strings.Count(logs, "endpoint=wss://"+replica+":9443") >= 4
+		after := h.adapterConnections(replica)
+		return after.runtime > before.runtime && after.artifact > before.artifact
+	})
+}
+
+func (h *harness) waitStaleSettlement(replica string, operation ids.OperationID) {
+	h.wait("stale settlement fencing", func() bool {
+		logs, err := h.composeOutput("logs", "--no-color", replica)
+		return err == nil && strings.Contains(logs, "stale dispatch settlement fenced") && strings.Contains(logs, operation.String())
 	})
 }
 
@@ -433,7 +467,11 @@ type taskResponse struct {
 }
 
 func (h *harness) task(task ids.TaskID) taskResponse {
-	response := apiRequest[httpapi.TaskBody](h, "replica-b", http.MethodGet, "/tasks/"+task.String(), nil, nil, http.StatusOK)
+	return h.taskOn("replica-b", task)
+}
+
+func (h *harness) taskOn(replica string, task ids.TaskID) taskResponse {
+	response := apiRequest[httpapi.TaskBody](h, replica, http.MethodGet, "/tasks/"+task.String(), nil, nil, http.StatusOK)
 	return taskResponse{response.body, response.header}
 }
 

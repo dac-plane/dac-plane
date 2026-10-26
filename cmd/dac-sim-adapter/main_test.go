@@ -59,7 +59,7 @@ func TestControlPausesAndReportsOneEffect(t *testing.T) {
 	server := httptest.NewServer(handler.routes())
 	t.Cleanup(server.Close)
 
-	pause := []byte(`{"role":"runtime","operation_id":"` + operation.String() + `","boundary":"after_effect"}`)
+	pause := []byte(`{"role":"runtime","boundary":"after_effect"}`)
 	response := controlRequest(t, http.MethodPost, server.URL+"/v1/pauses", pause)
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("register pause = %d", response.StatusCode)
@@ -77,7 +77,7 @@ func TestControlPausesAndReportsOneEffect(t *testing.T) {
 		done <- err
 	}()
 
-	path := "/v1/pauses/runtime/" + operation.String() + "/after_effect"
+	path := "/v1/pauses/runtime/next/after_effect"
 	deadline := time.Now().Add(time.Second)
 	for {
 		response = controlRequest(t, http.MethodGet, server.URL+path, nil)

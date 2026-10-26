@@ -246,7 +246,11 @@ operations-images:
     docker build --target dac-sim-adapter -t dac-sim-adapter:operations .
 
 [private]
-_test-operations filter: stack-certs operations-images
+test-operations-fixture:
+    go test -count=1 -tags=operationstest ./internal/platform/migrations/
+
+[private]
+_test-operations filter: stack-certs operations-images test-operations-fixture
     #!/usr/bin/env bash
     set -a
     source .work/stack/compose.env

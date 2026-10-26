@@ -49,8 +49,8 @@ operations-only fixture and never enters the production migration source.
 
 - `DAC_ADAPTER_URLS` lets the simulator keep concurrent connections to both replicas while sharing
   one runtime, artifact store and ledger; existing `DAC_ADAPTER_URL` remains the single-endpoint form.
-- `DAC_SIM_CONTROL_ADDR`, when set, starts a test-only HTTP listener for exact pause registration,
-  reached/release coordination, per-operation delivery/effect counts, and artifact digest/size
+- `DAC_SIM_CONTROL_ADDR`, when set, starts a test-only HTTP listener for exact or next-operation
+  pause registration, reached/release coordination, per-operation delivery/effect counts, and artifact digest/size
   inspection. It is absent by default and exposed only on host loopback by the operations overlay.
 - Validate every role, operation, boundary and request size. Return status/evidence only, never tokens
   or configuration.

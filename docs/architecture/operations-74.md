@@ -24,10 +24,10 @@ built by the recipes. Image identifiers from the observed run were:
 
 | Fixture | Image identifier |
 |---|---|
-| pinned old control plane | `sha256:39b650be20aa2ec43423012db49b57eb174813591d32d01f8b15afc237aab3bb` |
-| current control plane | `sha256:d2bb5b434a86c7902ed4f5587d1b9b8e94c866f9682d0b2ffe8b43ccc7d2776e` |
-| operations next release | `sha256:986d463432bdb515b440ff7ee6c208aa74c7d16c00e72f1eaef9106f916cbe0e` |
-| operations simulator | `sha256:325cdf1c7ee08bd29ef9bba968a54dc91d54078939a2cc5917ea460b38ceda47` |
+| pinned old control plane | `sha256:bee1f8146d020c3d9f8ad35bfd7ffd44c65c31c33e2d055ad66b71d569b5b8b3` |
+| current control plane | `sha256:944e62eca42eb7c65cffb0db476ba0f994cbd02a44402ff70072148044470d94` |
+| operations next release | `sha256:4f36dfd82c723ed5e3698d61d4d18837cc627175a601f99e90fdf0305dd6945e` |
+| operations simulator | `sha256:e5f578c900327e33385ca8750cc8bcafabdebe927c62e9f4960eee726658132b` |
 
 These are local OCI image identifiers, not registry digests.
 
@@ -91,7 +91,7 @@ exactly one start effect across the rolling replacement. Duration: 28.28 seconds
 
 ## Limits
 
-The aggregate `just test-operations` run passed all four scenarios in 113.554 seconds. The same
+The aggregate `just test-operations` run passed all four scenarios in 108.811 seconds. The same
 recipe is the blocking CI entry point.
 
 This evidence covers Docker Compose, two control-plane processes and one PostgreSQL primary. The

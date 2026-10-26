@@ -669,6 +669,9 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 			return nil
 		}
 		if err := store.CheckAttemptLease(ctx, uow, tenant, prepared.operation.Attempt, prepared.lease); err != nil {
+			if errors.Is(err, store.ErrStaleVersion) {
+				w.logger.Info("stale dispatch settlement fenced", "operation", prepared.operation.ID.String(), "claim_epoch", prepared.claim.Epoch)
+			}
 			return err
 		}
 		event := reply.Durability.Event()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -120,6 +121,33 @@ func TestControlCancelledAfterEffectLeavesOneEffect(t *testing.T) {
 	}
 	if got := sim.Ledger().Deliveries(operation); got != 2 {
 		t.Fatalf("deliveries after redelivery = %d, want 2", got)
+	}
+}
+
+func TestControlCanPauseTheNextOperation(t *testing.T) {
+	config := testConfig(t)
+	operation := mustID[ids.Operation](t)
+	sim := newRuntime(t, config, map[ids.OperationID]simulator.RuntimeOp{
+		operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+	})
+	pause := sim.Control().Pause(ids.OperationID{}, simulator.BeforeEffect)
+	request := newRequest(t, config, operation, contracts.MethodStartTurn)
+	done := make(chan error, 1)
+	go func() {
+		_, err := sim.Send(context.Background(), request)
+		done <- err
+	}()
+	select {
+	case <-pause.Reached():
+	case <-time.After(time.Second):
+		t.Fatal("the next-operation pause was not reached")
+	}
+	if got := sim.Ledger().Effects(operation); got != 0 {
+		t.Fatalf("effects before release = %d, want 0", got)
+	}
+	pause.Release()
+	if err := <-done; err != nil {
+		t.Fatalf("Send() error = %v", err)
 	}
 }
 

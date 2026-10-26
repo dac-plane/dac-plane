@@ -91,7 +91,7 @@ func (h *controlHandler) registerPause(w http.ResponseWriter, r *http.Request) {
 	limited := http.MaxBytesReader(w, r.Body, controlBodyLimit)
 	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || request.Operation.IsZero() {
+	if err := decoder.Decode(&request); err != nil {
 		controlError(w, http.StatusBadRequest, "malformed pause")
 		return
 	}
@@ -218,9 +218,13 @@ func (h *controlHandler) endpoint(role contracts.Role) (*simulator.Control, *sim
 }
 
 func parsePausePath(r *http.Request) (pauseKey, bool) {
-	operation, err := ids.Parse[ids.Operation](r.PathValue("operation"))
-	if err != nil {
-		return pauseKey{}, false
+	var operation ids.OperationID
+	if r.PathValue("operation") != "next" {
+		var err error
+		operation, err = ids.Parse[ids.Operation](r.PathValue("operation"))
+		if err != nil {
+			return pauseKey{}, false
+		}
 	}
 	key := pauseKey{role: contracts.Role(r.PathValue("role")), operation: operation, boundary: simulator.Boundary(r.PathValue("boundary"))}
 	if key.boundary != simulator.BeforeEffect && key.boundary != simulator.AfterEffect && key.boundary != simulator.BeforeFrame {
