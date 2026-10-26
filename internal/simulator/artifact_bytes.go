@@ -40,6 +40,19 @@ func (s *ByteArtifactStore) Role() contracts.Role       { return contracts.RoleA
 func (s *ByteArtifactStore) Hello() contracts.Lifecycle { return s.config.Hello }
 func (s *ByteArtifactStore) Control() *Control          { return s.config.Control }
 func (s *ByteArtifactStore) Ledger() *Ledger            { return s.ledger }
+
+// Stored returns the current byte observation for artifact. It is used by
+// the separate-process qualification fixture to compare external bytes with
+// restored product metadata; it does not expose the bytes themselves.
+func (s *ByteArtifactStore) Stored(artifact ids.ArtifactID) lifecycle.StoredObject {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, present := s.staged[artifact]
+	if !present {
+		return lifecycle.StoredObject{}
+	}
+	return lifecycle.StoredObject{Present: true, Digest: identity.DigestOf(data), Size: uint64(len(data))}
+}
 func (s *ByteArtifactStore) Cancel(ctx context.Context, c contracts.Cancel) error {
 	if err := ctx.Err(); err != nil {
 		return err

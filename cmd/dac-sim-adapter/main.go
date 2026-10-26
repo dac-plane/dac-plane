@@ -7,7 +7,8 @@
 //
 // Settings come from the environment:
 //
-//	DAC_ADAPTER_URL                 the adapter endpoint (required)
+//	DAC_ADAPTER_URL                 one adapter endpoint, or
+//	DAC_ADAPTER_URLS                comma-separated endpoints for operations tests
 //	DAC_ADAPTER_CA_FILE             PEM roots to trust; empty uses the system roots
 //	DAC_ADAPTER_TOKEN_FILE          a JWT access token file, as the conformance contract passes it
 //	DAC_ADAPTER_TOKEN_URL           or: an OAuth token endpoint for client credentials, with
@@ -16,6 +17,7 @@
 //	DAC_ADAPTER_SCOPE               the scope naming the adapter endpoint's audience, and, when
 //	                                the scenario has an artifact store, its own client in
 //	DAC_ARTIFACT_STORE_CLIENT_ID and DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE
+//	DAC_SIM_CONTROL_ADDR            optional simulator evidence listener (tests only)
 package main
 
 import (
@@ -88,6 +90,12 @@ type adapter struct {
 	token    adapterkit.TokenSource
 }
 
+type simulatorSet struct {
+	adapters []adapter
+	runtime  *simulator.Runtime
+	store    *simulator.ByteArtifactStore
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stderr))
 }
@@ -105,33 +113,46 @@ func run(args []string, stderr io.Writer) int {
 	if err != nil {
 		return fail(2, err)
 	}
-	url := os.Getenv("DAC_ADAPTER_URL")
-	if url == "" {
-		return fail(2, errors.New("DAC_ADAPTER_URL is required"))
+	urls, err := adapterURLs(os.Getenv("DAC_ADAPTER_URL"), os.Getenv("DAC_ADAPTER_URLS"))
+	if err != nil {
+		return fail(2, err)
 	}
 	tlsConfig, err := trust(os.Getenv("DAC_ADAPTER_CA_FILE"))
 	if err != nil {
 		return fail(2, err)
 	}
-	adapters, err := scenario.adapters(tlsConfig)
+	set, err := scenario.adapters(tlsConfig)
 	if err != nil {
 		return fail(2, err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
-	errs := make(chan error, len(adapters))
+	workers := len(urls)*len(set.adapters) + 1
+	errs := make(chan error, workers)
 	var wg sync.WaitGroup
-	for _, a := range adapters {
+	for _, endpoint := range urls {
+		for _, a := range set.adapters {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := adapterkit.Run(ctx, adapterkit.Config{
+					URL: endpoint, Provider: a.provider, Role: a.role, Handler: simulator.Handler(a.port),
+					Token: a.token, TLS: tlsConfig, Logger: logger.With("role", string(a.role), "endpoint", endpoint),
+				})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					errs <- fmt.Errorf("%s at %s: %w", a.role, endpoint, err)
+					stop()
+				}
+			}()
+		}
+	}
+	if addr := strings.TrimSpace(os.Getenv("DAC_SIM_CONTROL_ADDR")); addr != "" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := adapterkit.Run(ctx, adapterkit.Config{
-				URL: url, Provider: a.provider, Role: a.role, Handler: simulator.Handler(a.port),
-				Token: a.token, TLS: tlsConfig, Logger: logger.With("role", string(a.role)),
-			})
-			if err != nil && !errors.Is(err, context.Canceled) {
-				errs <- fmt.Errorf("%s: %w", a.role, err)
+			if err := serveControl(ctx, addr, set, logger.With("component", "control")); err != nil && !errors.Is(err, context.Canceled) {
+				errs <- err
 				stop()
 			}
 		}()
@@ -146,6 +167,30 @@ func run(args []string, stderr io.Writer) int {
 		return fail(1, err)
 	}
 	return 0
+}
+
+func adapterURLs(single, multiple string) ([]string, error) {
+	single, multiple = strings.TrimSpace(single), strings.TrimSpace(multiple)
+	if single != "" && multiple != "" {
+		return nil, errors.New("set DAC_ADAPTER_URL or DAC_ADAPTER_URLS, not both")
+	}
+	if single != "" {
+		return []string{single}, nil
+	}
+	seen := map[string]bool{}
+	var urls []string
+	for _, endpoint := range strings.Split(multiple, ",") {
+		endpoint = strings.TrimSpace(endpoint)
+		if endpoint == "" || seen[endpoint] {
+			continue
+		}
+		seen[endpoint] = true
+		urls = append(urls, endpoint)
+	}
+	if len(urls) == 0 {
+		return nil, errors.New("DAC_ADAPTER_URL or DAC_ADAPTER_URLS is required")
+	}
+	return urls, nil
 }
 
 // readScenario reads and validates the scenario file.
@@ -165,7 +210,7 @@ func readScenario(path string) (scenarioFile, error) {
 
 // adapters builds the runtime, and the artifact store it exports to when
 // the scenario names one, each with its own token source.
-func (s scenarioFile) adapters(tlsConfig *tls.Config) ([]adapter, error) {
+func (s scenarioFile) adapters(tlsConfig *tls.Config) (*simulatorSet, error) {
 	tenant, err := ids.Parse[ids.Tenant](s.Tenant)
 	if err != nil {
 		return nil, fmt.Errorf("scenario: tenant_id: %w", err)
@@ -189,9 +234,10 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config) ([]adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	adapters := []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken}}
+	set := &simulatorSet{runtime: runtime}
+	set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken}}
 	if s.ArtifactStore == nil {
-		return adapters, nil
+		return set, nil
 	}
 	storeID, err := ids.Parse[ids.Provider](s.ArtifactStore.Provider)
 	if err != nil {
@@ -206,11 +252,13 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config) ([]adapter, error) {
 		fixtures[ref] = []byte(text)
 	}
 	runtime.WithArtifactExport(store, fixtures)
+	set.store = store
 	storeToken, err := tokenSource("DAC_ARTIFACT_STORE", tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	return append(adapters, adapter{provider: s.ArtifactStore.Provider, role: wire.RoleArtifactStore, port: store, token: storeToken}), nil
+	set.adapters = append(set.adapters, adapter{provider: s.ArtifactStore.Provider, role: wire.RoleArtifactStore, port: store, token: storeToken})
+	return set, nil
 }
 
 func (s scenarioFile) runtimeScenario() (simulator.RuntimeScenario, error) {

@@ -53,6 +53,9 @@ func TestArtifactByteStoreHashesAndFreezesExactBytes(t *testing.T) {
 	if err = s.Upload(upload, []byte("correct")); err != nil {
 		t.Fatal(err)
 	}
+	if stored := s.Stored(m.Artifact); !stored.Present || stored.Digest != m.Digest || stored.Size != m.Size {
+		t.Fatalf("Stored() = %+v, want manifest bytes", stored)
+	}
 	var committed contracts.ArtifactCommitted
 	if err = json.Unmarshal(send(m.Operation, contracts.MethodCommitManifest).Result, &committed); err != nil {
 		t.Fatal(err)
