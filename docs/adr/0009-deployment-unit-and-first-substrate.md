@@ -1,6 +1,7 @@
 # ADR-0009: Ship one container image, migrated by an explicit step, on a reference Compose stack
 
-- Status: Accepted
+- Status: Accepted; schema-rollout ordering superseded by
+  [ADR-0011](0011-roll-compatible-binaries-before-schema-migrations.md)
 - Date: 2026-10-22
 - Issue: [#68](https://github.com/dac-plane/dac-plane/issues/68)
 

@@ -40,16 +40,20 @@ On first database initialization, `init-db.sh` creates two roles:
 - `dac_serve` receives connect, schema usage, table DML and sequence-use privileges through default
   privileges. It has no schema-creation or migration privilege.
 
-The migration job must finish successfully before a serving replica starts. Serving replicas never
-run migrations and refuse a schema older than `MinServeVersion` or newer than `CurrentVersion`.
+The migration job initializes a fresh database before its first serving replica starts. During an
+upgrade, follow ADR-0011's binary-first sequence below. Serving replicas never run migrations and
+refuse a schema older than `MinServeVersion` or newer than `CurrentVersion`.
 
 ## Upgrade and rollback
 
-Use expand-then-contract migrations. First deploy and complete the new image's `migrate up` job;
-then roll the `serve` replicas. Do not mix a destructive contract migration into the same rollout
-that still has old replicas.
+Use expand-then-contract migrations. First verify that the new image serves the current database
+schema, then roll every `serve` replica to that image while the schema remains unchanged. Confirm no
+old process or adapter connection remains, run the new image's `migrate up` job, and verify every
+replica is ready before completing the rollout. Do not mix a destructive contract migration into the
+same rollout that still has binaries which need the old shape.
 
-A binary rollback is safe only while the database remains inside that binary's declared serving
+Before migration, rollback by restoring the old image against the unchanged schema. After migration,
+a binary rollback is safe only while the database remains inside that binary's declared serving
 range. Check with `dac-plane migrate status` before rolling back. `migrate down-to` refuses a
 downgrade when it would discard durable evidence; that refusal is an operator stop condition, not a
 prompt to delete data.
