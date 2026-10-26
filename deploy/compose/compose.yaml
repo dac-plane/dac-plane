@@ -1,0 +1,103 @@
+name: dac-plane
+
+services:
+  postgres:
+    image: postgres:16.15-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    environment:
+      POSTGRES_DB: dac
+      POSTGRES_USER: dac_migrate
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_migrate_password
+    secrets:
+      - postgres_migrate_password
+      - postgres_serve_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dac_migrate -d dac"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    image: ${DAC_PLANE_IMAGE:-dac-plane:dev}
+    build:
+      context: ../..
+      target: dac-plane
+    command: ["migrate", "up"]
+    environment:
+      DAC_DATABASE_URL_FILE: /run/secrets/database_url
+    secrets:
+      - source: migrate_database_url
+        target: database_url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: "no"
+
+  dac-plane:
+    image: ${DAC_PLANE_IMAGE:-dac-plane:dev}
+    build:
+      context: ../..
+      target: dac-plane
+    command: ["serve"]
+    environment:
+      DAC_DATABASE_URL_FILE: /run/secrets/database_url
+      DAC_IDENTITY_CONFIG_FILE: /run/config/identity.json
+      DAC_SURFACE_ADDR: :8443
+      DAC_ADAPTER_ADDR: :9443
+      DAC_OPS_ADDR: 127.0.0.1:8081
+      DAC_TLS_CERT_FILE: /run/config/tls.crt
+      DAC_TLS_KEY_FILE: /run/secrets/tls.key
+      DAC_DEPLOYMENT: ${DAC_DEPLOYMENT:-production}
+    secrets:
+      - source: serve_database_url
+        target: database_url
+      - source: tls_key
+        target: tls.key
+    configs:
+      - source: identity_config
+        target: /run/config/identity.json
+      - source: tls_cert
+        target: /run/config/tls.crt
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${DAC_SURFACE_PORT:-8443}:8443"
+      - "${DAC_ADAPTER_PORT:-9443}:9443"
+    healthcheck:
+      test: ["CMD", "/dac-plane", "health", "ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+
+configs:
+  identity_config:
+    file: ${DAC_IDENTITY_CONFIG_FILE:?set DAC_IDENTITY_CONFIG_FILE}
+  tls_cert:
+    file: ${DAC_TLS_CERT_FILE:?set DAC_TLS_CERT_FILE}
+
+secrets:
+  postgres_migrate_password:
+    file: ${DAC_POSTGRES_MIGRATE_PASSWORD_FILE:?set DAC_POSTGRES_MIGRATE_PASSWORD_FILE}
+  postgres_serve_password:
+    file: ${DAC_POSTGRES_SERVE_PASSWORD_FILE:?set DAC_POSTGRES_SERVE_PASSWORD_FILE}
+  migrate_database_url:
+    file: ${DAC_MIGRATE_DATABASE_URL_FILE:?set DAC_MIGRATE_DATABASE_URL_FILE}
+  serve_database_url:
+    file: ${DAC_SERVE_DATABASE_URL_FILE:?set DAC_SERVE_DATABASE_URL_FILE}
+  tls_key:
+    file: ${DAC_TLS_KEY_FILE:?set DAC_TLS_KEY_FILE}

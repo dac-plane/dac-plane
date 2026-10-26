@@ -1,0 +1,77 @@
+# Reference Compose deployment
+
+This directory is the first deployment substrate defined by
+[ADR-0009](../../docs/adr/0009-deployment-unit-and-first-substrate.md). The base stack runs a
+PostgreSQL primary, a one-shot migration job and the `dac-plane serve` process. The development
+overlay adds a TLS test issuer, trusted provisioning jobs and the separate-process simulator for
+the runtime and artifact-store roles.
+
+The base stack is production-shaped, not a production platform. It deliberately leaves database
+high availability, backup and restore, ingress, certificate issuance, secret distribution and
+orchestration to the operator.
+
+## Configuration
+
+Pass an env file to Compose. Every path below is a host path; Compose mounts the contents into the
+container as a secret or config.
+
+| Variable | Required | Purpose |
+|---|---:|---|
+| `DAC_PLANE_IMAGE` | no | Published `dac-plane` image; defaults to the local `dac-plane:dev` build. |
+| `DAC_DEPLOYMENT` | no | `production` by default. Only `development` accepts a development issuer. |
+| `DAC_SURFACE_PORT` | no | Published Surface HTTPS port; defaults to `8443`. |
+| `DAC_ADAPTER_PORT` | no | Published adapter WebSocket TLS port; defaults to `9443`. |
+| `DAC_IDENTITY_CONFIG_FILE` | yes | OIDC issuer configuration. |
+| `DAC_TLS_CERT_FILE` | yes | PEM server certificate. |
+| `DAC_TLS_KEY_FILE` | yes | PEM server private key. |
+| `DAC_POSTGRES_MIGRATE_PASSWORD_FILE` | yes | Password used by the schema-owning role. |
+| `DAC_POSTGRES_SERVE_PASSWORD_FILE` | yes | Password used by the DML-only serving role. |
+| `DAC_MIGRATE_DATABASE_URL_FILE` | yes | PostgreSQL URL for the migration job. |
+| `DAC_SERVE_DATABASE_URL_FILE` | yes | PostgreSQL URL for serving replicas. |
+
+The image also accepts the corresponding process settings described by `dac-plane help`. Secret
+values belong in files, not in this table, the environment file, logs or command arguments.
+
+## Database privileges
+
+On first database initialization, `init-db.sh` creates two roles:
+
+- `dac_migrate` owns the database and runs schema migrations under the migration advisory lock.
+- `dac_serve` receives connect, schema usage, table DML and sequence-use privileges through default
+  privileges. It has no schema-creation or migration privilege.
+
+The migration job must finish successfully before a serving replica starts. Serving replicas never
+run migrations and refuse a schema older than `MinServeVersion` or newer than `CurrentVersion`.
+
+## Upgrade and rollback
+
+Use expand-then-contract migrations. First deploy and complete the new image's `migrate up` job;
+then roll the `serve` replicas. Do not mix a destructive contract migration into the same rollout
+that still has old replicas.
+
+A binary rollback is safe only while the database remains inside that binary's declared serving
+range. Check with `dac-plane migrate status` before rolling back. `migrate down-to` refuses a
+downgrade when it would discard durable evidence; that refusal is an operator stop condition, not a
+prompt to delete data.
+
+TLS certificates are reloaded from their mounted files for new connections. Rotate the certificate
+and key atomically and keep the old certificate valid long enough for existing connections to drain.
+
+## Development profile
+
+From the repository root:
+
+```sh
+just stack-certs
+just stack-up
+just stack-down
+```
+
+`stack-certs` writes a throwaway CA, server certificates, database passwords, OAuth client secrets
+and an env file under `.work/stack/`. The directory is ignored by Git. `just test-stack` starts a
+clean stack, checks container readiness, drives submit through accepted review over HTTPS, prints
+logs on failure and removes the database volume afterward.
+
+The development profile's mock issuer, fixed tenant/provider identities, generated credentials and
+simulator results are test fixtures. They are not production identity, provider qualification,
+secret management or evidence that a real runtime behaves correctly.

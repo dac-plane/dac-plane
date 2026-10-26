@@ -1,0 +1,158 @@
+x-provision: &provision
+  image: ${DAC_PLANE_IMAGE:-dac-plane:dev}
+  environment:
+    DAC_DATABASE_URL_FILE: /run/secrets/database_url
+  secrets:
+    - source: migrate_database_url
+      target: database_url
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+  profiles: ["dev"]
+  read_only: true
+  tmpfs:
+    - /tmp
+  restart: "no"
+
+services:
+  issuer:
+    image: ghcr.io/navikt/mock-oauth2-server:6.0.5@sha256:5ed2f078c6503147860a5114f06414257bb7eeccc68b0e806bdf0869f2602509
+    environment:
+      JSON_CONFIG_PATH: /run/config/issuer.json
+      SERVER_PORT: "8443"
+    configs:
+      - source: issuer_config
+        target: /run/config/issuer.json
+      - source: issuer_keystore
+        target: /run/config/issuer.p12
+    ports:
+      - "${DAC_ISSUER_PORT:-18080}:8443"
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/isalive"]
+      start_period: 5s
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    profiles: ["dev"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  provision-tenant:
+    <<: *provision
+    command: ["provision", "tenant", "-id", "01a167fd-51d9-76ba-b563-496e2bd89646"]
+
+  provision-owner:
+    <<: *provision
+    command: ["provision", "principal", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-kind", "human", "-id", "01a167fd-51d9-7a11-9f2e-5b4b3c2a1d00"]
+    depends_on:
+      provision-tenant:
+        condition: service_completed_successfully
+
+  provision-owner-binding:
+    <<: *provision
+    command: ["provision", "bind", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-principal", "01a167fd-51d9-7a11-9f2e-5b4b3c2a1d00", "-issuer", "https://issuer:8443/default", "-subject", "surface-owner"]
+    depends_on:
+      provision-owner:
+        condition: service_completed_successfully
+
+  provision-artifact-store:
+    <<: *provision
+    command: ["provision", "register-provider", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-role", "artifact_store", "-id", "01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11"]
+    depends_on:
+      provision-owner-binding:
+        condition: service_completed_successfully
+
+  provision-runtime:
+    <<: *provision
+    command: ["provision", "register-provider", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-role", "runtime", "-id", "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10", "-artifact-store", "01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11"]
+    depends_on:
+      provision-artifact-store:
+        condition: service_completed_successfully
+
+  provision-runtime-binding:
+    <<: *provision
+    command: ["provision", "bind-adapter", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-provider", "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10", "-role", "runtime", "-issuer", "https://issuer:8443/default", "-subject", "runtime-adapter"]
+    depends_on:
+      provision-runtime:
+        condition: service_completed_successfully
+
+  provision-artifact-binding:
+    <<: *provision
+    command: ["provision", "bind-adapter", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-provider", "01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11", "-role", "artifact_store", "-issuer", "https://issuer:8443/default", "-subject", "artifact-adapter"]
+    depends_on:
+      provision-runtime-binding:
+        condition: service_completed_successfully
+
+  provision-qualify:
+    <<: *provision
+    command: ["provision", "qualify-harness", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-provider", "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10", "-mode", "live"]
+    depends_on:
+      provision-artifact-binding:
+        condition: service_completed_successfully
+
+  dac-plane:
+    environment:
+      DAC_DEPLOYMENT: development
+      SSL_CERT_FILE: /run/config/ca.crt
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+    depends_on:
+      issuer:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+
+  sim-adapter:
+    image: ${DAC_SIM_ADAPTER_IMAGE:-dac-sim-adapter:dev}
+    build:
+      context: ../..
+      target: dac-sim-adapter
+    command: ["/run/config/scenario.json"]
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ADAPTER_CLIENT_ID: runtime-adapter
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/runtime_client_secret
+      DAC_ARTIFACT_STORE_CLIENT_ID: artifact-adapter
+      DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+      - source: sim_scenario
+        target: /run/config/scenario.json
+    secrets:
+      - runtime_client_secret
+      - artifact_client_secret
+    depends_on:
+      dac-plane:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+    profiles: ["dev"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+configs:
+  identity_config:
+    file: ./identity.dev.json
+  issuer_config:
+    file: ./issuer.dev.json
+  issuer_keystore:
+    file: ${DAC_ISSUER_KEYSTORE_FILE:?set DAC_ISSUER_KEYSTORE_FILE}
+  dev_ca:
+    file: ${DAC_CA_FILE:?set DAC_CA_FILE}
+  sim_scenario:
+    file: ./scenario.dev.json
+
+secrets:
+  runtime_client_secret:
+    file: ${DAC_RUNTIME_CLIENT_SECRET_FILE:?set DAC_RUNTIME_CLIENT_SECRET_FILE}
+  artifact_client_secret:
+    file: ${DAC_ARTIFACT_CLIENT_SECRET_FILE:?set DAC_ARTIFACT_CLIENT_SECRET_FILE}

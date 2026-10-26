@@ -1,0 +1,22 @@
+{
+  "issuers": [
+    {
+      "issuer": "https://issuer:8443/default",
+      "audience": "dac-plane-surface",
+      "algorithms": ["RS256"],
+      "max_token_lifetime_seconds": 600,
+      "require_access_token_type": false,
+      "development": true
+    }
+  ],
+  "adapter_issuers": [
+    {
+      "issuer": "https://issuer:8443/default",
+      "audience": "dac-plane-adapters",
+      "algorithms": ["RS256"],
+      "max_token_lifetime_seconds": 600,
+      "require_access_token_type": false,
+      "development": true
+    }
+  ]
+}
