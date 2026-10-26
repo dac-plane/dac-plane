@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/config"
@@ -47,8 +48,9 @@ func probe(cfg config.Config, path string) error {
 	scheme := "http"
 	if !cfg.OpsLoopback() {
 		// A listener bound off loopback serves TLS; dial it on loopback
-		// and accept exactly the certificate it is configured to serve.
-		host = "127.0.0.1"
+		// when it uses a wildcard address and accept exactly the certificate
+		// it is configured to serve.
+		host = healthDialHost(host)
 		tlsConfig, err := pinnedTLSConfig(cfg.TLSCertFile)
 		if err != nil {
 			return err
@@ -73,18 +75,38 @@ func pinnedTLSConfig(certFile string) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	serverName := ""
-	if len(leaf.DNSNames) > 0 {
-		serverName = leaf.DNSNames[0]
-	} else if len(leaf.IPAddresses) > 0 {
-		serverName = leaf.IPAddresses[0].String()
-	}
+	serverName := healthServerName(leaf)
 	if serverName == "" {
 		return nil, errors.New("DAC_TLS_CERT_FILE certificate needs a DNS or IP subject alternative name")
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
 	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: serverName}, nil
+}
+
+func healthDialHost(host string) string {
+	ip := net.ParseIP(host)
+	if host == "" || (ip != nil && ip.IsUnspecified() && ip.To4() != nil) {
+		return "127.0.0.1"
+	}
+	if ip != nil && ip.IsUnspecified() {
+		return "::1"
+	}
+	return host
+}
+
+func healthServerName(leaf *x509.Certificate) string {
+	if len(leaf.DNSNames) > 0 {
+		name := leaf.DNSNames[0]
+		if strings.HasPrefix(name, "*.") {
+			return "health." + strings.TrimPrefix(name, "*.")
+		}
+		return name
+	}
+	if len(leaf.IPAddresses) > 0 {
+		return leaf.IPAddresses[0].String()
+	}
+	return ""
 }
 
 func servedLeaf(certFile string) (*x509.Certificate, error) {
