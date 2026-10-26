@@ -56,7 +56,7 @@ vet:
 # integration tag, so they need their own vet pass.
 [group('check')]
 vet-integration:
-    go vet -tags='integration stack' ./...
+    go vet -tags='integration stack operationstest' ./...
 
 # Keep simulator and conformance implementations out of the release process.
 [group('check')]
@@ -228,6 +228,54 @@ test-stack: stack-certs
     DAC_MIGRATE_DATABASE_URL_FILE="$out_dsn" "${compose[@]}" run --rm migrate migrate down-to 11
     if refusal=$(DAC_SERVE_DATABASE_URL_FILE="$out_dsn" "${compose[@]}" run --rm --no-deps dac-plane serve 2>&1); then echo "serve accepted an out-of-range schema"; exit 1; fi
     case "$refusal" in *"schema version is outside the range"*) ;; *) echo "$refusal"; exit 1;; esac
+
+# Build the current, pinned-old, next-release fixture and simulator images used
+# only by the #74 operations suite. The archived checkout stays under ignored
+# scratch and is removed even when its build fails.
+[private]
+operations-images:
+    #!/usr/bin/env bash
+    mkdir -p .work/operations
+    old_src=$(mktemp -d "$PWD/.work/operations/old-src.XXXXXX")
+    cleanup() { rm -rf -- "$old_src"; }
+    trap cleanup EXIT
+    git archive ca20b3e7438707f58d8735251f8ffb8abc5a7a32 | tar -x -C "$old_src"
+    docker build --target dac-plane -t dac-plane:operations-old "$old_src"
+    docker build --target dac-plane -t dac-plane:operations-current .
+    docker build --target dac-plane-operationstest -t dac-plane:operations-next .
+    docker build --target dac-sim-adapter -t dac-sim-adapter:operations .
+
+[private]
+test-operations-fixture:
+    go test -count=1 -tags=operationstest ./internal/platform/migrations/
+
+[private]
+_test-operations filter: stack-certs operations-images test-operations-fixture
+    #!/usr/bin/env bash
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -timeout=30m -tags=operationstest ./internal/operationstest/ -run '{{ filter }}'
+
+[doc('Prove multi-replica stale-claim fencing (needs Docker and OpenSSL)')]
+[group('test')]
+test-operations-fencing: (_test-operations '^TestMultiReplicaFencing$')
+
+[doc('Prove process kill and restart recovery (needs Docker and OpenSSL)')]
+[group('test')]
+test-operations-restart: (_test-operations '^TestProcessKillAndRestart$')
+
+[doc('Prove PostgreSQL backup/restore with artifact consistency (needs Docker and OpenSSL)')]
+[group('test')]
+test-operations-backup: (_test-operations '^TestBackupAndRestore$')
+
+[doc('Prove a rolling binary upgrade followed by migration (needs Docker and OpenSSL)')]
+[group('test')]
+test-operations-upgrade: (_test-operations '^TestRollingUpgradeAcrossMigration$')
+
+[doc('Run every deployed operations scenario (needs Docker and OpenSSL)')]
+[group('test')]
+test-operations: (_test-operations '^Test(MultiReplicaFencing|ProcessKillAndRestart|BackupAndRestore|RollingUpgradeAcrossMigration)$')
 
 # Report known vulnerabilities in code paths the module calls
 [group('check')]

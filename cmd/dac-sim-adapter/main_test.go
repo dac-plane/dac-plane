@@ -1,12 +1,167 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
+	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
 )
+
+func TestAdapterURLsSelectOneConfiguration(t *testing.T) {
+	if got, err := adapterURLs("wss://one.example", ""); err != nil || len(got) != 1 || got[0] != "wss://one.example" {
+		t.Fatalf("single adapterURLs() = %v, %v", got, err)
+	}
+	got, err := adapterURLs("", " wss://one.example, wss://two.example, wss://one.example ")
+	if err != nil || len(got) != 2 || got[0] != "wss://one.example" || got[1] != "wss://two.example" {
+		t.Fatalf("multiple adapterURLs() = %v, %v", got, err)
+	}
+	for _, inputs := range [][2]string{{"", ""}, {"wss://one.example", "wss://two.example"}} {
+		if _, err := adapterURLs(inputs[0], inputs[1]); err == nil {
+			t.Errorf("adapterURLs(%q, %q) succeeded", inputs[0], inputs[1])
+		}
+	}
+}
+
+func TestControlAddressIsDisabledByDefault(t *testing.T) {
+	if got := controlAddress(func(string) string { return "" }); got != "" {
+		t.Fatalf("controlAddress() = %q, want disabled", got)
+	}
+	if got := controlAddress(func(string) string { return " 127.0.0.1:8080 " }); got != "127.0.0.1:8080" {
+		t.Fatalf("controlAddress() = %q, want trimmed address", got)
+	}
+}
+
+func TestControlPausesAndReportsOneEffect(t *testing.T) {
+	tenant := mustNewID(t, ids.New[ids.Tenant])
+	provider := mustNewID(t, ids.New[ids.Provider])
+	operation := mustNewID(t, ids.New[ids.Operation])
+	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: tenant, Provider: provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{
+			operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newControlHandler(&simulatorSet{runtime: runtime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler.routes())
+	t.Cleanup(server.Close)
+
+	pause := []byte(`{"role":"runtime","boundary":"after_effect"}`)
+	response := controlRequest(t, http.MethodPost, server.URL+"/v1/pauses", pause)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("register pause = %d", response.StatusCode)
+	}
+	_ = response.Body.Close()
+
+	request := contracts.Request{
+		Operation: operation, Delivery: mustNewID(t, ids.New[ids.Delivery]), Tenant: tenant,
+		Attempt: mustNewID(t, ids.New[ids.Attempt]), Role: contracts.RoleRuntime,
+		Method: contracts.MethodStartTurn, Demand: contracts.DemandPerson, Deadline: time.Now().Add(time.Minute),
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := runtime.Send(context.Background(), request)
+		done <- err
+	}()
+
+	path := "/v1/pauses/runtime/next/after_effect"
+	deadline := time.Now().Add(time.Second)
+	for {
+		response = controlRequest(t, http.MethodGet, server.URL+path, nil)
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode == http.StatusOK && bytes.Contains(body, []byte(`"reached":true`)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pause was not reached: %d %s", response.StatusCode, body)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	response = controlRequest(t, http.MethodGet, server.URL+"/v1/ledger/runtime/"+operation.String(), nil)
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"deliveries":1`)) || !bytes.Contains(body, []byte(`"effects":1`)) || !bytes.Contains(body, []byte(`"kind":"turn_started"`)) {
+		t.Fatalf("ledger = %d %s", response.StatusCode, body)
+	}
+	response = controlRequest(t, http.MethodPost, server.URL+path+"/release", nil)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("release pause = %d", response.StatusCode)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+}
+
+func TestControlRejectsMalformedRequestsAndMissingStore(t *testing.T) {
+	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: mustNewID(t, ids.New[ids.Tenant]), Provider: mustNewID(t, ids.New[ids.Provider])}, simulator.RuntimeScenario{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newControlHandler(&simulatorSet{runtime: runtime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler.routes())
+	t.Cleanup(server.Close)
+
+	for _, request := range []struct {
+		method string
+		path   string
+		body   []byte
+		want   int
+	}{
+		{http.MethodPost, "/v1/pauses", []byte(`{"role":"runtime"}`), http.StatusBadRequest},
+		{http.MethodPost, "/v1/pauses", []byte(`{} {}`), http.StatusBadRequest},
+		{http.MethodPost, "/v1/pauses", bytes.Repeat([]byte(" "), controlBodyLimit+1), http.StatusBadRequest},
+		{http.MethodGet, "/v1/ledger/unknown/not-an-id", nil, http.StatusBadRequest},
+		{http.MethodGet, "/v1/artifacts/" + mustNewID(t, ids.New[ids.Artifact]).String(), nil, http.StatusNotFound},
+	} {
+		response := controlRequest(t, request.method, server.URL+request.path, request.body)
+		_ = response.Body.Close()
+		if response.StatusCode != request.want {
+			t.Errorf("%s %s = %d, want %d", request.method, request.path, response.StatusCode, request.want)
+		}
+	}
+}
+
+func controlRequest(t *testing.T, method, target string, body []byte) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(method, target, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func mustNewID[T any](t *testing.T, create func() (T, error)) T {
+	t.Helper()
+	id, err := create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
 
 func TestScriptRowsNumberRowsAndFillFixtureDigests(t *testing.T) {
 	rows, err := scriptRows([]scriptRow{

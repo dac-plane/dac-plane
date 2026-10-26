@@ -208,6 +208,44 @@ func TestAdapterWireNoConnectionMeansNoPort(t *testing.T) {
 	}
 }
 
+func TestAdapterWireExposesReplayOnlyAfterCapabilitySelection(t *testing.T) {
+	f := setup(t, adapterwire.Options{})
+	subject := f.wire.Bind(t, f.tenant, f.provider, contracts.RoleRuntime, nil)
+	a, _, err := f.dial(t, f.wire.Token(t, subject, time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.send(t, contracts.Frame{Kind: contracts.FrameLifecycle, Lifecycle: &contracts.Lifecycle{
+		Phase: contracts.PhaseHello, Versions: []uint32{1}, Offered: []contracts.Capability{contracts.CapabilityOperationReplay},
+	}})
+	ready := a.next(t)
+	if ready.Kind != contracts.FrameLifecycle || ready.Lifecycle.Phase != contracts.PhaseReady || len(ready.Lifecycle.Selected) != 1 {
+		t.Fatalf("negotiation answered %+v, want replay selected", ready)
+	}
+	f.wire.WaitConnected(t, f.tenant, f.provider, contracts.RoleRuntime)
+	port := f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleRuntime)
+	replayer, ok := port.(contracts.StableOperationReplayer)
+	if !ok {
+		t.Fatal("negotiated registration did not expose stable-operation replay")
+	}
+	request := f.request(t)
+	result := make(chan error, 1)
+	go func() {
+		_, err := replayer.Replay(f.ctx, request)
+		result <- err
+	}()
+	frame := a.next(t)
+	if frame.Kind != contracts.FrameRequest || frame.Request.Operation != request.Operation {
+		t.Fatalf("adapter received %+v, want replay request", frame)
+	}
+	a.send(t, contracts.Frame{Kind: contracts.FrameReply, Reply: &contracts.Reply{
+		Operation: request.Operation, Delivery: request.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted,
+	}})
+	if err := <-result; err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+}
+
 func TestAdapterWireRefusesUnauthenticatedAdaptersBeforeUpgrade(t *testing.T) {
 	f := setup(t, adapterwire.Options{})
 	bound := f.wire.Bind(t, f.tenant, f.provider, contracts.RoleRuntime, nil)

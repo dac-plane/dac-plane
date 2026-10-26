@@ -87,7 +87,7 @@ func (o Options) withDefaults() Options {
 		o.StreamBuffer = 256
 	}
 	if o.Hello.Phase == "" {
-		o.Hello = contracts.Lifecycle{Phase: contracts.PhaseHello, Versions: []uint32{1}}
+		o.Hello = contracts.Lifecycle{Phase: contracts.PhaseHello, Versions: []uint32{1}, Offered: []contracts.Capability{contracts.CapabilityOperationReplay}}
 	}
 	if o.Now == nil {
 		o.Now = time.Now

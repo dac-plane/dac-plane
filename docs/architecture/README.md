@@ -165,6 +165,8 @@ providers and deployable, without changing lifecycle ownership.
 - [ADR-0008: out-of-process provider adapters over an adapter-initiated ControlFrame connection](../adr/0008-adapter-process-boundary-and-wire-transport.md)
 - [ADR-0009: one container image, migrated by an explicit step, on a reference Compose stack](../adr/0009-deployment-unit-and-first-substrate.md)
 - [ADR-0010: open provider event streams with subscribe and unsubscribe frames](../adr/0010-controlframe-stream-subscription.md)
+- [ADR-0011: roll compatible binaries before schema migrations](../adr/0011-roll-compatible-binaries-before-schema-migrations.md)
+- [ADR-0012: negotiate stable-operation replay before crash takeover redelivery](../adr/0012-negotiate-stable-operation-replay.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)
@@ -177,6 +179,7 @@ providers and deployable, without changing lifecycle ownership.
 - [Recovery, replay, fencing and restart evidence (#27)](recovery-27.md)
 - [Security and lifecycle acceptance (#28)](security-28.md)
 - [Fenced harness migration execution (#60)](harness-migration-60.md)
+- [Operational recovery and rolling-upgrade evidence (#74)](operations-74.md)
 - [M1 lifecycle contract freeze and evidence (#30)](contract-freeze-30.md)
 - [Reference Compose deployment and rollout guide](../../deploy/compose/README.md)
 

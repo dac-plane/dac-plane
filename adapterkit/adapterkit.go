@@ -9,9 +9,10 @@
 //
 // The kit adds no outcome semantics. A request is answered only with the
 // Handler's reply; a connection lost before the reply leaves the outcome for
-// the control plane to reconcile from observations, so a Handler must treat
-// the operation identifier as its idempotency key and answer a redelivery
-// from what it already did.
+// the control plane to reconcile from observations. A Handler must treat the
+// operation identifier as its idempotency key. An adapter may advertise
+// wire.CapabilityOperationReplay only when it can answer a replacement
+// delivery from what it already did, across reconnects and process failure.
 package adapterkit
 
 import (

@@ -100,7 +100,8 @@ const (
 )
 
 // Control pauses simulators at named boundaries for named operations. A pause
-// is registered before the operation runs and is consumed by the first
+// with a zero operation is consumed by the next operation to reach its
+// boundary. A pause is registered before the operation runs and is consumed by the first
 // delivery that reaches the boundary; unregistered boundaries never block, so
 // tests that do not pace run straight through. A paused call still observes
 // its context, so a test can abandon it and leave the effect half-done,
@@ -121,8 +122,9 @@ func NewControl() *Control {
 }
 
 // Pause registers a pause at boundary for the next delivery of operation and
-// returns the handle that signals and releases it. Registering another pause
-// for the same operation and boundary replaces the first.
+// returns the handle that signals and releases it. A zero operation registers
+// the next operation at that boundary. Registering another pause for the same
+// operation and boundary replaces the first.
 func (c *Control) Pause(operation ids.OperationID, boundary Boundary) *Pause {
 	pause := &Pause{reached: make(chan struct{}), release: make(chan struct{})}
 	c.mu.Lock()
@@ -136,6 +138,10 @@ func (c *Control) reach(ctx context.Context, operation ids.OperationID, boundary
 	key := pauseKey{operation: operation, boundary: boundary}
 	c.mu.Lock()
 	pause := c.pauses[key]
+	if pause == nil {
+		key = pauseKey{boundary: boundary}
+		pause = c.pauses[key]
+	}
 	delete(c.pauses, key)
 	c.mu.Unlock()
 	if pause == nil {

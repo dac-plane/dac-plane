@@ -88,6 +88,15 @@ type Port interface {
 	Subscribe(ctx context.Context, cursor Cursor) (Stream, error)
 }
 
+// StableOperationReplayer is implemented only by a negotiated provider port
+// whose adapter selected CapabilityOperationReplay. Replay delivers the same
+// stable operation and payload under a fresh delivery identity after worker
+// takeover; the adapter is responsible for operation-keyed idempotency.
+type StableOperationReplayer interface {
+	Port
+	Replay(ctx context.Context, request Request) (Reply, error)
+}
+
 // Stream yields stream frames until the context ends or the provider closes.
 type Stream interface {
 	Next(ctx context.Context) (StreamFrame, error)

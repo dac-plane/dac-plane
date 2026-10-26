@@ -166,3 +166,30 @@ jobs:
 
       - name: Run deployed lifecycle smoke test
         run: just test-stack
+
+  operations:
+    name: Operational recovery and rollout
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository with release history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Run deployed operations evidence
+        run: just test-operations
+
+      - name: Preserve operations failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: operations-failure-logs
+          path: .work/operations/*.log
+          if-no-files-found: ignore
+          retention-days: 14

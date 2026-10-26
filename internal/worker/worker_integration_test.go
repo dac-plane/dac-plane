@@ -407,6 +407,37 @@ type notDeliveredOncePort struct {
 	attempts *int
 }
 
+type replayPort struct {
+	contracts.Port
+	replays   int
+	failFirst error
+}
+
+func (p *replayPort) Replay(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	p.replays++
+	if p.failFirst != nil && p.replays == 1 {
+		return contracts.Reply{}, p.failFirst
+	}
+	return p.Port.Send(ctx, request)
+}
+
+type disconnectingPorts struct {
+	port  contracts.Port
+	calls int
+}
+
+func (p *disconnectingPorts) Port(ids.TenantID, ids.ProviderID, contracts.Role) contracts.Port {
+	p.calls++
+	if p.calls == 3 {
+		return nil
+	}
+	return p.port
+}
+
+func (*disconnectingPorts) ArtifactStore(ids.TenantID, ids.ProviderID) (worker.ArtifactStorePort, bool) {
+	return worker.ArtifactStorePort{}, false
+}
+
 func (p *notDeliveredOncePort) Role() contracts.Role { return p.inner.Role() }
 
 func (p *notDeliveredOncePort) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
@@ -466,6 +497,164 @@ func TestWorkerRestartRecovery(t *testing.T) {
 	if got := f.readyCount(t, ctx, pollAt.Add(time.Minute)); got != 0 {
 		t.Fatalf("OutboxReadyDispatch() = %d rows, want the row acked", got)
 	}
+}
+
+func TestWorkerRestartReplaysWhenCapabilityWasNegotiated(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	opID, attemptID := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 1)
+	pollAt := now.Add(time.Minute)
+	port := &replayPort{Port: f.loopback, failFirst: contracts.ErrNotDelivered}
+	w := testWorkerWithPort(t, f, worker.DefaultConfig(), port)
+
+	uow, err := store.Begin(ctx, f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.OutboxReadyDispatch(ctx, uow, f.tenant, pollAt, 10)
+	if err != nil || len(rows) != 1 {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("OutboxReadyDispatch() = %v, %v", rows, err)
+	}
+	if _, err := store.ClaimOutboxRowByID(ctx, uow, f.tenant, rows[0].ID, "dead-worker", 0, now); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimAttemptLease(ctx, uow, f.tenant, attemptID, "dead-worker", 0, now); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := uow.Exec(ctx, `update outbox set last_error='send_started' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), rows[0].ID.String()); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("first Tick() error = %v", err)
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationDispatched {
+		t.Fatalf("operation after unavailable replay = %s, want dispatched with its send marker", operation.State)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("second Tick() error = %v", err)
+	}
+	if port.replays != 2 || len(f.loopback.Sent()) != 1 {
+		t.Fatalf("replays = %d, delivered sends = %d; want unavailable then successful replay", port.replays, len(f.loopback.Sent()))
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationAccepted {
+		t.Fatalf("operation state = %s, want accepted", operation.State)
+	}
+}
+
+func TestWorkerFailedReplayUsesRetryBudget(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	opID, attemptID := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 1)
+	pollAt := now.Add(time.Minute)
+	row := markReplayTakeover(t, ctx, f, attemptID, now, pollAt)
+	port := &replayPort{Port: f.loopback, failFirst: errTransportForTest}
+	cfg := worker.DefaultConfig()
+	cfg.Policy.MaxAttempts = 1
+	cfg.Policy.BaseBackoff = time.Hour
+	cfg.Policy.MaxBackoff = time.Hour
+	w := testWorkerWithPort(t, f, cfg, port)
+
+	before := time.Now()
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("first Tick() error = %v", err)
+	}
+	var attempts int
+	var status, lastError string
+	var nextAttempt time.Time
+	var leaseOwner sql.NullString
+	if err := f.pool.QueryRow(ctx, `select o.attempts, o.status, o.last_error, o.next_attempt_at, a.lease_owner
+		from outbox o join attempt a on a.tenant_id=o.tenant_id and a.attempt_id=$3
+		where o.tenant_id=$1 and o.outbox_id=$2`, f.tenant.String(), row.ID.String(), attemptID.String()).Scan(&attempts, &status, &lastError, &nextAttempt, &leaseOwner); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || status != "pending" || lastError != string(contracts.FailureTransportUnavailable) || !nextAttempt.After(before) || leaseOwner.Valid {
+		t.Fatalf("retry facts = attempts %d status %q error %q next %s lease %q", attempts, status, lastError, nextAttempt, leaseOwner.String)
+	}
+	if _, err := f.pool.Exec(ctx, `update outbox set next_attempt_at=now()-interval '1 second' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), row.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("second Tick() error = %v", err)
+	}
+	if port.replays != 1 {
+		t.Fatalf("replays = %d, want retry budget exhaustion before another replay", port.replays)
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationUncertain {
+		t.Fatalf("operation state = %s, want uncertain after retry exhaustion", operation.State)
+	}
+}
+
+func TestWorkerDisconnectBeforeReplayPreservesSendEvidence(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	opID, attemptID := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 1)
+	pollAt := now.Add(time.Minute)
+	row := markReplayTakeover(t, ctx, f, attemptID, now, pollAt)
+	port := &replayPort{Port: f.loopback}
+	ports := &disconnectingPorts{port: port}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "test-worker", worker.WithPorts(ports))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("disconnected Tick() error = %v", err)
+	}
+	var lastError string
+	if err := f.pool.QueryRow(ctx, `select last_error from outbox where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), row.ID.String()).Scan(&lastError); err != nil {
+		t.Fatal(err)
+	}
+	if lastError != reasonSendStartedForTest {
+		t.Fatalf("last_error = %q, want preserved send evidence", lastError)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("reconnected Tick() error = %v", err)
+	}
+	if port.replays != 1 {
+		t.Fatalf("replays = %d, want the reconnected delivery to replay", port.replays)
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationAccepted {
+		t.Fatalf("operation state = %s, want accepted", operation.State)
+	}
+}
+
+const reasonSendStartedForTest = "send_started"
+
+func markReplayTakeover(t *testing.T, ctx context.Context, f *fixture, attemptID ids.AttemptID, now, pollAt time.Time) store.OutboxRow {
+	t.Helper()
+	uow, err := store.Begin(ctx, f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.OutboxReadyDispatch(ctx, uow, f.tenant, pollAt, 10)
+	if err != nil || len(rows) != 1 {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("OutboxReadyDispatch() = %v, %v", rows, err)
+	}
+	if _, err := store.ClaimOutboxRowByID(ctx, uow, f.tenant, rows[0].ID, "dead-worker", 0, now); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimAttemptLease(ctx, uow, f.tenant, attemptID, "dead-worker", 0, now); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := uow.Exec(ctx, `update outbox set last_error=$3 where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), rows[0].ID.String(), reasonSendStartedForTest); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return rows[0]
 }
 
 func TestWorkerExhaustionStopsDispatch(t *testing.T) {

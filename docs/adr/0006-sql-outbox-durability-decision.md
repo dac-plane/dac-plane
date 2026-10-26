@@ -32,7 +32,9 @@ send, the product records that the send may have begun. A lost reply, transport 
 authoritative observation remains uncertain and is reconciled; it is not treated as proof that no
 effect occurred and does not permit an unsafe ordinary resend. Where a provider protocol explicitly
 allows stable-operation replay, the same identity and payload are used. Otherwise uncertainty can
-remain pending.
+remain pending. ADR-0012 makes that permission explicit through the negotiated
+`operation.replay` capability; the replay keeps the operation identity and payload and uses a fresh
+delivery identity.
 
 No workflow engine or additional service is adopted. Reconsider the substrate only if new evidence
 shows that PostgreSQL/outbox cannot preserve a required product invariant within this operating

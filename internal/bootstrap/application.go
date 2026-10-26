@@ -22,6 +22,7 @@ type Application struct {
 	pool     *pgxpool.Pool
 	adapters *adapterwire.Registry
 	worker   *worker.Worker
+	owner    string
 	// running is true while Run drives the process loop; liveness reports it.
 	running   atomic.Bool
 	closeOnce sync.Once
@@ -61,7 +62,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		return nil, err
 	}
 
-	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker}, nil
+	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker, owner: "control-plane-" + ownerID.String()}, nil
 }
 
 // Adapters is the registry the adapter endpoint registers connections in.
@@ -75,7 +76,7 @@ func (application *Application) Adapters() *adapterwire.Registry {
 // A nil worker runs nothing; tests and future surfaces use that to skip
 // dispatch without a pool.
 func (application *Application) Run(ctx context.Context) error {
-	application.logger.Info("control plane initialized")
+	application.logger.Info("control plane initialized", "worker_owner", application.owner)
 	application.running.Store(true)
 	defer application.running.Store(false)
 	if application.worker != nil {
