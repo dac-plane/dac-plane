@@ -19,6 +19,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -288,7 +289,11 @@ func reply(raw json.RawMessage, into *simulator.Reply) error {
 func scriptRows(rows []scriptRow, first uint64, fixtures map[string]string) ([]simulator.Row, error) {
 	out := make([]simulator.Row, 0, len(rows))
 	for i, row := range rows {
-		payload := row.Payload
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, row.Payload); err != nil {
+			return nil, fmt.Errorf("scenario: %s payload: %w", row.Kind, err)
+		}
+		payload := json.RawMessage(compact.Bytes())
 		if row.Kind == contracts.EntryResultProposed {
 			var proposed contracts.ResultProposed
 			if err := json.Unmarshal(payload, &proposed); err != nil {

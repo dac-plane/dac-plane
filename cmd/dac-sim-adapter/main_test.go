@@ -10,7 +10,7 @@ import (
 
 func TestScriptRowsNumberRowsAndFillFixtureDigests(t *testing.T) {
 	rows, err := scriptRows([]scriptRow{
-		{Kind: contracts.EntryRuntimeStarted, Payload: json.RawMessage(`{"native_ref":"s-1"}`)},
+		{Kind: contracts.EntryRuntimeStarted, Payload: json.RawMessage("{\n  \"native_ref\": \"s-1\"\n}")},
 		{Kind: contracts.EntryResultProposed, Payload: json.RawMessage(`{"session_ref":"s-1","turn_ref":"t-1","source_revision":"r","artifacts":[{"native_ref":"patch","kind":"code_change","media_type":"text/plain"}]}`)},
 	}, 3, map[string]string{"patch": "exact bytes"})
 	if err != nil {
@@ -18,6 +18,9 @@ func TestScriptRowsNumberRowsAndFillFixtureDigests(t *testing.T) {
 	}
 	if len(rows) != 2 || rows[0].Sequence != 3 || rows[1].Sequence != 4 || rows[1].Updated != 4 {
 		t.Fatalf("rows = %+v, want sequences 3 and 4", rows)
+	}
+	if rows[0].Payload != `{"native_ref":"s-1"}` {
+		t.Fatalf("first payload = %q, want compact JSON so its wire hash remains stable", rows[0].Payload)
 	}
 	var proposed contracts.ResultProposed
 	if err := json.Unmarshal([]byte(rows[1].Payload), &proposed); err != nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
@@ -87,5 +88,36 @@ func TestRuntimeWithoutDefaultStillRefusesUnscriptedWork(t *testing.T) {
 	}
 	if _, err := simulator.NewRuntime(cfg, simulator.RuntimeScenario{DefaultDecision: &simulator.RuntimeOp{Effect: simulator.TurnStarted}}); !errors.Is(err, simulator.ErrInvalidScenario) {
 		t.Fatalf("default decision with a start effect error = %v, want ErrInvalidScenario", err)
+	}
+}
+
+func TestRuntimeDefaultBindsNativeReferencesToEachOperation(t *testing.T) {
+	cfg := testConfig(t)
+	row := simulator.Row{Sequence: 1, Updated: 1, Kind: contracts.EntryRuntimeStarted, Payload: `{"native_ref":"session-${operation_id}"}`}
+	rt, err := simulator.NewRuntime(cfg, simulator.RuntimeScenario{Default: &simulator.RuntimeOp{
+		Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted,
+		Stream: &simulator.StreamScript{Frames: []contracts.StreamFrame{simulator.RowsFrame(false, row)}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		operation := mustID[ids.Operation](t)
+		stream, err := rt.Subscribe(context.Background(), contracts.Cursor{
+			Tenant: cfg.Tenant, Attempt: mustID[ids.Attempt](t), Operation: operation, Stream: "events", Generation: 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame, err := stream.Next(context.Background())
+		_ = stream.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := frame.Rows.Entries[0]
+		want := `{"native_ref":"session-` + operation.String() + `"}`
+		if string(entry.Payload) != want || entry.PayloadHash != identity.DigestOf([]byte(want)) {
+			t.Fatalf("bound entry = %+v, want payload %s and its digest", entry, want)
+		}
 	}
 }

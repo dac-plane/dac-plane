@@ -1,6 +1,7 @@
 package simulator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -339,6 +340,9 @@ func (r *Runtime) Subscribe(ctx context.Context, cursor contracts.Cursor) (contr
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnscripted, cursor.Operation)
 	}
+	if _, scripted := r.scenario.Operations[cursor.Operation]; !scripted {
+		step = bindDefaultStream(step, cursor.Operation)
+	}
 	r.ledger.recordSubscription(cursor)
 	var frames []contracts.StreamFrame
 	if step.Stream != nil {
@@ -351,6 +355,37 @@ func (r *Runtime) Subscribe(ctx context.Context, cursor contracts.Cursor) (contr
 		frames = append(frames, step.AfterDecision.Frames...)
 	}
 	return &scriptStream{control: r.config.Control, operation: cursor.Operation, frames: frames}, nil
+}
+
+// bindDefaultStream makes placeholder native references unique to the
+// operation that selected the default script. Explicit operation scripts are
+// left byte-for-byte unchanged. Replacing before hashing preserves the wire
+// rule that payload_hash covers the exact payload bytes sent.
+func bindDefaultStream(step RuntimeOp, operation ids.OperationID) RuntimeOp {
+	bind := func(script *StreamScript) *StreamScript {
+		if script == nil {
+			return nil
+		}
+		frames := make([]contracts.StreamFrame, len(script.Frames))
+		for i, frame := range script.Frames {
+			frames[i] = frame
+			if frame.Rows == nil {
+				continue
+			}
+			rows := *frame.Rows
+			rows.Entries = append([]contracts.Entry(nil), frame.Rows.Entries...)
+			for j := range rows.Entries {
+				payload := bytes.ReplaceAll(rows.Entries[j].Payload, []byte("${operation_id}"), []byte(operation.String()))
+				rows.Entries[j].Payload = payload
+				rows.Entries[j].PayloadHash = identity.DigestOf(payload)
+			}
+			frames[i].Rows = &rows
+		}
+		return &StreamScript{Frames: frames}
+	}
+	step.Stream = bind(step.Stream)
+	step.AfterDecision = bind(step.AfterDecision)
+	return step
 }
 
 // Event returns the unauthenticated event this provider claims for one of its
