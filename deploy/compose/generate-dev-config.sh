@@ -5,8 +5,9 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 output="$repo_root/.work/stack"
 secrets="$output/secrets"
-mkdir -p "$secrets"
 umask 077
+mkdir -p "$secrets"
+chmod 0700 "$output" "$secrets"
 
 write_secret() {
   path=$1
@@ -45,12 +46,20 @@ issue_certificate() {
 issue_certificate server dac-plane "DNS:dac-plane,DNS:localhost,IP:127.0.0.1"
 issue_certificate issuer issuer "DNS:issuer,DNS:localhost,IP:127.0.0.1"
 
+if [ -e "$output/issuer.p12" ]; then
+  chmod 0600 "$output/issuer.p12"
+fi
 openssl pkcs12 -export -name issuer \
   -inkey "$output/issuer.key" -in "$output/issuer.crt" -certfile "$output/ca.crt" \
   -passout pass:changeit -out "$output/issuer.p12"
 
 migrate_password=$(cat "$secrets/postgres-migrate-password")
 serve_password=$(cat "$secrets/postgres-serve-password")
+for path in migrate-database-url serve-database-url out-of-range-database-url; do
+  if [ -e "$secrets/$path" ]; then
+    chmod 0600 "$secrets/$path"
+  fi
+done
 printf 'postgres://dac_migrate:%s@postgres:5432/dac?sslmode=disable\n' "$migrate_password" >"$secrets/migrate-database-url"
 printf 'postgres://dac_serve:%s@postgres:5432/dac?sslmode=disable\n' "$serve_password" >"$secrets/serve-database-url"
 printf 'postgres://dac_migrate:%s@postgres:5432/dac_out_of_range?sslmode=disable\n' "$migrate_password" >"$secrets/out-of-range-database-url"
@@ -73,3 +82,20 @@ DAC_RUNTIME_CLIENT_SECRET_FILE=$secrets/runtime-client-secret
 DAC_ARTIFACT_CLIENT_SECRET_FILE=$secrets/artifact-client-secret
 DAC_STACK_SURFACE_CLIENT_SECRET_FILE=$secrets/surface-client-secret
 EOF
+
+# Local Compose implements file-backed configs and secrets as bind mounts, so
+# container users need read permission on the mounted files. The containing
+# host directories remain owner-only and every mount is read-only.
+chmod 0444 \
+  "$output/ca.crt" \
+  "$output/server.crt" \
+  "$output/server.key" \
+  "$output/issuer.p12" \
+  "$secrets/postgres-migrate-password" \
+  "$secrets/postgres-serve-password" \
+  "$secrets/migrate-database-url" \
+  "$secrets/serve-database-url" \
+  "$secrets/out-of-range-database-url" \
+  "$secrets/surface-client-secret" \
+  "$secrets/runtime-client-secret" \
+  "$secrets/artifact-client-secret"
