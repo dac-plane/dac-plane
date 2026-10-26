@@ -49,21 +49,12 @@ func probe(cfg config.Config, path string) error {
 		// A listener bound off loopback serves TLS; dial it on loopback
 		// and accept exactly the certificate it is configured to serve.
 		host = "127.0.0.1"
-		leaf, err := servedLeaf(cfg.TLSCertFile)
+		tlsConfig, err := pinnedTLSConfig(cfg.TLSCertFile)
 		if err != nil {
 			return err
 		}
 		scheme = "https"
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: true, // replaced by the pin below
-			VerifyConnection: func(state tls.ConnectionState) error {
-				if len(state.PeerCertificates) == 0 || !bytes.Equal(state.PeerCertificates[0].Raw, leaf.Raw) {
-					return errors.New("the operations listener served another certificate")
-				}
-				return nil
-			},
-		}}
+		client.Transport = &http.Transport{TLSClientConfig: tlsConfig}
 	}
 	response, err := client.Get(scheme + "://" + net.JoinHostPort(host, port) + path)
 	if err != nil {
@@ -75,6 +66,25 @@ func probe(cfg config.Config, path string) error {
 		return fmt.Errorf("%s: %s", response.Status, bytes.TrimSpace(body))
 	}
 	return nil
+}
+
+func pinnedTLSConfig(certFile string) (*tls.Config, error) {
+	leaf, err := servedLeaf(certFile)
+	if err != nil {
+		return nil, err
+	}
+	serverName := ""
+	if len(leaf.DNSNames) > 0 {
+		serverName = leaf.DNSNames[0]
+	} else if len(leaf.IPAddresses) > 0 {
+		serverName = leaf.IPAddresses[0].String()
+	}
+	if serverName == "" {
+		return nil, errors.New("DAC_TLS_CERT_FILE certificate needs a DNS or IP subject alternative name")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: serverName}, nil
 }
 
 func servedLeaf(certFile string) (*x509.Certificate, error) {
