@@ -31,6 +31,15 @@ func TestAdapterURLsSelectOneConfiguration(t *testing.T) {
 	}
 }
 
+func TestControlAddressIsDisabledByDefault(t *testing.T) {
+	if got := controlAddress(func(string) string { return "" }); got != "" {
+		t.Fatalf("controlAddress() = %q, want disabled", got)
+	}
+	if got := controlAddress(func(string) string { return " 127.0.0.1:8080 " }); got != "127.0.0.1:8080" {
+		t.Fatalf("controlAddress() = %q, want trimmed address", got)
+	}
+}
+
 func TestControlPausesAndReportsOneEffect(t *testing.T) {
 	tenant := mustNewID(t, ids.New[ids.Tenant])
 	provider := mustNewID(t, ids.New[ids.Provider])
@@ -86,7 +95,7 @@ func TestControlPausesAndReportsOneEffect(t *testing.T) {
 	response = controlRequest(t, http.MethodGet, server.URL+"/v1/ledger/runtime/"+operation.String(), nil)
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"deliveries":1`)) || !bytes.Contains(body, []byte(`"effects":1`)) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"deliveries":1`)) || !bytes.Contains(body, []byte(`"effects":1`)) || !bytes.Contains(body, []byte(`"kind":"turn_started"`)) {
 		t.Fatalf("ledger = %d %s", response.StatusCode, body)
 	}
 	response = controlRequest(t, http.MethodPost, server.URL+path+"/release", nil)
@@ -119,6 +128,7 @@ func TestControlRejectsMalformedRequestsAndMissingStore(t *testing.T) {
 	}{
 		{http.MethodPost, "/v1/pauses", []byte(`{"role":"runtime"}`), http.StatusBadRequest},
 		{http.MethodPost, "/v1/pauses", []byte(`{} {}`), http.StatusBadRequest},
+		{http.MethodPost, "/v1/pauses", bytes.Repeat([]byte(" "), controlBodyLimit+1), http.StatusBadRequest},
 		{http.MethodGet, "/v1/ledger/unknown/not-an-id", nil, http.StatusBadRequest},
 		{http.MethodGet, "/v1/artifacts/" + mustNewID(t, ids.New[ids.Artifact]).String(), nil, http.StatusNotFound},
 	} {

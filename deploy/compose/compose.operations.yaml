@@ -1,0 +1,117 @@
+services:
+  replica-a:
+    extends:
+      file: compose.yaml
+      service: dac-plane
+    image: ${DAC_REPLICA_A_IMAGE:?set DAC_REPLICA_A_IMAGE}
+    environment:
+      DAC_DATABASE_URL_FILE: /run/secrets/database_url
+      DAC_IDENTITY_CONFIG_FILE: /run/config/identity.json
+      DAC_SURFACE_ADDR: :8443
+      DAC_ADAPTER_ADDR: :9443
+      DAC_OPS_ADDR: 127.0.0.1:8081
+      DAC_TLS_CERT_FILE: /run/config/tls.crt
+      DAC_TLS_KEY_FILE: /run/secrets/tls.key
+      DAC_DEPLOYMENT: development
+      SSL_CERT_FILE: /run/config/ca.crt
+    configs:
+      - source: identity_config
+        target: /run/config/identity.json
+      - source: tls_cert
+        target: /run/config/tls.crt
+      - source: dev_ca
+        target: /run/config/ca.crt
+    depends_on:
+      issuer:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+    ports: !override
+      - "127.0.0.1:${DAC_REPLICA_A_SURFACE_PORT:-18443}:8443"
+      - "127.0.0.1:${DAC_REPLICA_A_ADAPTER_PORT:-19443}:9443"
+    profiles: ["operations"]
+
+  replica-b:
+    extends:
+      file: compose.yaml
+      service: dac-plane
+    image: ${DAC_REPLICA_B_IMAGE:?set DAC_REPLICA_B_IMAGE}
+    environment:
+      DAC_DATABASE_URL_FILE: /run/secrets/database_url
+      DAC_IDENTITY_CONFIG_FILE: /run/config/identity.json
+      DAC_SURFACE_ADDR: :8443
+      DAC_ADAPTER_ADDR: :9443
+      DAC_OPS_ADDR: 127.0.0.1:8081
+      DAC_TLS_CERT_FILE: /run/config/tls.crt
+      DAC_TLS_KEY_FILE: /run/secrets/tls.key
+      DAC_DEPLOYMENT: development
+      SSL_CERT_FILE: /run/config/ca.crt
+    configs:
+      - source: identity_config
+        target: /run/config/identity.json
+      - source: tls_cert
+        target: /run/config/tls.crt
+      - source: dev_ca
+        target: /run/config/ca.crt
+    depends_on:
+      issuer:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+    ports: !override
+      - "127.0.0.1:${DAC_REPLICA_B_SURFACE_PORT:-28443}:8443"
+      - "127.0.0.1:${DAC_REPLICA_B_ADAPTER_PORT:-29443}:9443"
+    profiles: ["operations"]
+
+  migrate-next:
+    extends:
+      file: compose.yaml
+      service: migrate
+    image: ${DAC_NEXT_IMAGE:?set DAC_NEXT_IMAGE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["operations"]
+
+  old-schema-check:
+    extends:
+      file: compose.yaml
+      service: dac-plane
+    image: ${DAC_OLD_IMAGE:?set DAC_OLD_IMAGE}
+    ports: !reset []
+    depends_on:
+      postgres:
+        condition: service_healthy
+      issuer:
+        condition: service_healthy
+    profiles: ["operations"]
+    restart: "no"
+
+  sim-adapter-operations:
+    image: ${DAC_SIM_ADAPTER_IMAGE:-dac-sim-adapter:operations}
+    command: ["/run/config/scenario.json"]
+    environment:
+      DAC_ADAPTER_URLS: wss://replica-a:9443,wss://replica-b:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ADAPTER_CLIENT_ID: runtime-adapter
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/runtime_client_secret
+      DAC_ARTIFACT_STORE_CLIENT_ID: artifact-adapter
+      DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_SIM_CONTROL_ADDR: :8080
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+      - source: sim_scenario
+        target: /run/config/scenario.json
+    secrets:
+      - runtime_client_secret
+      - artifact_client_secret
+    ports:
+      - "127.0.0.1:${DAC_SIM_CONTROL_PORT:-19090}:8080"
+    profiles: ["operations"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped

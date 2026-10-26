@@ -147,7 +147,7 @@ func run(args []string, stderr io.Writer) int {
 			}()
 		}
 	}
-	if addr := strings.TrimSpace(os.Getenv("DAC_SIM_CONTROL_ADDR")); addr != "" {
+	if addr := controlAddress(os.Getenv); addr != "" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -167,6 +167,10 @@ func run(args []string, stderr io.Writer) int {
 		return fail(1, err)
 	}
 	return 0
+}
+
+func controlAddress(getenv func(string) string) string {
+	return strings.TrimSpace(getenv("DAC_SIM_CONTROL_ADDR"))
 }
 
 func adapterURLs(single, multiple string) ([]string, error) {

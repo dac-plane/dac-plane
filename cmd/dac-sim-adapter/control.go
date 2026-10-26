@@ -88,7 +88,7 @@ func (h *controlHandler) registerPause(w http.ResponseWriter, r *http.Request) {
 		Operation ids.OperationID    `json:"operation_id"`
 		Boundary  simulator.Boundary `json:"boundary"`
 	}
-	limited := io.LimitReader(r.Body, controlBodyLimit+1)
+	limited := http.MaxBytesReader(w, r.Body, controlBodyLimit)
 	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil || request.Operation.IsZero() {
@@ -169,11 +169,22 @@ func (h *controlHandler) ledger(w http.ResponseWriter, r *http.Request) {
 		controlError(w, http.StatusBadRequest, "unknown role")
 		return
 	}
+	type appliedEffect struct {
+		Method contracts.Method     `json:"method"`
+		Kind   simulator.EffectKind `json:"kind"`
+	}
+	applied := make([]appliedEffect, 0)
+	for _, effect := range ledger.Applied() {
+		if effect.Operation == operation {
+			applied = append(applied, appliedEffect{Method: effect.Method, Kind: effect.Kind})
+		}
+	}
 	controlJSON(w, http.StatusOK, struct {
-		Deliveries int `json:"deliveries"`
-		Effects    int `json:"effects"`
-		Cancels    int `json:"cancels"`
-	}{ledger.Deliveries(operation), ledger.Effects(operation), ledger.Cancels(operation)})
+		Deliveries int             `json:"deliveries"`
+		Effects    int             `json:"effects"`
+		Cancels    int             `json:"cancels"`
+		Applied    []appliedEffect `json:"applied"`
+	}{ledger.Deliveries(operation), ledger.Effects(operation), ledger.Cancels(operation), applied})
 }
 
 func (h *controlHandler) artifact(w http.ResponseWriter, r *http.Request) {
