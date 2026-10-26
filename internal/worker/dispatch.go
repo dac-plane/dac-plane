@@ -202,7 +202,7 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	port := w.port(tenant, prepared.operation.Provider, body.Role)
 	if port == nil {
 		w.stats.SkippedNoPort.Add(1)
-		return w.releasePrepared(ctx, tenant, row, prepared, now, true)
+		return w.releasePrepared(ctx, tenant, row, prepared, now, !prepared.replay)
 	}
 	delivery, err := ids.New[ids.Delivery]()
 	if err != nil {
@@ -236,9 +236,10 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 		return w.releasePrepared(ctx, tenant, row, prepared, now, !prepared.replay)
 	}
 	if prepared.replay && err != nil {
-		// Negotiated replay is safe to attempt again. Preserve the earlier send
-		// marker and let the normal claim budget and deadline gates bound it.
-		return w.releasePrepared(ctx, tenant, row, prepared, now, false)
+		// Negotiated replay is safe to attempt again, but each failed attempt
+		// still consumes the retry policy. The typed error remains a non-empty
+		// send marker, so a later claim can only replay or reconcile.
+		return w.retryPrepared(ctx, tenant, row, prepared, now, contracts.FailureTransportUnavailable)
 	}
 	if err != nil {
 		reply = uncertainReply(request.Operation, delivery)
@@ -760,6 +761,38 @@ func (w *Worker) retryClaim(ctx context.Context, tenant ids.TenantID, row store.
 	} else {
 		w.stats.Retries.Add(1)
 	}
+	return nil
+}
+
+// retryPrepared reschedules a failed replay and drops its Attempt lease. The
+// prior send may have acted, so exhaustion resolves the operation as uncertain
+// and every retry preserves a non-empty marker that requires replay.
+func (w *Worker) retryPrepared(ctx context.Context, tenant ids.TenantID, row store.OutboxRow, prepared *preparedDispatch, now time.Time, code contracts.FailureCode) error {
+	retryIn, exhausted := w.cfg.Policy.Classify(row.Attempts, code)
+	if exhausted {
+		return w.exhaustPrepared(ctx, tenant, row, prepared, now, string(code), true)
+	}
+	uow, err := store.Begin(ctx, w.pool)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = uow.Rollback(ctx)
+		}
+	}()
+	if err := store.ScheduleOutboxRetry(ctx, uow, tenant, row.ID, prepared.claim.Epoch, now.Add(retryIn), string(code), now); err != nil {
+		return err
+	}
+	if err := w.releaseLease(ctx, uow, tenant, prepared, now); err != nil {
+		return err
+	}
+	if err := uow.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	w.stats.Retries.Add(1)
 	return nil
 }
 
