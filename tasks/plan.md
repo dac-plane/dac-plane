@@ -199,4 +199,8 @@ Structure: one small file per subcommand with `run(args)` returning an exit code
 
 ## Deviations
 
-None yet.
+- The development bootstrap is expressed as ordered one-shot provisioning services rather than one
+  shell-driven container because the release image is distroless and intentionally contains no shell.
+- Default simulator stream references use `${operation_id}` placeholders. The runtime binds them and
+  recomputes payload hashes per operation so repeated stack submissions cannot collide on provider
+  native references.
