@@ -1,0 +1,46 @@
+{
+  "tenant_id": "01a167fd-51d9-76ba-b563-496e2bd89646",
+  "provider_id": "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10",
+  "role": "runtime",
+  "operations": [],
+  "default": {
+    "effect": "turn_started",
+    "rows": [
+      {
+        "kind": "runtime.started",
+        "payload": {"native_ref": "session-${operation_id}"}
+      },
+      {
+        "kind": "attention.requested",
+        "payload": {"native_ref": "question-${operation_id}", "kind": "question", "expires_at": "2099-01-01T00:00:00Z"}
+      }
+    ],
+    "after_decision": [
+      {
+        "kind": "decision.consumed",
+        "payload": {"native_ref": "question-${operation_id}"}
+      },
+      {
+        "kind": "result.proposed",
+        "payload": {
+          "session_ref": "session-${operation_id}",
+          "turn_ref": "turn-${operation_id}",
+          "source_revision": "source-revision-1",
+          "artifacts": [
+            {"native_ref": "patch", "kind": "code_change", "media_type": "text/plain"}
+          ]
+        }
+      },
+      {
+        "kind": "turn.finished",
+        "payload": {"session_ref": "session-${operation_id}", "turn_ref": "turn-${operation_id}", "outcome": "completed", "ended_at": "2026-10-26T00:00:00Z"}
+      }
+    ]
+  },
+  "artifact_store": {
+    "provider_id": "01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11",
+    "fixtures": {
+      "patch": "diff --git a/example.txt b/example.txt\nnew file mode 100644\n--- /dev/null\n+++ b/example.txt\n@@ -0,0 +1 @@\n+delegated result\n"
+    }
+  }
+}

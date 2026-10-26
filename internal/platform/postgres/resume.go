@@ -244,3 +244,47 @@ func OpenClaims(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycl
 	}
 	return out, rows.Err()
 }
+
+// FollowedOperations lists the accepted runtime turns whose event streams the
+// product follows: an operation dispatched as a runtime start_turn whose
+// Attempt is still live, and not a migration step, which has its own
+// observation path.
+func FollowedOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {
+	rows, err := q.Query(ctx, `
+		select o.operation_id::text from provider_operation o
+		join attempt a on a.tenant_id = o.tenant_id and a.attempt_id = o.attempt_id
+		where o.tenant_id = $1 and o.state = 'accepted' and a.state not in ('completed', 'failed', 'terminated')
+		and exists (select 1 from outbox x where x.tenant_id = o.tenant_id and x.record_id = o.operation_id and x.payload->>'role' = 'runtime' and x.payload->>'method' = 'start_turn')
+		and not exists (select 1 from migration_item m where m.tenant_id = o.tenant_id and o.operation_id in (m.quiesce_operation_id, m.environment_operation_id, m.restart_operation_id, m.cleanup_operation_id, m.target_cleanup_operation_id))
+		order by o.updated_at`,
+		tenant.String(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var identifiers []ids.OperationID
+	for rows.Next() {
+		var idText string
+		if err := rows.Scan(&idText); err != nil {
+			return nil, err
+		}
+		id, err := parseID[ids.Operation](`provider_operation.operation_id`, idText)
+		if err != nil {
+			return nil, err
+		}
+		identifiers = append(identifiers, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]lifecycle.ProviderOperation, 0, len(identifiers))
+	for _, id := range identifiers {
+		operation, err := GetOperation(ctx, q, tenant, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, operation)
+	}
+	return out, nil
+}

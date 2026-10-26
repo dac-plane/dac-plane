@@ -1,0 +1,36 @@
+{
+  "interactiveLogin": false,
+  "httpServer": {
+    "type": "NettyWrapper",
+    "ssl": {
+      "keyPassword": "changeit",
+      "keystoreFile": "/run/config/issuer.p12",
+      "keystoreType": "PKCS12",
+      "keystorePassword": "changeit"
+    }
+  },
+  "tokenCallbacks": [
+    {
+      "issuerId": "default",
+      "tokenExpiry": 300,
+      "requestMappings": [
+        {
+          "requestParam": "client_id",
+          "match": "surface-owner",
+          "claims": {
+            "sub": "${clientId}",
+            "aud": ["dac-plane-surface"]
+          }
+        },
+        {
+          "requestParam": "client_id",
+          "match": "runtime-adapter|artifact-adapter",
+          "claims": {
+            "sub": "${clientId}",
+            "aud": ["dac-plane-adapters"]
+          }
+        }
+      ]
+    }
+  ]
+}

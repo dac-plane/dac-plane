@@ -40,6 +40,9 @@ jobs:
       - name: Check modules
         run: just mod-check
 
+      - name: Check release dependencies
+        run: just deps-check
+
       - name: Run vet
         run: just vet
 
@@ -139,3 +142,27 @@ jobs:
 
       - name: Run actionlint
         run: just lint-workflows
+
+  stack:
+    name: Image and deployment stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: docker-container
+
+      - name: Verify reproducible images
+        run: just image-repro
+
+      - name: Run deployed lifecycle smoke test
+        run: just test-stack

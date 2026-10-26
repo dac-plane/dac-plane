@@ -55,6 +55,10 @@ type IssuerConfig struct {
 	MaxTokenLifetimeSeconds int      `json:"max_token_lifetime_seconds"`
 	ClockSkewSeconds        *int     `json:"clock_skew_seconds,omitempty"`
 	RequireAccessTokenType  *bool    `json:"require_access_token_type,omitempty"`
+	// Development marks a test issuer of the development profile
+	// (ADR-0009). A production deployment refuses a configuration that
+	// trusts one.
+	Development bool `json:"development,omitempty"`
 }
 
 // Validate reports whether the configuration is complete and safe to use.
@@ -78,6 +82,17 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Development reports whether the configuration trusts a development-only
+// issuer, which only a development deployment may serve.
+func (c Config) Development() bool {
+	for _, issuer := range slices.Concat(c.Issuers, c.AdapterIssuers) {
+		if issuer.Development {
+			return true
+		}
+	}
+	return false
 }
 
 // validateIssuers validates each issuer, refuses one configured twice, and

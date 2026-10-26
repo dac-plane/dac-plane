@@ -1,73 +1,51 @@
+// Command dac-plane is the control plane's single binary (ADR-0009): serve
+// runs every role of a serving process, migrate applies schema migrations,
+// provision performs trusted provisioning and health probes the operations
+// listener, so a container health check needs no shell.
 package main
 
 import (
-	"context"
-	"log/slog"
+	"fmt"
+	"io"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/AssahBismarkabah/dac-plane/internal/bootstrap"
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/provision"
 )
 
+const usage = `usage: dac-plane <command> [arguments]
+
+commands:
+  serve       run the Surface API, the adapter endpoint and the worker (the default)
+  migrate     up | status | down-to VERSION: apply or inspect schema migrations
+  provision   perform one trusted provisioning operation
+  health      live | ready: probe the local operations listener`
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "provision" {
-		os.Exit(runProvision(os.Args[2:]))
-	}
-	os.Exit(run())
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// runProvision performs one trusted provisioning operation (ADR-0007). The
-// database URL is read from the same configuration as the control plane.
-func runProvision(args []string) int {
-	processContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	open := func(ctx context.Context) (*provision.Provisioner, func(), error) {
-		processConfig, err := config.Load(os.LookupEnv)
-		if err != nil {
-			return nil, nil, err
-		}
-		connectContext, cancel := context.WithTimeout(ctx, processConfig.DatabaseConnectTimeout)
-		defer cancel()
-		pool, err := store.Open(connectContext, processConfig.DatabaseURL)
-		if err != nil {
-			return nil, nil, err
-		}
-		provisioner, err := provision.New(pool, time.Now)
-		if err != nil {
-			pool.Close()
-			return nil, nil, err
-		}
-		return provisioner, pool.Close, nil
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		return runServe()
 	}
-	return provision.Run(processContext, args, os.Stdout, os.Stderr, open)
+	switch args[0] {
+	case "serve":
+		if len(args) != 1 {
+			return usageError(stderr, "serve takes no arguments")
+		}
+		return runServe()
+	case "migrate":
+		return runMigrate(args[1:], stdout, stderr)
+	case "provision":
+		return runProvision(args[1:], stdout, stderr)
+	case "health":
+		return runHealth(args[1:], stderr)
+	case "-h", "-help", "--help", "help":
+		_, _ = fmt.Fprintln(stdout, usage)
+		return 0
+	}
+	return usageError(stderr, fmt.Sprintf("unknown command %q", args[0]))
 }
 
-func run() int {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	processContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	processConfig, err := config.Load(os.LookupEnv)
-	if err != nil {
-		logger.Error("invalid configuration", "error", err)
-		return 1
-	}
-
-	application, err := bootstrap.New(processContext, processConfig, logger)
-	if err != nil {
-		logger.Error("control plane startup failed", "error", err)
-		return 1
-	}
-	defer application.Close()
-
-	if err := application.Run(processContext); err != nil {
-		logger.Error("control plane stopped with an error", "error", err)
-		return 1
-	}
-	return 0
+func usageError(stderr io.Writer, message string) int {
+	_, _ = fmt.Fprintf(stderr, "dac-plane: %s\n\n%s\n", message, usage)
+	return 2
 }

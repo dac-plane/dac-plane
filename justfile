@@ -26,7 +26,7 @@ default:
 
 # Run every check CI runs, in CI's order
 [group('ci')]
-ci: fmt-check mod-check vet vet-integration test test-race test-adapterkit test-integration-other-race test-security-race test-conformance vuln lint-workflows
+ci: fmt-check mod-check deps-check vet vet-integration test test-race test-adapterkit test-integration-other-race test-security-race test-conformance vuln lint-workflows
 
 # Rewrite Go files into gofmt style
 [group('dev')]
@@ -56,7 +56,12 @@ vet:
 # integration tag, so they need their own vet pass.
 [group('check')]
 vet-integration:
-    go vet -tags=integration ./...
+    go vet -tags='integration stack' ./...
+
+# Keep simulator and conformance implementations out of the release process.
+[group('check')]
+deps-check:
+    go list -deps ./cmd/dac-plane | while IFS= read -r dep; do case "$dep" in */internal/simulator|*/internal/testsupport|*/internal/testsupport/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "release binary imports forbidden package: $dep"; exit 1;; esac; done
 
 # Run unit tests, including the JSON Schema contract conformance suites
 [group('test')]
@@ -172,6 +177,57 @@ test-surface-race:
 [group('test')]
 test-contracts:
     go test ./... -run 'ContractConformance|SchemaAndGo|SchemasAccept|SchemaEnums|EveryContractSchema|EveryValidatedRecord|NoVendorIdentifiers'
+
+# Build both distroless image targets from their pinned bases.
+[group('image')]
+image-build:
+    docker buildx build --load --target dac-plane -t dac-plane:dev .
+    docker buildx build --load --target dac-sim-adapter -t dac-sim-adapter:dev .
+
+# Build each target twice as OCI archives and compare the resulting manifest
+# digest. Timestamps are fixed to the source commit as documented by BuildKit.
+[group('image')]
+image-repro:
+    mkdir -p .work/image-repro
+    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
+
+# Generate throwaway development certificates and credentials under .work/.
+[group('stack')]
+stack-certs:
+    ./deploy/compose/generate-dev-config.sh
+
+# Start the development profile: issuer, provisioners, control plane and both
+# simulator roles. The base file alone remains the production-shaped stack.
+[group('stack')]
+stack-up: stack-certs
+    docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml --profile dev up -d --build
+
+[group('stack')]
+stack-down:
+    test -f .work/stack/compose.env
+    docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml --profile dev down --remove-orphans
+
+# Run the full public-HTTPS lifecycle against a clean development stack.
+[doc('Run the deployed lifecycle smoke test (needs Docker and OpenSSL)')]
+[group('test')]
+test-stack: stack-certs
+    #!/usr/bin/env bash
+    compose=(docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml --profile dev)
+    cleanup() { code=$?; if (( code != 0 )); then "${compose[@]}" logs --no-color --tail=200; fi; "${compose[@]}" down -v --remove-orphans; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -tags=stack ./internal/stacktest/
+    "${compose[@]}" exec -T postgres createdb -U dac_migrate dac_out_of_range
+    out_dsn="$PWD/.work/stack/secrets/out-of-range-database-url"
+    DAC_MIGRATE_DATABASE_URL_FILE="$out_dsn" "${compose[@]}" run --rm migrate migrate up
+    DAC_MIGRATE_DATABASE_URL_FILE="$out_dsn" "${compose[@]}" run --rm migrate migrate down-to 11
+    if refusal=$(DAC_SERVE_DATABASE_URL_FILE="$out_dsn" "${compose[@]}" run --rm --no-deps dac-plane serve 2>&1); then echo "serve accepted an out-of-range schema"; exit 1; fi
+    case "$refusal" in *"schema version is outside the range"*) ;; *) echo "$refusal"; exit 1;; esac
 
 # Report known vulnerabilities in code paths the module calls
 [group('check')]

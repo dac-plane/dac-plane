@@ -56,6 +56,15 @@ follow-up outbox intent commit together. Hook delivery never repeats or reverses
 action. A confirmed rejection schedules `action_failure`; transport loss or unknown durability
 does not.
 
+## Additive M2 transport and deployment contracts
+
+These later contracts make the frozen lifecycle reachable and deployable without changing its record
+semantics.
+
+| Contract | Durable or schema form | Representative evidence |
+|---|---|---|
+| Development-only issuer admission | `development` in `identity-config.schema.json` and `authn.IssuerConfig`; rejected unless `DAC_DEPLOYMENT=development` | `TestConfigSchemasAcceptValidGoDocuments`, `TestServeRefusesADevelopmentIssuerInProduction` |
+
 ## Verification record
 
 Observed local verification on `feature/30-contract-freeze`:

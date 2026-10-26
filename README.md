@@ -4,9 +4,10 @@
 lifecycle—tasks, attempts, attention, decisions, budgets, artifacts, audit, result revisions and
 reviews—while agent runtimes and execution environments remain replaceable integrations.
 
-The repository implements the transport-neutral lifecycle through application commands, PostgreSQL
-persistence, fenced workers and deterministic provider simulators. There is no HTTP surface or
-qualified production provider yet. The reviewed implementation baseline is in
+The repository implements the lifecycle through an authenticated Surface API, the adapter-initiated
+ControlFrame transport, PostgreSQL persistence, fenced workers and deterministic provider simulators.
+The control plane is packaged as a non-root distroless image with an explicit migration step and a
+reference Compose stack. No production provider is qualified yet. The reviewed implementation baseline is in
 [`docs/architecture/`](docs/architecture/README.md). The earlier candidate research, experiments and
 TypeScript/PostgreSQL prototypes are retained under [`architecture-explore/`](architecture-explore/README.md)
 as evidence, not as the active product implementation.
@@ -40,7 +41,12 @@ just ci     # run what CI runs
 Checks are recipes in the root `justfile`, which CI also calls; it needs
 [just](https://just.systems) 1.57 or newer.
 
-The current process requires `DAC_DATABASE_URL` and accepts an optional positive Go duration in
-`DAC_DATABASE_CONNECT_TIMEOUT` (default `10s`). It connects to PostgreSQL, waits for SIGINT or SIGTERM,
-and shuts down cleanly. Lifecycle commands and worker behavior are exercised by the application and
-integration suites; the process does not yet expose them over HTTP.
+`dac-plane serve` exposes the Surface API and adapter endpoint over TLS and a local operations
+listener for container health checks. `dac-plane migrate` owns schema rollout, `dac-plane provision`
+owns trusted bootstrap changes, and secret-bearing settings accept mounted files. See the
+[reference deployment guide](deploy/compose/README.md) for configuration, database privileges,
+upgrade/rollback rules and the simulator-backed development profile.
+
+```sh
+just test-stack  # clean TLS Compose stack and full public-API lifecycle smoke
+```

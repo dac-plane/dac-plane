@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/adapterwire"
 	"github.com/AssahBismarkabah/dac-plane/internal/config"
@@ -17,10 +18,12 @@ import (
 
 // Application owns process-scoped resources for the modular monolith.
 type Application struct {
-	logger    *slog.Logger
-	pool      *pgxpool.Pool
-	adapters  *adapterwire.Registry
-	worker    *worker.Worker
+	logger   *slog.Logger
+	pool     *pgxpool.Pool
+	adapters *adapterwire.Registry
+	worker   *worker.Worker
+	// running is true while Run drives the process loop; liveness reports it.
+	running   atomic.Bool
 	closeOnce sync.Once
 }
 
@@ -73,6 +76,8 @@ func (application *Application) Adapters() *adapterwire.Registry {
 // dispatch without a pool.
 func (application *Application) Run(ctx context.Context) error {
 	application.logger.Info("control plane initialized")
+	application.running.Store(true)
+	defer application.running.Store(false)
 	if application.worker != nil {
 		workerDone := make(chan error, 1)
 		go func() {

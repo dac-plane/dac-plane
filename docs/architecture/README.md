@@ -2,10 +2,11 @@
 
 Status: **reviewed initial implementation baseline**
 
-This directory defines the architecture to implement after the completed exploration in
+This directory defines the architecture implemented from the completed exploration in
 [`architecture-explore/`](../../architecture-explore/README.md). The diagrams describe product
-responsibility and initial software containers. They do not claim that the product is implemented or
-deployed. The findings and remaining gates are recorded in the
+responsibility and initial software containers. The deterministic development deployment is now
+implemented; it does not claim production-provider qualification or an operated production service.
+The findings and remaining gates are recorded in the
 [pre-implementation architecture review](review-2026-10-15.md).
 
 ## Source precedence
@@ -75,7 +76,9 @@ worker, against one PostgreSQL primary. Schema changes happen only in a separate
 a rollout. Surface clients and provider adapters both connect in over TLS with tokens from the
 operator's OpenID Connect provider; the control plane never dials an adapter. Simulator adapters and a
 test issuer exist only in a development profile. See
-[ADR-0009](../adr/0009-deployment-unit-and-first-substrate.md).
+[ADR-0009](../adr/0009-deployment-unit-and-first-substrate.md) and the
+[reference deployment guide](../../deploy/compose/README.md). The checked-in Compose development
+profile proves this topology through the full HTTPS lifecycle smoke; it remains simulator evidence.
 
 The view shows the reference Compose stack. It does not choose PostgreSQL high availability, a cloud,
 Kubernetes or a production provider.
@@ -175,6 +178,7 @@ providers and deployable, without changing lifecycle ownership.
 - [Security and lifecycle acceptance (#28)](security-28.md)
 - [Fenced harness migration execution (#60)](harness-migration-60.md)
 - [M1 lifecycle contract freeze and evidence (#30)](contract-freeze-30.md)
+- [Reference Compose deployment and rollout guide](../../deploy/compose/README.md)
 
 ## Change triggers
 
