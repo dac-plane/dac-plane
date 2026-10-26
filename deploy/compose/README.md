@@ -79,3 +79,29 @@ logs on failure and removes the database volume afterward.
 The development profile's mock issuer, fixed tenant/provider identities, generated credentials and
 simulator results are test fixtures. They are not production identity, provider qualification,
 secret management or evidence that a real runtime behaves correctly.
+
+## Operations test profile
+
+`compose.operations.yaml` is a test overlay for issue #74. It creates two independently addressable
+serving replicas against the same PostgreSQL primary and connects one simulator process to both
+adapter listeners. Run it through the repository recipes, which assign a scenario-specific Compose
+project and remove only that project's containers, network and volumes:
+
+```sh
+just test-operations-fencing
+just test-operations-restart
+just test-operations-backup
+just test-operations-upgrade
+just test-operations
+```
+
+The simulator settings used by this profile are test controls, not provider or production
+administration interfaces. `DAC_ADAPTER_URLS` accepts a comma-separated set of adapter WebSocket
+URLs and keeps one connection per simulated role per URL while sharing the runtime, artifact bytes
+and evidence ledger. It is mutually exclusive with the normal single `DAC_ADAPTER_URL` setting.
+`DAC_SIM_CONTROL_ADDR` enables the otherwise absent HTTP pause/evidence listener. The overlay binds
+that listener to host loopback only. Do not enable or publish it in a production deployment.
+
+The tagged next-release binary, schema-14 probe migration, pinned-old image and simulator evidence
+listener exist only for this operations suite. They do not extend the release migration set or
+qualify a real provider.

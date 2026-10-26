@@ -178,6 +178,7 @@ providers and deployable, without changing lifecycle ownership.
 - [Recovery, replay, fencing and restart evidence (#27)](recovery-27.md)
 - [Security and lifecycle acceptance (#28)](security-28.md)
 - [Fenced harness migration execution (#60)](harness-migration-60.md)
+- [Operational recovery and rolling-upgrade evidence (#74)](operations-74.md)
 - [M1 lifecycle contract freeze and evidence (#30)](contract-freeze-30.md)
 - [Reference Compose deployment and rollout guide](../../deploy/compose/README.md)
 

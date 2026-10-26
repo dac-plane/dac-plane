@@ -2,6 +2,7 @@
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/74
 Rollout defect: https://github.com/dac-plane/dac-plane/issues/87
+Recovery blocker: https://github.com/dac-plane/dac-plane/issues/88
 Branch: `feature/74-operational-evidence`, from `main` at `ca20b3e`.
 Parent: #65 (M2: Deployable control plane).
 
@@ -94,4 +95,12 @@ operations-only fixture and never enters the production migration source.
 
 ## Deviations
 
-- None yet.
+- The required kill/restart scenario exposed a contract conflict after implementation. A worker
+  killed at the simulator's `before_effect` boundary has already committed `send_started`. The
+  accepted recovery baseline therefore makes the takeover uncertain and forbids the replacement
+  resend; the observed simulator effect count is zero. Issue #88 records the decision and protocol
+  work needed to make this scenario converge safely. Per the plan, #74 remains open and this is not
+  waived or weakened into a passing assertion.
+- Because #88 blocks one of four required scenarios, the original assumption that this branch can
+  close #74 and #87 in one merge no longer holds. The branch can close #87 only after review; #74
+  remains open until #88 is resolved and all four deployed scenarios pass.
