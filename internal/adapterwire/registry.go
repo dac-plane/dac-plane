@@ -77,7 +77,11 @@ func (r *Registry) Port(tenant ids.TenantID, provider ids.ProviderID, role contr
 	if r.Connections(tenant, provider, role) == 0 {
 		return nil
 	}
-	return &providerPort{registry: r, key: key}
+	port := &providerPort{registry: r, key: key}
+	if r.pickCapability(key, contracts.CapabilityOperationReplay) != nil {
+		return &replayProviderPort{providerPort: port}
+	}
+	return port
 }
 
 // ArtifactStore returns the artifact store a connected runtime's
@@ -142,12 +146,23 @@ func (r *Registry) remove(c *connection) {
 // pick returns the open connection of key with the fewest requests in
 // flight. allowDraining admits a draining connection, for a cancel.
 func (r *Registry) pick(key registrationKey, allowDraining bool) *connection {
+	return r.pickWhere(key, allowDraining, nil)
+}
+
+func (r *Registry) pickCapability(key registrationKey, capability contracts.Capability) *connection {
+	return r.pickWhere(key, false, func(c *connection) bool { return c.supports(capability) })
+}
+
+func (r *Registry) pickWhere(key registrationKey, allowDraining bool, accept func(*connection) bool) *connection {
 	r.mu.Lock()
 	conns := append([]*connection(nil), r.conns[key]...)
 	r.mu.Unlock()
 	var best *connection
 	bestLoad := 0
 	for _, c := range conns {
+		if accept != nil && !accept(c) {
+			continue
+		}
 		open, inFlight := c.load()
 		if !open && !(allowDraining && c.live()) {
 			continue
@@ -163,6 +178,23 @@ func (r *Registry) pick(key registrationKey, allowDraining bool) *connection {
 type providerPort struct {
 	registry *Registry
 	key      registrationKey
+}
+
+// replayProviderPort exists only while this registration has a live
+// connection that negotiated stable-operation replay.
+type replayProviderPort struct{ *providerPort }
+
+var _ contracts.StableOperationReplayer = (*replayProviderPort)(nil)
+
+func (p *replayProviderPort) Replay(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	if request.Tenant != p.key.tenant || request.Role != p.key.role {
+		return contracts.Reply{}, fmt.Errorf("%w: request is for another registration", contracts.ErrNotDelivered)
+	}
+	c := p.registry.pickCapability(p.key, contracts.CapabilityOperationReplay)
+	if c == nil {
+		return contracts.Reply{}, contracts.ErrNotDelivered
+	}
+	return c.send(ctx, request)
 }
 
 func (p *providerPort) Role() contracts.Role { return p.key.role }

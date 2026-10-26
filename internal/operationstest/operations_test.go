@@ -65,13 +65,16 @@ func TestMultiReplicaFencing(t *testing.T) {
 	}
 	h.releasePause(submitted.Operation.ID, "after_effect")
 	t.Logf("released after-effect pause; operation=%s outbox=%s", h.operationState(submitted.Operation.ID), h.outboxState(submitted.Operation.ID))
-	h.waitOperationState(submitted.Operation.ID, lifecycle.OperationUncertain)
+	h.waitOperationState(submitted.Operation.ID, lifecycle.OperationAccepted)
 	h.compose("unpause", claimant)
 	time.Sleep(500 * time.Millisecond)
 
 	h.assertLedger(submitted.Operation.ID, 1)
-	if state := h.operationState(submitted.Operation.ID); state != string(lifecycle.OperationUncertain) {
-		t.Fatalf("operation state = %s, want uncertain after stale settlement was fenced", state)
+	if evidence := h.ledgerEvidence(submitted.Operation.ID); evidence.Deliveries < 2 {
+		t.Fatalf("delivery evidence = %+v, want the winning replay after takeover", evidence)
+	}
+	if state := h.operationState(submitted.Operation.ID); state != string(lifecycle.OperationAccepted) {
+		t.Fatalf("operation state = %s, want accepted after winning replay and fenced stale settlement", state)
 	}
 }
 
@@ -88,6 +91,7 @@ func TestProcessKillAndRestart(t *testing.T) {
 	h.compose("stop", "-t", "0", claimant)
 	h.expireClaim(submitted.Operation.ID, submitted.Attempt.ID)
 	winning := h.waitClaim(submitted.Operation.ID, first.epoch+1)
+	t.Logf("restart takeover: %s epoch %d -> %s epoch %d", first.owner, first.epoch, winning.owner, winning.epoch)
 	h.compose("start", claimant)
 	h.health(claimant)
 	time.Sleep(time.Second)

@@ -407,6 +407,20 @@ type notDeliveredOncePort struct {
 	attempts *int
 }
 
+type replayPort struct {
+	contracts.Port
+	replays   int
+	failFirst bool
+}
+
+func (p *replayPort) Replay(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	p.replays++
+	if p.failFirst && p.replays == 1 {
+		return contracts.Reply{}, contracts.ErrNotDelivered
+	}
+	return p.Port.Send(ctx, request)
+}
+
 func (p *notDeliveredOncePort) Role() contracts.Role { return p.inner.Role() }
 
 func (p *notDeliveredOncePort) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
@@ -465,6 +479,56 @@ func TestWorkerRestartRecovery(t *testing.T) {
 	}
 	if got := f.readyCount(t, ctx, pollAt.Add(time.Minute)); got != 0 {
 		t.Fatalf("OutboxReadyDispatch() = %d rows, want the row acked", got)
+	}
+}
+
+func TestWorkerRestartReplaysWhenCapabilityWasNegotiated(t *testing.T) {
+	ctx, f := setupFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	opID, attemptID := f.dispatchableOp(t, ctx, now, contracts.DemandBackground, 1)
+	pollAt := now.Add(time.Minute)
+	port := &replayPort{Port: f.loopback, failFirst: true}
+	w := testWorkerWithPort(t, f, worker.DefaultConfig(), port)
+
+	uow, err := store.Begin(ctx, f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.OutboxReadyDispatch(ctx, uow, f.tenant, pollAt, 10)
+	if err != nil || len(rows) != 1 {
+		_ = uow.Rollback(ctx)
+		t.Fatalf("OutboxReadyDispatch() = %v, %v", rows, err)
+	}
+	if _, err := store.ClaimOutboxRowByID(ctx, uow, f.tenant, rows[0].ID, "dead-worker", 0, now); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimAttemptLease(ctx, uow, f.tenant, attemptID, "dead-worker", 0, now); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := uow.Exec(ctx, `update outbox set last_error='send_started' where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), rows[0].ID.String()); err != nil {
+		_ = uow.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := uow.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("first Tick() error = %v", err)
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationDispatched {
+		t.Fatalf("operation after unavailable replay = %s, want dispatched with its send marker", operation.State)
+	}
+	if err := w.Tick(ctx); err != nil {
+		t.Fatalf("second Tick() error = %v", err)
+	}
+	if port.replays != 2 || len(f.loopback.Sent()) != 1 {
+		t.Fatalf("replays = %d, delivered sends = %d; want unavailable then successful replay", port.replays, len(f.loopback.Sent()))
+	}
+	if operation := f.operationState(t, ctx, opID); operation.State != lifecycle.OperationAccepted {
+		t.Fatalf("operation state = %s, want accepted", operation.State)
 	}
 }
 

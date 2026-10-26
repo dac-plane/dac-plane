@@ -93,14 +93,14 @@ operations-only fixture and never enters the production migration source.
 - Before merge, review the complete diff for correctness, architecture, security, performance and
   scope; address every verified finding and record commands actually observed.
 
-## Deviations
+## Recovery-contract correction
 
-- The required kill/restart scenario exposed a contract conflict after implementation. A worker
-  killed at the simulator's `before_effect` boundary has already committed `send_started`. The
-  accepted recovery baseline therefore makes the takeover uncertain and forbids the replacement
-  resend; the observed simulator effect count is zero. Issue #88 records the decision and protocol
-  work needed to make this scenario converge safely. Per the plan, #74 remains open and this is not
-  waived or weakened into a passing assertion.
-- Because #88 blocks one of four required scenarios, the original assumption that this branch can
-  close #74 and #87 in one merge no longer holds. The branch can close #87 only after review; #74
-  remains open until #88 is resolved and all four deployed scenarios pass.
+- The first kill/restart run exposed that a committed `send_started` marker cannot distinguish a
+  crash before an effect from a lost reply after an effect. Issue #88 records that gap.
+- ADR-0012 resolves it without weakening the default: only a session that negotiates
+  `operation.replay` may receive the same stable operation and payload under a fresh delivery. Other
+  adapters retain uncertain reconciliation.
+- The replacement worker reruns the normal gates and holds the winning claim and Attempt-lease
+  epochs. The reference simulator serializes duplicate deliveries and records one effect.
+- #74, #87 and #88 may close together only after all four deployed scenarios and the regression
+  gates pass with observed evidence.

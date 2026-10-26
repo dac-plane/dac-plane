@@ -1,7 +1,6 @@
 # Issue #74 operational evidence
 
-Date: 2026-10-26. Host architecture: arm64. Confidence: high for the observations below; issue
-#88 prevents completion of #74.
+Date: 2026-10-26. Host architecture: arm64. Confidence: high for the observations below.
 
 This note records deployed observations from the issue #74 Compose fixture. It is evidence, not an
 availability or provider-qualification claim. The runner used Docker Engine 29.8.2, Docker Compose
@@ -25,10 +24,10 @@ built by the recipes. Image identifiers from the observed run were:
 
 | Fixture | Image identifier |
 |---|---|
-| pinned old control plane | `sha256:c821d027480e1751133488d47c018c157621c6061b73f6a98274f6762a9e3697` |
-| current control plane | `sha256:ba7f5b897e0fa3b90bf28fcc61e81e1574b1888d333efc9f8985055de255a627` |
-| operations next release | `sha256:c1aa62592d22b24c410188907474f97a69a0f260dfeea9503435dd97f94eb739` |
-| operations simulator | `sha256:200c1cdb04c59a8b3c5958fb7955b5c80b860e873321ca8201ae598e934bd8b5` |
+| pinned old control plane | `sha256:39b650be20aa2ec43423012db49b57eb174813591d32d01f8b15afc237aab3bb` |
+| current control plane | `sha256:d2bb5b434a86c7902ed4f5587d1b9b8e94c866f9682d0b2ffe8b43ccc7d2776e` |
+| operations next release | `sha256:986d463432bdb515b440ff7ee6c208aa74c7d16c00e72f1eaef9106f916cbe0e` |
+| operations simulator | `sha256:325cdf1c7ee08bd29ef9bba968a54dc91d54078939a2cc5917ea460b38ceda47` |
 
 These are local OCI image identifiers, not registry digests.
 
@@ -37,25 +36,27 @@ These are local OCI image identifiers, not registry digests.
 ### Multi-replica fencing — pass
 
 The after-effect pause was reached on the first claimant
-`control-plane-01a17908-d547-76c5-b9bd-26e3a940a2ec`. After only the named outbox and Attempt leases
-were expired, `control-plane-01a17908-d55b-7516-9b08-9a53271f70df` won epoch 2. The simulator
-recorded one effect. The takeover moved the operation to `uncertain`, and resuming the stale process
-did not overwrite that winning settlement. Duration: 22.73 seconds.
+`control-plane-01a1793b-ea94-731b-bede-d6ffc485c226`. After only the named outbox and Attempt leases
+were expired, `control-plane-01a1793b-eaa4-7ea7-9b85-99a98a711a2e` won epoch 2. The negotiated
+`operation.replay` delivery returned the simulator's recorded result without another effect. The
+winning operation was `accepted`; resuming the stale process did not overwrite the epoch-2
+settlement. The ledger recorded at least two deliveries and exactly one effect. Duration: 22.70
+seconds.
 
-### Kill and restart — failed, blocks #74
+### Kill and restart — pass
 
-The simulator reached `before_effect`; the claiming process was killed, its named leases were
-expired, and `control-plane-01a17911-0132-71a5-9c05-6c5d330c8269` won outbox epoch 2. The replacement
-did not deliver the stable runtime operation: the durable `send_started` marker caused the existing
-worker recovery path to move the operation to `uncertain` and the Attempt to `reconciling`. The
-simulator ledger contained one delivery, zero effects and no applied effect record. Duration: 28.74
-seconds. Failure logs were preserved at
-`.work/operations/dac-ops-processkillandrestart.log`.
+The simulator reached `before_effect`; the claiming process was killed and only its named leases
+were expired. The replacement replica won outbox epoch 2 and used the capability-gated replay path.
+The abandoned first delivery applied no effect; the replacement delivery applied exactly one effect,
+settled the operation as `accepted`, and cursor processing reached attention. The killed replica was
+restarted and became healthy without losing durable state. Duration: 29.43 seconds.
 
-This is not waived. [Issue #88](https://github.com/dac-plane/dac-plane/issues/88) records the
-required recovery-contract decision. The accepted recovery baseline currently forbids blindly
-resending an ordinary runtime request after the send marker, while the #74 scenario requires a
-replacement delivery despite having no authoritative non-effect receipt. Issue #74 remains open.
+The initial failing run is retained as the evidence that motivated
+[ADR-0012](../adr/0012-negotiate-stable-operation-replay.md) and
+[issue #88](https://github.com/dac-plane/dac-plane/issues/88): one delivery, zero effects and an
+uncertain operation before capability-gated replay was implemented. The passing behavior does not
+generalize to adapters that do not negotiate `operation.replay`; those retain uncertain
+reconciliation.
 
 ### Logical backup and restore — pass
 
@@ -89,6 +90,9 @@ and the separately identified `turn_steered` effect required by the attention an
 exactly one start effect across the rolling replacement. Duration: 28.28 seconds.
 
 ## Limits
+
+The aggregate `just test-operations` run passed all four scenarios in 113.554 seconds. The same
+recipe is the blocking CI entry point.
 
 This evidence covers Docker Compose, two control-plane processes and one PostgreSQL primary. The
 restore is a logical backup exercise, not database failover. The providers are deterministic

@@ -163,6 +163,14 @@ func Phases() []Phase {
 // Capability names an optional protocol feature, for example "stream.replay".
 type Capability string
 
+const (
+	// CapabilityOperationReplay permits a replacement delivery of the same
+	// stable operation and payload after a committed send marker survives its
+	// worker. The adapter must return the recorded result when the operation
+	// already took effect and must not apply the effect twice.
+	CapabilityOperationReplay Capability = "operation.replay"
+)
+
 // Lifecycle establishes or ends a session. A hello advertises supported
 // versions and offered capabilities, some of which the sender requires; a
 // ready acknowledges the single selected version and capability set; a

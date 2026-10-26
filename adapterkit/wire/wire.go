@@ -20,6 +20,11 @@ const Subprotocol = "dac-plane.controlframe.v1"
 // ProtocolVersion is the ControlFrame protocol version this package speaks.
 const ProtocolVersion uint32 = 1
 
+// CapabilityOperationReplay promises operation-keyed idempotency: a
+// replacement delivery of the same operation and payload returns its recorded
+// result or applies the effect once.
+const CapabilityOperationReplay = "operation.replay"
+
 // DefaultMaxFrameBytes bounds one frame unless a peer configures another limit.
 const DefaultMaxFrameBytes = 1 << 20
 

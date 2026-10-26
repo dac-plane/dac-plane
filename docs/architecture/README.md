@@ -166,6 +166,7 @@ providers and deployable, without changing lifecycle ownership.
 - [ADR-0009: one container image, migrated by an explicit step, on a reference Compose stack](../adr/0009-deployment-unit-and-first-substrate.md)
 - [ADR-0010: open provider event streams with subscribe and unsubscribe frames](../adr/0010-controlframe-stream-subscription.md)
 - [ADR-0011: roll compatible binaries before schema migrations](../adr/0011-roll-compatible-binaries-before-schema-migrations.md)
+- [ADR-0012: negotiate stable-operation replay before crash takeover redelivery](../adr/0012-negotiate-stable-operation-replay.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

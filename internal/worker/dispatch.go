@@ -219,11 +219,26 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
 	defer cancel()
-	reply, err := port.Send(sendCtx, request)
+	var reply contracts.Reply
+	if prepared.replay {
+		replayer, ok := port.(contracts.StableOperationReplayer)
+		if !ok {
+			return w.releasePrepared(ctx, tenant, row, prepared, now, false)
+		}
+		reply, err = replayer.Replay(sendCtx, request)
+	} else {
+		reply, err = port.Send(sendCtx, request)
+	}
 	if errors.Is(err, contracts.ErrNotDelivered) {
-		// The transport wrote nothing, so nothing can have taken effect.
+		// A first send that wrote nothing clears its marker. A replay keeps the
+		// earlier committed marker because that earlier delivery may have acted.
 		w.stats.SkippedNoPort.Add(1)
-		return w.releasePrepared(ctx, tenant, row, prepared, now, true)
+		return w.releasePrepared(ctx, tenant, row, prepared, now, !prepared.replay)
+	}
+	if prepared.replay && err != nil {
+		// Negotiated replay is safe to attempt again. Preserve the earlier send
+		// marker and let the normal claim budget and deadline gates bound it.
+		return w.releasePrepared(ctx, tenant, row, prepared, now, false)
 	}
 	if err != nil {
 		reply = uncertainReply(request.Operation, delivery)
@@ -242,6 +257,7 @@ type preparedDispatch struct {
 	claim     store.OutboxClaim
 	operation lifecycle.ProviderOperation
 	lease     store.AttemptLease
+	replay    bool
 }
 
 // prepareDispatch claims the row and runs the pre-dispatch checklist in one
@@ -254,6 +270,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	if err != nil {
 		return nil, err
 	}
+	replay := false
 	committed := false
 	defer func() {
 		if !committed {
@@ -348,13 +365,18 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		if !h.Mode.Authoritative() {
 			return release(claim)
 		}
-		if err := w.abandonOperation(ctx, uow, tenant, operation.ID, false, time.Now().UTC()); err != nil {
-			return nil, err
+		port := w.port(tenant, operation.Provider, body.Role)
+		if _, ok := port.(contracts.StableOperationReplayer); ok {
+			replay = true
+		} else {
+			if err := w.abandonOperation(ctx, uow, tenant, operation.ID, false, time.Now().UTC()); err != nil {
+				return nil, err
+			}
+			if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
+				return nil, err
+			}
+			return nil, commit()
 		}
-		if err := store.AckOutboxRow(ctx, uow, tenant, row.ID, claim.Epoch, time.Now().UTC()); err != nil {
-			return nil, err
-		}
-		return nil, commit()
 	}
 	if row.Record == lifecycle.RecordAuthorityUse && operation.State != lifecycle.OperationRecorded && (claim.Row.LastError != "" || row.Status == "processing") {
 		// A previous claim committed the send marker. Its effect is unknown
@@ -491,7 +513,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return nil, err
 	}
 	w.stats.Claims.Add(1)
-	return &preparedDispatch{claim: claim, operation: operation, lease: lease}, nil
+	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay}, nil
 }
 
 // budgetSpent reports whether the row already burned its retry budget, and

@@ -75,7 +75,8 @@ subscribed to. A reply is matched only to a request sent on the same connection.
 The transport adds no outcome semantics. A connection that closes, times out or fails liveness checks
 after a request was sent, but before its reply arrived, returns a transport error for that request.
 The request becomes uncertain and is reconciled from bound observations or by replaying the same
-stable operation where the protocol allows it; it is never resent as a new operation. A provider with
+stable operation when the session selected `operation.replay` under
+[ADR-0012](0012-negotiate-stable-operation-replay.md); it is never resent as a new operation. A provider with
 no live connection has no port, and its outbox rows stay pending, exactly as for an unregistered
 provider today. Cancellation remains an intent until a stop is observed.
 

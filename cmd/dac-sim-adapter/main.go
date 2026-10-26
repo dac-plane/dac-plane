@@ -88,6 +88,7 @@ type adapter struct {
 	role     wire.Role
 	port     contracts.Port
 	token    adapterkit.TokenSource
+	offered  []string
 }
 
 type simulatorSet struct {
@@ -138,7 +139,7 @@ func run(args []string, stderr io.Writer) int {
 				defer wg.Done()
 				err := adapterkit.Run(ctx, adapterkit.Config{
 					URL: endpoint, Provider: a.provider, Role: a.role, Handler: simulator.Handler(a.port),
-					Token: a.token, TLS: tlsConfig, Logger: logger.With("role", string(a.role), "endpoint", endpoint),
+					Token: a.token, Offered: a.offered, TLS: tlsConfig, Logger: logger.With("role", string(a.role), "endpoint", endpoint),
 				})
 				if err != nil && !errors.Is(err, context.Canceled) {
 					errs <- fmt.Errorf("%s at %s: %w", a.role, endpoint, err)
@@ -239,7 +240,7 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config) (*simulatorSet, error) {
 		return nil, err
 	}
 	set := &simulatorSet{runtime: runtime}
-	set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken}}
+	set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay}}}
 	if s.ArtifactStore == nil {
 		return set, nil
 	}

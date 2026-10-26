@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -51,6 +52,7 @@ type connection struct {
 	mu       sync.Mutex
 	pending  map[pendingKey]chan contracts.Reply
 	streams  map[streamKey]*wireStream
+	selected []contracts.Capability
 	draining bool
 	closed   bool
 }
@@ -152,6 +154,13 @@ func (c *connection) negotiate() error {
 		// The adapter shut the session down instead of saying hello.
 		return fmt.Errorf("%w: shutdown before hello", ErrConnectionClosed)
 	}
+	selected, open := gate.Selected()
+	if !open {
+		return fmt.Errorf("%w: negotiation did not open", ErrConnectionClosed)
+	}
+	c.mu.Lock()
+	c.selected = append([]contracts.Capability(nil), selected.Selected...)
+	c.mu.Unlock()
 	return nil
 }
 
@@ -354,6 +363,12 @@ func (c *connection) live() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return !c.closed
+}
+
+func (c *connection) supports(capability contracts.Capability) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Contains(c.selected, capability)
 }
 
 // refuse ends the session for a protocol violation.
