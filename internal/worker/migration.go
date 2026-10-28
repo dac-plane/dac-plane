@@ -403,7 +403,16 @@ func validateMigrationReceipt(reply contracts.Reply, request contracts.Request, 
 		return contracts.MigrationReceipt{}, store.ErrPayloadMismatch
 	}
 	var sent contracts.MigrationRequest
-	if err := json.Unmarshal(request.Arguments, &sent); err != nil {
+	if stage == contracts.MigrationTargetStarted {
+		var start contracts.RuntimeStart
+		if err := json.Unmarshal(request.Arguments, &start); err != nil {
+			return contracts.MigrationReceipt{}, err
+		}
+		if err := start.Validate(); err != nil {
+			return contracts.MigrationReceipt{}, err
+		}
+		sent = *start.Recovery
+	} else if err := json.Unmarshal(request.Arguments, &sent); err != nil {
 		return contracts.MigrationReceipt{}, err
 	}
 	if (stage == contracts.MigrationTargetEnvironmentReady && receipt.EnvironmentRef == "") || (stage != contracts.MigrationTargetEnvironmentReady && receipt.EnvironmentRef != sent.EnvironmentRef) || (stage != contracts.MigrationSourceQuiesced && !slices.Equal(receipt.ContextRefs, sent.ContextRefs)) {
@@ -730,7 +739,19 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 	if err != nil {
 		return contracts.MigrationReceipt{}, false, err
 	}
-	body, err := json.Marshal(payload)
+	var wirePayload any = payload
+	if method == contracts.MethodStartTurn {
+		brief, briefErr := w.executionBrief(ctx, tenant, attempt)
+		if briefErr != nil {
+			return contracts.MigrationReceipt{}, false, briefErr
+		}
+		start := contracts.RuntimeStart{Brief: brief, Recovery: &payload}
+		if err := start.Validate(); err != nil {
+			return contracts.MigrationReceipt{}, false, err
+		}
+		wirePayload = start
+	}
+	body, err := json.Marshal(wirePayload)
 	if err != nil {
 		return contracts.MigrationReceipt{}, false, err
 	}
@@ -753,6 +774,21 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 		return contracts.MigrationReceipt{}, false, err
 	}
 	return receipt, true, nil
+}
+
+func (w *Worker) executionBrief(ctx context.Context, tenant ids.TenantID, attemptID ids.AttemptID) (lifecycle.ExecutionBrief, error) {
+	attempt, err := store.GetAttempt(ctx, w.pool, tenant, attemptID)
+	if err != nil {
+		return lifecycle.ExecutionBrief{}, err
+	}
+	task, err := store.GetTask(ctx, w.pool, tenant, attempt.Task)
+	if err != nil {
+		return lifecycle.ExecutionBrief{}, err
+	}
+	if brief, present := task.Brief(); present {
+		return brief, nil
+	}
+	return store.GetTaskExecutionBrief(ctx, w.pool, tenant, task.ID)
 }
 
 func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {

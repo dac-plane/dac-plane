@@ -128,7 +128,7 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		}
 		return out
 	}
-	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
+	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","objective":"Update the fixture","acceptance_criteria":["The fixture is updated"],"deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
 	validMigration := `{"from_provider_id":"` + newID[ids.Provider](t).String() + `","to_provider_id":"` + newID[ids.Provider](t).String() + `"}`
 	cases := []struct {
 		name   string
@@ -144,7 +144,7 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		{"submit without key", unitRequest{"POST", base + "/tasks", validSubmit, auth}, 400},
 		{"submit oversized key", unitRequest{"POST", base + "/tasks", validSubmit, with(map[string]string{"Idempotency-Key": strings.Repeat("k", 129)})}, 400},
 		{"submit malformed JSON", unitRequest{"POST", base + "/tasks", `{"provider_id":`, with(map[string]string{"Idempotency-Key": "k1"})}, 400},
-		{"submit unknown field", unitRequest{"POST", base + "/tasks", strings.Replace(validSubmit, "{", `{"objective":"x",`, 1), with(map[string]string{"Idempotency-Key": "k1"})}, 400},
+		{"submit unknown field", unitRequest{"POST", base + "/tasks", strings.Replace(validSubmit, "{", `{"unexpected":"x",`, 1), with(map[string]string{"Idempotency-Key": "k1"})}, 400},
 		{"cancel null body", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `null`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
 		{"cancel trailing bracket", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}]`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
 		{"cancel trailing brace", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}}`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},

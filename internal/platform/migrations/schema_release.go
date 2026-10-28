@@ -15,10 +15,10 @@ var embedded embed.FS
 var Source = mustSub(embedded, "migrations")
 
 // CurrentVersion is the latest released migration version.
-const CurrentVersion int64 = 13
+const CurrentVersion int64 = 14
 
-// MinServeVersion is the oldest schema this release serves (ADR-0009).
-const MinServeVersion int64 = 12
+// MinServeVersion is the oldest schema this release serves (ADR-0011).
+const MinServeVersion int64 = 13
 
 func mustSub(source fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(source, dir)

@@ -33,6 +33,9 @@ type SubmitTask struct {
 	// Provider selects the harness: it must have a qualification that is not
 	// off. No production provider is chosen here.
 	Provider ids.ProviderID
+	// Brief is the product-owned requested outcome delivered to every runtime
+	// attempt. It contains no provider or environment configuration.
+	Brief lifecycle.ExecutionBrief
 	// Demand is the scheduling hint, person or background; empty means
 	// background.
 	Demand contracts.Demand
@@ -51,30 +54,34 @@ type SubmitTask struct {
 // submitPayload is the fingerprinted part of a submission: everything but
 // the nonce and the command time.
 type submitPayload struct {
-	Provider string `json:"provider"`
-	Demand   string `json:"demand"`
-	Deadline string `json:"deadline"`
-	Unit     string `json:"unit"`
-	Ceiling  uint64 `json:"ceiling"`
-	Amount   uint64 `json:"amount"`
-	Spend    bool   `json:"spend"`
+	Provider           string   `json:"provider"`
+	Objective          string   `json:"objective"`
+	AcceptanceCriteria []string `json:"acceptance_criteria"`
+	Demand             string   `json:"demand"`
+	Deadline           string   `json:"deadline"`
+	Unit               string   `json:"unit"`
+	Ceiling            uint64   `json:"ceiling"`
+	Amount             uint64   `json:"amount"`
+	Spend              bool     `json:"spend"`
 }
 
 // submission is the outcome a submit_task record stores: the identities the
 // submission created, which later session, turn and environment bindings
 // reference, and the selection it bound.
 type submission struct {
-	Task      string `json:"task"`
-	Attempt   string `json:"attempt"`
-	Operation string `json:"operation"`
-	Budget    string `json:"budget"`
-	Provider  string `json:"provider"`
-	Mode      string `json:"mode"`
-	Demand    string `json:"demand"`
-	Deadline  string `json:"deadline"`
-	Unit      string `json:"unit"`
-	Amount    uint64 `json:"amount"`
-	Spend     string `json:"spend,omitempty"`
+	Task               string   `json:"task"`
+	Attempt            string   `json:"attempt"`
+	Operation          string   `json:"operation"`
+	Budget             string   `json:"budget"`
+	Provider           string   `json:"provider"`
+	Objective          string   `json:"objective,omitempty"`
+	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
+	Mode               string   `json:"mode"`
+	Demand             string   `json:"demand"`
+	Deadline           string   `json:"deadline"`
+	Unit               string   `json:"unit"`
+	Amount             uint64   `json:"amount"`
+	Spend              string   `json:"spend,omitempty"`
 }
 
 // Submission is a submitted task as it stands now: the records the
@@ -113,6 +120,7 @@ type Dispatch struct {
 func (c SubmitTask) normalize() SubmitTask {
 	c.At = c.At.UTC().Truncate(time.Microsecond)
 	c.Deadline = c.Deadline.UTC().Truncate(time.Microsecond)
+	c.Brief.AcceptanceCriteria = slices.Clone(c.Brief.AcceptanceCriteria)
 	if c.Demand == "" {
 		c.Demand = contracts.DemandBackground
 	}
@@ -132,6 +140,8 @@ func (c SubmitTask) validate() error {
 		return fmt.Errorf("%w: a command time and a deadline are required", ErrInvalidCommand)
 	case c.Provider.IsZero():
 		return fmt.Errorf("%w: a provider is required", ErrInvalidCommand)
+	case c.Brief.Validate() != nil:
+		return fmt.Errorf("%w: a valid execution brief is required", ErrInvalidCommand)
 	case !slices.Contains(contracts.Demands(), c.Demand):
 		return fmt.Errorf("%w: unknown demand %q", ErrInvalidCommand, c.Demand)
 	case c.Unit.Validate() != nil:
@@ -153,14 +163,23 @@ type dispatchSpec struct {
 	deadline  time.Time
 	unit      lifecycle.Unit
 	amount    uint64
+	start     contracts.RuntimeStart
 }
 
 // body is the worker's dispatch envelope for the start_turn.
 func (d dispatchSpec) body() ([]byte, error) {
+	arguments, err := json.Marshal(d.start)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.start.Validate(); err != nil {
+		return nil, err
+	}
 	return json.Marshal(map[string]any{
 		"operation": d.operation.ID.String(),
 		"role":      contracts.RoleRuntime,
 		"method":    contracts.MethodStartTurn,
+		"arguments": json.RawMessage(arguments),
 		"deadline":  d.deadline.Format(time.RFC3339Nano),
 		"unit":      d.unit,
 		"amount":    d.amount,
@@ -182,7 +201,8 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, cmd SubmitTask) (Submission
 		return Submission{}, err
 	}
 	digest, err := fingerprint(commandSubmitTask, submitPayload{
-		Provider: cmd.Provider.String(), Demand: string(cmd.Demand), Deadline: cmd.Deadline.Format(time.RFC3339Nano),
+		Provider: cmd.Provider.String(), Objective: cmd.Brief.Objective, AcceptanceCriteria: cmd.Brief.AcceptanceCriteria,
+		Demand: string(cmd.Demand), Deadline: cmd.Deadline.Format(time.RFC3339Nano),
 		Unit: string(cmd.Unit), Ceiling: cmd.Ceiling, Amount: cmd.Amount, Spend: cmd.Spend,
 	})
 	if err != nil {
@@ -225,7 +245,7 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	task, err := lifecycle.NewTask(taskID, tenant, principal.ID, cmd.At)
+	task, err := lifecycle.NewTaskWithBrief(taskID, tenant, principal.ID, cmd.Brief, cmd.At)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +328,7 @@ func scheduleAttempt(ctx context.Context, u *unit, task lifecycle.Task, attempt 
 	result := submission{
 		Task: task.ID.String(), Attempt: attempt.ID.String(), Operation: operation.ID.String(),
 		Budget: budget.ID.String(), Provider: cmd.Provider.String(), Mode: string(harness.Mode),
+		Objective: cmd.Brief.Objective, AcceptanceCriteria: slices.Clone(cmd.Brief.AcceptanceCriteria),
 		Demand: string(cmd.Demand), Deadline: cmd.Deadline.Format(time.RFC3339Nano),
 		Unit: string(cmd.Unit), Amount: cmd.Amount,
 	}
@@ -332,7 +353,7 @@ func scheduleAttempt(ctx context.Context, u *unit, task lifecycle.Task, attempt 
 		result.Spend = spendID.String()
 	} else if err := enqueue(ctx, u, tenant, dispatchSpec{
 		operation: operation, task: task.ID, attempt: attempt.ID, demand: cmd.Demand,
-		deadline: cmd.Deadline, unit: cmd.Unit, amount: cmd.Amount,
+		deadline: cmd.Deadline, unit: cmd.Unit, amount: cmd.Amount, start: contracts.RuntimeStart{Brief: cmd.Brief},
 	}); err != nil {
 		return submission{}, err
 	}
@@ -421,6 +442,13 @@ func loadSubmission(ctx context.Context, q store.Querier, tenant ids.TenantID, n
 	}
 	if s.Task, err = store.GetTask(ctx, q, tenant, taskID); err != nil {
 		return Submission{}, err
+	}
+	if _, present := s.Task.Brief(); !present && (facts.Objective != "" || facts.AcceptanceCriteria != nil) {
+		s.Task.Objective = facts.Objective
+		s.Task.AcceptanceCriteria = slices.Clone(facts.AcceptanceCriteria)
+		if err := s.Task.Validate(); err != nil {
+			return Submission{}, fmt.Errorf("submission brief: %w", err)
+		}
 	}
 	if s.Attempt, err = store.GetAttempt(ctx, q, tenant, attemptID); err != nil {
 		return Submission{}, err

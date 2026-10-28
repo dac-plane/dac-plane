@@ -5,9 +5,11 @@ package application_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +45,10 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T, mode lifecycle.HarnessMode) *fixture {
+	return newFixtureAtVersion(t, mode, migrations.CurrentVersion)
+}
+
+func newFixtureAtVersion(t *testing.T, mode lifecycle.HarnessMode, version int64) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
@@ -55,8 +61,8 @@ func newFixture(t *testing.T, mode lifecycle.HarnessMode) *fixture {
 	if err != nil {
 		t.Fatalf("NewProvider() error = %v", err)
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatalf("Up() error = %v", err)
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		t.Fatalf("UpTo(%d) error = %v", version, err)
 	}
 	_ = db.Close()
 	pool, err := store.Open(ctx, databaseURL)
@@ -94,6 +100,22 @@ func newFixture(t *testing.T, mode lifecycle.HarnessMode) *fixture {
 	return f
 }
 
+func migrateFixtureTo(t *testing.T, f *fixture, version int64) {
+	t.Helper()
+	db, err := sql.Open("pgx", f.pool.Config().ConnConfig.ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(f.ctx, version); err != nil {
+		t.Fatalf("UpTo(%d) error = %v", version, err)
+	}
+}
+
 func (f *fixture) seed(t *testing.T, write func(*store.UnitOfWork) error) {
 	t.Helper()
 	uow, err := store.Begin(f.ctx, f.pool)
@@ -123,6 +145,10 @@ func (f *fixture) submitCommand(nonce string) application.SubmitTask {
 		Command:  application.Command{Actor: f.actor, Nonce: nonce},
 		At:       f.at,
 		Provider: f.provider,
+		Brief: lifecycle.ExecutionBrief{
+			Objective:          "Update the integration fixture",
+			AcceptanceCriteria: []string{"The fixture change is complete"},
+		},
 		Demand:   contracts.DemandPerson,
 		Deadline: f.at.Add(time.Hour),
 		Unit:     "tokens",
@@ -300,6 +326,69 @@ func TestSubmitTaskChangedPayloadRejected(t *testing.T) {
 	after := f.reload(t, "n-1")
 	if after.Task.ID != original.Task.ID || after.Amount != 100 || after.Reservation.Amount != 100 {
 		t.Fatalf("original changed: %+v", after)
+	}
+}
+
+func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
+	f := newFixtureAtVersion(t, lifecycle.HarnessLive, 13)
+	command := f.submitCommand("brief-schema-13")
+	submission := f.submit(t, command)
+
+	legacy, err := lifecycle.NewTask(mustID[ids.Task](t), f.tenant, f.principal, f.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.seed(t, func(u *store.UnitOfWork) error {
+		_, _, err := store.InsertTask(f.ctx, u, legacy)
+		return err
+	})
+
+	view, err := application.GetTask(f.ctx, f.pool, f.actor, submission.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if brief, present := view.Task.Brief(); !present || brief.Objective != command.Brief.Objective || !slices.Equal(brief.AcceptanceCriteria, command.Brief.AcceptanceCriteria) {
+		t.Fatalf("schema-13 task brief = %+v, %v; want exact submitted brief", brief, present)
+	}
+
+	runtime := f.runtime(t, submission.Operation.ID)
+	f.tick(t, runtime)
+	sent := runtime.Ledger().Sent()
+	if len(sent) != 1 {
+		t.Fatalf("runtime deliveries = %d, want 1", len(sent))
+	}
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(sent[0].Arguments, &start); err != nil {
+		t.Fatal(err)
+	}
+	if start.Recovery != nil || start.Brief.Objective != command.Brief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, command.Brief.AcceptanceCriteria) {
+		t.Fatalf("schema-13 runtime start = %+v, want exact ordinary brief", start)
+	}
+
+	migrateFixtureTo(t, f, 14)
+	var objective *string
+	var criteria []byte
+	if err := f.pool.QueryRow(f.ctx, `select objective, acceptance_criteria from task where tenant_id=$1 and task_id=$2`, f.tenant.String(), submission.Task.ID.String()).Scan(&objective, &criteria); err != nil {
+		t.Fatal(err)
+	}
+	var storedCriteria []string
+	if objective == nil || *objective != command.Brief.Objective || json.Unmarshal(criteria, &storedCriteria) != nil || !slices.Equal(storedCriteria, command.Brief.AcceptanceCriteria) {
+		t.Fatalf("migrated brief = %v, %s; want exact submitted brief", objective, criteria)
+	}
+	var legacyObjective *string
+	var legacyCriteria []byte
+	if err := f.pool.QueryRow(f.ctx, `select objective, acceptance_criteria from task where tenant_id=$1 and task_id=$2`, f.tenant.String(), legacy.ID.String()).Scan(&legacyObjective, &legacyCriteria); err != nil {
+		t.Fatal(err)
+	}
+	if legacyObjective != nil || legacyCriteria != nil {
+		t.Fatalf("legacy task acquired fabricated brief: %v, %s", legacyObjective, legacyCriteria)
+	}
+	legacyView, err := application.GetTask(f.ctx, f.pool, f.actor, legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := legacyView.Task.Brief(); present {
+		t.Fatal("legacy task read fabricated an execution brief")
 	}
 }
 
@@ -482,6 +571,14 @@ func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
 	f.tick(t, rt)
 	if got := rt.Ledger().Deliveries(s.Operation.ID); got != 1 {
 		t.Fatalf("deliveries after receipt = %d, want 1", got)
+	}
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(rt.Ledger().Sent()[0].Arguments, &start); err != nil {
+		t.Fatal(err)
+	}
+	wantBrief, present := s.Task.Brief()
+	if !present || start.Recovery != nil || start.Brief.Objective != wantBrief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) {
+		t.Fatalf("governed runtime start=%+v, want original brief", start)
 	}
 }
 

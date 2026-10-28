@@ -9,6 +9,23 @@
     "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "owner_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10000,
+      "pattern": "\\S"
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000,
+        "pattern": "\\S"
+      }
+    },
     "state": {
       "enum": [
         "draft", "queued", "running", "waiting_input", "verifying", "ready_for_review",
@@ -18,6 +35,10 @@
     "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
     "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
     "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "dependentRequired": {
+    "objective": ["acceptance_criteria"],
+    "acceptance_criteria": ["objective"]
   },
   "$defs": {
     "event": {

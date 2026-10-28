@@ -4,9 +4,11 @@ package application_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -220,6 +222,14 @@ func TestReviewRequestChangesSchedulesNewAttemptAndPreservesLineage(t *testing.T
 	second := *v.Rework
 	rt := g.runtime(t, second.Operation.ID).WithArtifactExport(g.bytes, map[string][]byte{"patch": []byte("exact patch bytes")})
 	g.tick(t, rt)
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(rt.Ledger().Sent()[0].Arguments, &start); err != nil {
+		t.Fatal(err)
+	}
+	wantBrief, present := g.s.Task.Brief()
+	if !present || start.Recovery != nil || start.Brief.Objective != wantBrief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) {
+		t.Fatalf("rework runtime start=%+v, want original task brief", start)
+	}
 	g.at = time.Now().UTC().Truncate(time.Microsecond)
 	p := g.proposal
 	p.SessionRef, p.TurnRef, p.SourceRevision = "s-2", "t-2", "source-sha-2"

@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -117,7 +118,7 @@ func TestTaskApplyRejectsStaleVersionWithoutChange(t *testing.T) {
 	task := driveTask(t, newTask(t), TaskSubmit, TaskState(""))
 	next, change, err := task.Apply(TaskDispatch, task.Version-1, "", testNow)
 	testRejectCode(t, err, RejectVersionConflict)
-	if next != task {
+	if !reflect.DeepEqual(next, task) {
 		t.Fatal("rejected Apply() changed the task")
 	}
 	if change.To != "" || change.Version != task.Version {

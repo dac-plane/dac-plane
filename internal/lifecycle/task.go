@@ -3,10 +3,42 @@ package lifecycle
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 )
+
+const (
+	MaxObjectiveCharacters           = 10_000
+	MaxAcceptanceCriteria            = 32
+	MaxAcceptanceCriterionCharacters = 1_000
+)
+
+// ExecutionBrief is the product-owned requested outcome a runtime executes.
+// Text is preserved exactly; validation rejects blank values without
+// normalizing them so command fingerprints remain stable.
+type ExecutionBrief struct {
+	Objective          string   `json:"objective"`
+	AcceptanceCriteria []string `json:"acceptance_criteria"`
+}
+
+// Validate reports whether the brief is bounded and meaningful.
+func (b ExecutionBrief) Validate() error {
+	if !utf8.ValidString(b.Objective) || strings.TrimSpace(b.Objective) == "" || utf8.RuneCountInString(b.Objective) > MaxObjectiveCharacters {
+		return fmt.Errorf("%w: objective must be non-blank and at most %d characters", ErrInvalid, MaxObjectiveCharacters)
+	}
+	if len(b.AcceptanceCriteria) == 0 || len(b.AcceptanceCriteria) > MaxAcceptanceCriteria {
+		return fmt.Errorf("%w: acceptance criteria must contain 1 to %d entries", ErrInvalid, MaxAcceptanceCriteria)
+	}
+	for _, criterion := range b.AcceptanceCriteria {
+		if !utf8.ValidString(criterion) || strings.TrimSpace(criterion) == "" || utf8.RuneCountInString(criterion) > MaxAcceptanceCriterionCharacters {
+			return fmt.Errorf("%w: every acceptance criterion must be non-blank and at most %d characters", ErrInvalid, MaxAcceptanceCriterionCharacters)
+		}
+	}
+	return nil
+}
 
 // TaskState is the product lifecycle state of a Task.
 type TaskState string
@@ -119,19 +151,41 @@ var taskMachine = newMachine(TaskStates(), TaskEvents(),
 
 // Task is the delegated unit of work a principal owns.
 type Task struct {
-	ID        ids.TaskID      `json:"task_id"`
-	Tenant    ids.TenantID    `json:"tenant_id"`
-	Owner     ids.PrincipalID `json:"owner_id"`
-	State     TaskState       `json:"state"`
-	Version   uint64          `json:"version"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID                 ids.TaskID      `json:"task_id"`
+	Tenant             ids.TenantID    `json:"tenant_id"`
+	Owner              ids.PrincipalID `json:"owner_id"`
+	Objective          string          `json:"objective,omitempty"`
+	AcceptanceCriteria []string        `json:"acceptance_criteria,omitempty"`
+	State              TaskState       `json:"state"`
+	Version            uint64          `json:"version"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 // NewTask returns a draft Task at version 1.
 func NewTask(id ids.TaskID, tenant ids.TenantID, owner ids.PrincipalID, at time.Time) (Task, error) {
 	task := Task{ID: id, Tenant: tenant, Owner: owner, State: TaskDraft, Version: 1, CreatedAt: at, UpdatedAt: at}
 	return task, task.Validate()
+}
+
+// NewTaskWithBrief returns a new task with the product-owned requested
+// outcome. New submissions use this constructor; NewTask remains for genuine
+// legacy records created before ADR-0013.
+func NewTaskWithBrief(id ids.TaskID, tenant ids.TenantID, owner ids.PrincipalID, brief ExecutionBrief, at time.Time) (Task, error) {
+	if err := brief.Validate(); err != nil {
+		return Task{}, err
+	}
+	task := Task{ID: id, Tenant: tenant, Owner: owner, Objective: brief.Objective, AcceptanceCriteria: slices.Clone(brief.AcceptanceCriteria), State: TaskDraft, Version: 1, CreatedAt: at, UpdatedAt: at}
+	return task, task.Validate()
+}
+
+// Brief returns the task's immutable execution brief. The boolean is false
+// only for a genuine legacy task.
+func (t Task) Brief() (ExecutionBrief, bool) {
+	if t.Objective == "" && t.AcceptanceCriteria == nil {
+		return ExecutionBrief{}, false
+	}
+	return ExecutionBrief{Objective: t.Objective, AcceptanceCriteria: slices.Clone(t.AcceptanceCriteria)}, true
 }
 
 // Validate reports whether the record is complete.
@@ -144,6 +198,11 @@ func (t Task) Validate() error {
 	}
 	if t.CreatedAt.IsZero() || t.UpdatedAt.Before(t.CreatedAt) {
 		return fmt.Errorf("%w: task timestamps are inconsistent", ErrInvalid)
+	}
+	if brief, present := t.Brief(); present {
+		if err := brief.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

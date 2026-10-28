@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RuntimeStart",
+  "description": "Provider-neutral start_turn arguments with optional migration recovery context.",
+  "type": "object",
+  "required": ["brief"],
+  "additionalProperties": false,
+  "properties": {
+    "brief": {
+      "$ref": "../lifecycle/execution-brief.schema.json"
+    },
+    "recovery": {
+      "allOf": [
+        { "$ref": "migration-request.schema.json" },
+        {
+          "type": "object",
+          "properties": {
+            "stage": { "const": "target_started" }
+          }
+        }
+      ]
+    }
+  }
+}

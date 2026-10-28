@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -842,6 +843,19 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	runtimeOperation, err := store.GetOperationByAttempt(f.ctx, f.pool, f.tenant, target.ID)
 	if err != nil || runtimeOperation.ID != items[0].RestartOperation {
 		t.Fatalf("target runtime operation=%s err=%v; want migration restart operation %s", runtimeOperation.ID, err, items[0].RestartOperation)
+	}
+	var restart contracts.RuntimeStart
+	for _, request := range targetRuntime.Ledger().Sent() {
+		if request.Operation == items[0].RestartOperation {
+			if err := json.Unmarshal(request.Arguments, &restart); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	wantBrief, present := s.Task.Brief()
+	if !present || restart.Recovery == nil || restart.Recovery.Stage != contracts.MigrationTargetStarted || restart.Brief.Objective != wantBrief.Objective || !slices.Equal(restart.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) {
+		t.Fatalf("migration runtime start=%+v, want original brief plus target recovery", restart)
 	}
 	repeat := cmd
 	repeat.Command.Nonce = "migration-repeat-source-pass"

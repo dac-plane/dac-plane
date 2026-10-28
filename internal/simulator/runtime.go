@@ -170,7 +170,15 @@ func (r *Runtime) Send(ctx context.Context, request contracts.Request) (contract
 	step, ok := r.operation(request.Operation, request.Method)
 	if r.scenario.MigrationReceipts {
 		var migration contracts.MigrationRequest
-		if json.Unmarshal(request.Arguments, &migration) == nil && migration.Validate() == nil && migration.Operation == request.Operation {
+		if request.Method == contracts.MethodStartTurn {
+			var start contracts.RuntimeStart
+			if json.Unmarshal(request.Arguments, &start) == nil && start.Validate() == nil && start.Recovery != nil {
+				migration = *start.Recovery
+			}
+		} else {
+			_ = json.Unmarshal(request.Arguments, &migration)
+		}
+		if migration.Validate() == nil && migration.Operation == request.Operation {
 			var effect EffectKind
 			switch migration.Stage {
 			case contracts.MigrationSourceQuiesced:

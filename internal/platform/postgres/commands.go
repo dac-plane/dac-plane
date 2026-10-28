@@ -8,7 +8,36 @@ import (
 
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
+
+// GetTaskExecutionBrief loads the immutable brief recorded by the task's
+// original submission. It is the schema-13 compatibility source and remains a
+// truthful fallback for rows created before migration 14 populated columns.
+func GetTaskExecutionBrief(ctx context.Context, q Querier, tenant ids.TenantID, task ids.TaskID) (lifecycle.ExecutionBrief, error) {
+	var objective string
+	var criteria []byte
+	err := q.QueryRow(ctx, `
+		select result->>'objective', result->'acceptance_criteria'
+		from command_record
+		where tenant_id=$1 and command='submit_task' and result->>'task'=$2
+		  and result ? 'objective' and result ? 'acceptance_criteria'
+		order by created_at asc limit 1`, tenant.String(), task.String()).Scan(&objective, &criteria)
+	if err != nil {
+		if isNoRows(err) {
+			return lifecycle.ExecutionBrief{}, ErrNotFound
+		}
+		return lifecycle.ExecutionBrief{}, err
+	}
+	brief := lifecycle.ExecutionBrief{Objective: objective}
+	if err := json.Unmarshal(criteria, &brief.AcceptanceCriteria); err != nil {
+		return lifecycle.ExecutionBrief{}, corruptRow("command_record.result.acceptance_criteria", err)
+	}
+	if err := brief.Validate(); err != nil {
+		return lifecycle.ExecutionBrief{}, corruptRow("command_record.result.execution_brief", err)
+	}
+	return brief, nil
+}
 
 // CommandRecord binds one client nonce, scoped to its tenant, principal and
 // command kind, to the fingerprint of the request it first carried and to the

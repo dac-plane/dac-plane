@@ -89,6 +89,30 @@ The simulator recorded two deliveries and two effects for the operation: one `tu
 and the separately identified `turn_steered` effect required by the attention answer. There was
 exactly one start effect across the rolling replacement. Duration: 28.28 seconds.
 
+## Schema-15 revalidation for issue #99
+
+On 2026-10-28, `just test-operations` passed all four deployed scenarios again after production
+migration 14 added task execution briefs and moved the isolated rollout probe to schema 15. The
+aggregate Go run completed in 118.282 seconds on Docker Engine 29.8.2 and Docker Compose v5.5.0.
+
+The rolling scenario used the pinned release's actual pre-brief task request while both old replicas
+and PostgreSQL were at schema 13. Both replicas were then replaced by the next image before
+migrations 14 and 15 ran. The task remained readable and completed after the migration, both next
+replicas were ready, adapter connections returned, exactly one start effect was observed, and a fresh
+old process refused schema 15. The other three scenarios submitted the new objective and ordered
+acceptance criteria and retained their fencing, restart and backup/restore assertions.
+
+Observed local OCI image identifiers for this revalidation were:
+
+| Fixture | Image identifier |
+|---|---|
+| pinned old control plane | `sha256:319ab4a98ab17df22cf53551d9e9979e969c454983fc9b210c8d9e51a1a8bfdc` |
+| current control plane | `sha256:f3c5cdec6454e6c132d191b7c082d9467c6684f21ebea667e4869702fc751b93` |
+| operations next release | `sha256:4d2fbdac6821381132723443321df7f44f1780af45e3bbf3c4d90846ea11d17a` |
+| operations simulator | `sha256:18567437e05f1a51c41bf913e11a5920826be4f65663df475b4ee2ad54ee720d` |
+
+These are local OCI image identifiers, not registry digests.
+
 ## Limits
 
 The aggregate `just test-operations` run passed all four scenarios in 112.824 seconds. The same
@@ -97,5 +121,6 @@ recipe is the blocking CI entry point.
 This evidence covers Docker Compose, two control-plane processes and one PostgreSQL primary. The
 restore is a logical backup exercise, not database failover. The providers are deterministic
 simulators, not qualified external providers. No throughput, RPO, RTO, high-availability or
-availability claim follows from these runs. Fixture schema 14 and its migration exist only in the
-`operationstest` build and do not change the production migration source.
+availability claim follows from these runs. Fixture schema 15 and its migration exist only in the
+`operationstest` build and do not change the production migration source; schema 14 is now the
+released task-brief migration.

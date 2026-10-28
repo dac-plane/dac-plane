@@ -20,20 +20,25 @@ import (
 
 // SubmitTaskRequest is the body of POST /tasks.
 type SubmitTaskRequest struct {
-	Provider ids.ProviderID   `json:"provider_id"`
-	Demand   contracts.Demand `json:"demand,omitempty"`
-	Deadline time.Time        `json:"deadline"`
-	Unit     lifecycle.Unit   `json:"unit"`
-	Ceiling  uint64           `json:"ceiling"`
-	Amount   uint64           `json:"amount"`
-	Spend    bool             `json:"spend,omitempty"`
+	Provider           ids.ProviderID   `json:"provider_id"`
+	Objective          string           `json:"objective"`
+	AcceptanceCriteria []string         `json:"acceptance_criteria"`
+	Demand             contracts.Demand `json:"demand,omitempty"`
+	Deadline           time.Time        `json:"deadline"`
+	Unit               lifecycle.Unit   `json:"unit"`
+	Ceiling            uint64           `json:"ceiling"`
+	Amount             uint64           `json:"amount"`
+	Spend              bool             `json:"spend,omitempty"`
 }
 
 // Validate reports whether the body is well formed.
 func (r SubmitTaskRequest) Validate() error {
+	brief := lifecycle.ExecutionBrief{Objective: r.Objective, AcceptanceCriteria: r.AcceptanceCriteria}
 	switch {
 	case r.Provider.IsZero():
 		return fmt.Errorf("%w: provider_id is required", application.ErrInvalidCommand)
+	case brief.Validate() != nil:
+		return fmt.Errorf("%w: a valid objective and acceptance criteria are required", application.ErrInvalidCommand)
 	case r.Demand != "" && !slices.Contains(contracts.Demands(), r.Demand):
 		return fmt.Errorf("%w: unknown demand", application.ErrInvalidCommand)
 	case r.Deadline.IsZero():
