@@ -401,7 +401,7 @@ func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
 		}
 		return store.SetCommandResult(f.ctx, u, f.tenant, f.principal, "submit_task", "late-legacy-brief", result)
 	})
-	if _, err := store.GetTaskExecutionBrief(f.ctx, f.pool, f.tenant, legacy.ID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := store.GetTaskExecutionBrief(f.ctx, f.pool, legacy); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("schema-14 legacy fallback = %v, want not found without command-history lookup", err)
 	}
 	legacyView, err := application.GetTask(f.ctx, f.pool, f.actor, legacy.ID)

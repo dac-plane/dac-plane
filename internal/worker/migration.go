@@ -805,7 +805,7 @@ func executionBrief(ctx context.Context, q store.Querier, tenant ids.TenantID, a
 	if brief, present := task.Brief(); present {
 		return brief, nil
 	}
-	return store.GetTaskExecutionBrief(ctx, q, tenant, task.ID)
+	return store.GetTaskExecutionBrief(ctx, q, task)
 }
 
 func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {

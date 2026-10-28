@@ -15,7 +15,7 @@ func (a *API) submitTask(w http.ResponseWriter, r *http.Request, actor identity.
 	if err != nil {
 		return err
 	}
-	body, err := decode[SubmitTaskRequest](r)
+	body, err := decodeLimited[SubmitTaskRequest](r, maxSubmitTaskBodyBytes)
 	if err != nil {
 		return err
 	}

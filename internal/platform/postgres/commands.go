@@ -15,7 +15,7 @@ import (
 // original submission while the database is still at schema 13. From schema
 // 14 onward the backfilled task columns are authoritative: an absent pair is
 // a genuine legacy task and must not cause repeated command-history scans.
-func GetTaskExecutionBrief(ctx context.Context, q Querier, tenant ids.TenantID, task ids.TaskID) (lifecycle.ExecutionBrief, error) {
+func GetTaskExecutionBrief(ctx context.Context, q Querier, task lifecycle.Task) (lifecycle.ExecutionBrief, error) {
 	version, err := SchemaVersion(ctx, q)
 	if err != nil {
 		return lifecycle.ExecutionBrief{}, err
@@ -28,9 +28,10 @@ func GetTaskExecutionBrief(ctx context.Context, q Querier, tenant ids.TenantID, 
 	err = q.QueryRow(ctx, `
 		select result->>'objective', result->'acceptance_criteria'
 		from command_record
-		where tenant_id=$1 and command='submit_task' and result->>'task'=$2
+		where tenant_id=$1 and principal_id=$2 and command='submit_task'
+		  and created_at=$3 and result->>'task'=$4
 		  and result ? 'objective' and result ? 'acceptance_criteria'
-		order by created_at asc limit 1`, tenant.String(), task.String()).Scan(&objective, &criteria)
+		limit 1`, task.Tenant.String(), task.Owner.String(), task.CreatedAt, task.ID.String()).Scan(&objective, &criteria)
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.ExecutionBrief{}, ErrNotFound

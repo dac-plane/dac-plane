@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +61,33 @@ func TestProblemForMapsEveryErrorCategory(t *testing.T) {
 				t.Fatalf("problem echoes the error: %+v", problem)
 			}
 		})
+	}
+}
+
+func TestSubmitDecoderAcceptsMaximumMultibyteBrief(t *testing.T) {
+	criterion := strings.Repeat("😀", lifecycle.MaxAcceptanceCriterionCharacters)
+	criteria := make([]string, lifecycle.MaxAcceptanceCriteria)
+	for i := range criteria {
+		criteria[i] = criterion
+	}
+	body := SubmitTaskRequest{
+		Provider: newID[ids.Provider](t), Objective: strings.Repeat("😀", lifecycle.MaxObjectiveCharacters),
+		AcceptanceCriteria: criteria, Deadline: testNow.Add(time.Hour), Unit: "tokens", Ceiling: 100, Amount: 10,
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) <= maxBodyBytes || len(encoded) > maxSubmitTaskBodyBytes {
+		t.Fatalf("maximum multibyte brief encoded to %d bytes; want above default and within submit limit", len(encoded))
+	}
+	request := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(encoded))
+	decoded, err := decodeLimited[SubmitTaskRequest](request, maxSubmitTaskBodyBytes)
+	if err != nil {
+		t.Fatalf("decode maximum multibyte brief: %v", err)
+	}
+	if decoded.Objective != body.Objective || !slices.Equal(decoded.AcceptanceCriteria, body.AcceptanceCriteria) {
+		t.Fatal("maximum multibyte brief changed during decode")
 	}
 }
 

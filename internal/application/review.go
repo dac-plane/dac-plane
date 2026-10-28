@@ -114,7 +114,7 @@ func reviewResult(ctx context.Context, u *unit, c ReviewResultCommand) (json.Raw
 		return nil, err
 	}
 	if _, present := task.Brief(); !present {
-		brief, briefErr := store.GetTaskExecutionBrief(ctx, u.uow, tenant, task.ID)
+		brief, briefErr := store.GetTaskExecutionBrief(ctx, u.uow, task)
 		if briefErr == nil {
 			task.Objective, task.AcceptanceCriteria = brief.Objective, brief.AcceptanceCriteria
 		} else if !errors.Is(briefErr, store.ErrNotFound) {
@@ -137,6 +137,12 @@ func reviewResult(ctx context.Context, u *unit, c ReviewResultCommand) (json.Raw
 	next, record, _, err := store.RecordReview(ctx, u.uow, head, review, nil, tr)
 	if err != nil {
 		return nil, err
+	}
+	// RecordReview reloads the persisted task. At schema 13 that row has no
+	// brief columns, so restore the immutable command-result fallback before a
+	// request-changes review schedules its next runtime attempt.
+	if brief, present := task.Brief(); present {
+		next.Objective, next.AcceptanceCriteria = brief.Objective, brief.AcceptanceCriteria
 	}
 	v := ReviewView{Review: record}
 	if c.Rework != nil {

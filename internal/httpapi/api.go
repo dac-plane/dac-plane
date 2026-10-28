@@ -31,10 +31,11 @@ import (
 )
 
 const (
-	maxBodyBytes      = 64 << 10
-	maxIdempotencyKey = 128
-	defaultPageSize   = 100
-	prefix            = "/v1/tenants/{tenant}"
+	maxBodyBytes           = 64 << 10
+	maxSubmitTaskBodyBytes = 1 << 20
+	maxIdempotencyKey      = 128
+	defaultPageSize        = 100
+	prefix                 = "/v1/tenants/{tenant}"
 )
 
 // Authenticator establishes the principal of a request for one tenant.
@@ -189,9 +190,13 @@ func pathID[K any](r *http.Request, name string) (ids.ID[K], error) {
 // decode reads a JSON body strictly: one object, no unknown fields, within
 // the size limit, then validates it.
 func decode[T interface{ Validate() error }](r *http.Request) (T, error) {
+	return decodeLimited[T](r, maxBodyBytes)
+}
+
+func decodeLimited[T interface{ Validate() error }](r *http.Request, limit int64) (T, error) {
 	var body T
-	data, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
-	if err != nil || len(data) > maxBodyBytes {
+	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil || int64(len(data)) > limit {
 		return body, errMalformedJSON
 	}
 	// Exactly one JSON object and nothing after it: null, arrays and
