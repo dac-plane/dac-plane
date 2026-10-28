@@ -50,8 +50,9 @@ and consumes only the published Surface API, OpenAPI document and adapter kit. I
 
 ## Architecture Decisions
 
-- Keep production adapters out of the dac-plane process; they connect through ControlFrame using
-  `adapterkit`, as required by ADR-0008.
+- Keep production adapters out of the dac-plane process; they connect through ControlFrame as
+  required by ADR-0008. Go adapters can use `adapterkit`; adapters in other languages use the same
+  JSON Schemas and conformance suite.
 - Keep provider names and provider-specific fields out of the neutral schemas.
 - Publish immutable, versioned artifacts before any external example depends on dac-plane.
 - Use ADR-0009's Compose substrate for the first pilot; Kubernetes and unmeasured availability claims
