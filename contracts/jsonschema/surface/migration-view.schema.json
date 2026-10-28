@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MigrationView",
+  "description": "A migration pass as an administrator reads it. The ETag header carries migration.version.",
+  "type": "object",
+  "required": [
+    "migration"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "migration": {
+      "$ref": "../lifecycle/migration-pass.schema.json"
+    },
+    "preview": {
+      "$ref": "migration-preview.schema.json"
+    }
+  }
+}

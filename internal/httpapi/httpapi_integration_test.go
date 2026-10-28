@@ -226,6 +226,21 @@ func (s *surface) submitBody() httpapi.SubmitTaskRequest {
 	return httpapi.SubmitTaskRequest{Provider: s.provider, Demand: contracts.DemandPerson, Deadline: s.at.Add(time.Hour), Unit: "tokens", Ceiling: 1000, Amount: 100}
 }
 
+func (s *surface) seed(t *testing.T, apply func(*store.UnitOfWork) error) {
+	t.Helper()
+	u, err := store.Begin(s.ctx, s.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = u.Rollback(s.ctx) }()
+	if err := apply(u); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Commit(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // dispatch runs one worker pass with a runtime that accepts the operation.
 func (s *surface) dispatch(t *testing.T, operation ids.OperationID) *simulator.Runtime {
 	t.Helper()
@@ -378,6 +393,177 @@ func TestSurfaceLifecycleThroughHTTP(t *testing.T) {
 	})
 	if r := s.do(t, call{method: "POST", path: taskPath + "/cancel", as: "owner", key: "cancel-stale", ifMatch: `"1"`, body: httpapi.CancelRequest{}}); r.status != http.StatusPreconditionFailed {
 		t.Fatalf("stale cancel: %d %s", r.status, r.body)
+	}
+}
+
+func TestSurfaceMigrationAdministrationThroughHTTP(t *testing.T) {
+	s := newSurface(t)
+	target := mustID[ids.Provider](t)
+	s.seed(t, func(u *store.UnitOfWork) error {
+		if err := store.SetHarnessAdministrator(s.ctx, u, s.tenant, s.owner, true); err != nil {
+			return err
+		}
+		_, err := store.UpsertHarness(s.ctx, u, lifecycle.HarnessQualification{
+			Tenant: s.tenant, Provider: target, Mode: lifecycle.HarnessLive, Version: 1, UpdatedAt: s.at,
+		})
+		return err
+	})
+
+	createPath := "/migration-passes"
+	createBody := httpapi.CreateMigrationRequest{From: s.provider, To: target}
+	createdReply := s.do(t, call{method: "POST", path: createPath, as: "owner", key: "migration-create", body: createBody})
+	created := decodeInto[httpapi.MigrationBody](t, createdReply, http.StatusCreated)
+	passPath := createPath + "/" + created.Migration.ID.String()
+	if createdReply.header.Get("Location") != "/v1/tenants/"+s.tenant.String()+passPath || createdReply.header.Get("ETag") != `"1"` {
+		t.Fatalf("Location %q ETag %q", createdReply.header.Get("Location"), createdReply.header.Get("ETag"))
+	}
+	if created.Preview != nil || created.Migration.State != lifecycle.MigrationPlanned {
+		t.Fatalf("created migration = %+v", created)
+	}
+	replayed := decodeInto[httpapi.MigrationBody](t, s.do(t, call{method: "POST", path: createPath, as: "owner", key: "migration-create", body: createBody}), http.StatusCreated)
+	if replayed.Migration != created.Migration {
+		t.Fatalf("create replay = %+v, want %+v", replayed, created)
+	}
+	changed := createBody
+	changed.To = mustID[ids.Provider](t)
+	if r := s.do(t, call{method: "POST", path: createPath, as: "owner", key: "migration-create", body: changed}); r.status != http.StatusUnprocessableEntity {
+		t.Fatalf("changed create replay: %d %s", r.status, r.body)
+	}
+
+	read := s.do(t, call{method: "GET", path: passPath, as: "owner"})
+	decodeInto[httpapi.MigrationBody](t, read, http.StatusOK)
+	missingPath := createPath + "/" + mustID[ids.Migration](t).String()
+	hidden := s.do(t, call{method: "GET", path: passPath, as: "other"})
+	missing := s.do(t, call{method: "GET", path: missingPath, as: "other"})
+	if hidden.status != http.StatusNotFound || string(hidden.body) != string(missing.body) {
+		t.Fatalf("hidden pass %d %s, missing pass %d %s", hidden.status, hidden.body, missing.status, missing.body)
+	}
+	if r := s.do(t, call{method: "POST", path: passPath + "/preview", as: "other", key: "hidden-preview", ifMatch: read.header.Get("ETag"), body: httpapi.EmptyCommandRequest{}}); r.status != http.StatusNotFound {
+		t.Fatalf("non-administrator preview: %d %s", r.status, r.body)
+	}
+
+	administer := func(action, key string, version uint64, status int) (httpapi.MigrationBody, reply) {
+		t.Helper()
+		r := s.do(t, call{method: "POST", path: passPath + "/" + action, as: "owner", key: key, ifMatch: `"` + strconv.FormatUint(version, 10) + `"`, body: httpapi.EmptyCommandRequest{}})
+		view := decodeInto[httpapi.MigrationBody](t, r, status)
+		if r.header.Get("ETag") != `"`+strconv.FormatUint(view.Migration.Version, 10)+`"` {
+			t.Fatalf("%s ETag %q, version %d", action, r.header.Get("ETag"), view.Migration.Version)
+		}
+		return view, r
+	}
+
+	previewed, previewReply := administer("preview", "migration-preview", created.Migration.Version, http.StatusOK)
+	if previewed.Preview == nil || previewed.Preview.FromVersion != 1 || previewed.Preview.ToVersion != 1 {
+		t.Fatalf("preview = %+v", previewed)
+	}
+	if r := s.do(t, call{method: "POST", path: passPath + "/hold", as: "owner", key: "migration-stale", ifMatch: `"1"`, body: httpapi.EmptyCommandRequest{}}); r.status != http.StatusPreconditionFailed {
+		t.Fatalf("stale migration command: %d %s", r.status, r.body)
+	}
+	held, _ := administer("hold", "migration-hold", previewed.Migration.Version, http.StatusOK)
+	if held.Migration.State != lifecycle.MigrationHeld || held.Preview != nil {
+		t.Fatalf("held migration = %+v", held)
+	}
+	released, _ := administer("release", "migration-release", held.Migration.Version, http.StatusOK)
+	previewed, _ = administer("preview", "migration-preview-fresh", released.Migration.Version, http.StatusOK)
+	executing, _ := administer("execute", "migration-execute", previewed.Migration.Version, http.StatusAccepted)
+	if executing.Migration.State != lifecycle.MigrationExecuting || executing.Preview == nil {
+		t.Fatalf("executing migration = %+v", executing)
+	}
+
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "surface-migration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ReapClaims(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	completed := decodeInto[httpapi.MigrationBody](t, s.do(t, call{method: "GET", path: passPath, as: "owner"}), http.StatusOK)
+	if completed.Migration.State != lifecycle.MigrationCompleted {
+		t.Fatalf("completed migration = %+v", completed)
+	}
+
+	secondReply := s.do(t, call{method: "POST", path: createPath, as: "owner", key: "migration-create-second", body: createBody})
+	second := decodeInto[httpapi.MigrationBody](t, secondReply, http.StatusCreated)
+	passPath = createPath + "/" + second.Migration.ID.String()
+	cancelled, _ := administer("cancel", "migration-cancel", second.Migration.Version, http.StatusOK)
+	if cancelled.Migration.State != lifecycle.MigrationCancelled {
+		t.Fatalf("cancelled migration = %+v", cancelled)
+	}
+
+	s.seed(t, func(u *store.UnitOfWork) error {
+		return store.SetHarnessAdministrator(s.ctx, u, s.tenant, s.owner, false)
+	})
+	if r := s.do(t, call{method: "GET", path: passPath, as: "owner"}); r.status != http.StatusNotFound {
+		t.Fatalf("revoked administrator read: %d %s", r.status, r.body)
+	}
+	if r := s.do(t, call{method: "POST", path: createPath, as: "owner", key: "migration-create", body: createBody}); r.status != http.StatusForbidden {
+		t.Fatalf("revoked administrator create replay: %d %s", r.status, r.body)
+	}
+	if r := s.do(t, call{method: "POST", path: createPath + "/" + created.Migration.ID.String() + "/preview", as: "owner", key: "migration-preview", ifMatch: previewReply.header.Get("ETag"), body: httpapi.EmptyCommandRequest{}}); r.status != http.StatusNotFound {
+		t.Fatalf("revoked administrator command replay: %d %s", r.status, r.body)
+	}
+}
+
+func TestSurfaceAuthorityRevocationThroughHTTP(t *testing.T) {
+	s := newSurface(t)
+	s.seed(t, func(u *store.UnitOfWork) error {
+		_, err := store.UpdatePolicyGeneration(s.ctx, u, store.PolicyUpdate{
+			Tenant: s.tenant, ExpectedGeneration: 1, NextGeneration: 1,
+			Settings: map[identity.ActionClass]identity.Permission{"resource.mutate": identity.PermissionAlways},
+			Ceiling:  map[identity.ActionClass]identity.Permission{"resource.mutate": identity.PermissionAlways},
+			At:       s.at,
+		})
+		return err
+	})
+
+	sub := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "authority-submit", body: s.submitBody()}), http.StatusCreated)
+	rt := s.dispatch(t, sub.Operation.ID)
+	input := json.RawMessage(`{"resource":"screen","value":"safe"}`)
+	s.observe(t, rt, sub,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "authority-session"}),
+		row(2, contracts.EntryAttentionRequested, contracts.AttentionRequested{
+			NativeRef: "authority-approval", Kind: lifecycle.AttentionActionApproval,
+			Action: "resource.mutate", ActionDigest: identity.DigestOf(input),
+			Scope: identity.Scope{Class: identity.ScopeSubject, Target: "screen"}, ExpiresAt: s.at.Add(time.Hour),
+		}),
+	)
+	attention := decodeInto[httpapi.AttentionListBody](t, s.do(t, call{method: "GET", path: "/attention", as: "owner"}), http.StatusOK).Attention
+	if len(attention) != 1 {
+		t.Fatalf("action approvals = %d", len(attention))
+	}
+	requestPath := "/attention/" + attention[0].ID.String()
+	decision := decodeInto[httpapi.DecisionBody](t, s.do(t, call{
+		method: "POST", path: requestPath + "/decisions", as: "owner", key: "authority-approve",
+		ifMatch: `"` + strconv.FormatUint(attention[0].Version, 10) + `"`,
+		body:    httpapi.DecisionRequest{Kind: lifecycle.DecisionApproveStanding},
+	}), http.StatusCreated)
+	grant, err := ids.Parse[ids.Grant](decision.Grant)
+	if err != nil {
+		t.Fatalf("standing grant %q: %v", decision.Grant, err)
+	}
+
+	revokePath := "/authority-grants/" + grant.String() + "/revoke"
+	revoked := s.do(t, call{method: "POST", path: revokePath, as: "owner", key: "authority-revoke", body: httpapi.EmptyCommandRequest{}})
+	if revoked.status != http.StatusNoContent || len(revoked.body) != 0 || revoked.header.Get("Content-Type") != "" || revoked.header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoke response = %d headers=%v body=%q", revoked.status, revoked.header, revoked.body)
+	}
+	replayed := s.do(t, call{method: "POST", path: revokePath, as: "owner", key: "authority-revoke", body: httpapi.EmptyCommandRequest{}})
+	if replayed.status != http.StatusNoContent || len(replayed.body) != 0 {
+		t.Fatalf("revoke replay = %d %q", replayed.status, replayed.body)
+	}
+	stored, err := store.GetGrant(s.ctx, s.pool, s.tenant, grant)
+	if err != nil || stored.RevokedAt.IsZero() {
+		t.Fatalf("stored grant = %+v, %v", stored, err)
+	}
+	var audits int
+	if err := s.pool.QueryRow(s.ctx, `select count(*) from audit_event where tenant_id=$1 and record_kind='authority_grant' and record_id=$2 and event='revoke' and outcome='applied'`, s.tenant.String(), grant.String()).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("revocation audits = %d, %v", audits, err)
+	}
+
+	hidden := s.do(t, call{method: "POST", path: revokePath, as: "other", key: "authority-hidden", body: httpapi.EmptyCommandRequest{}})
+	missing := s.do(t, call{method: "POST", path: "/authority-grants/" + mustID[ids.Grant](t).String() + "/revoke", as: "other", key: "authority-missing", body: httpapi.EmptyCommandRequest{}})
+	if hidden.status != http.StatusNotFound || string(hidden.body) != string(missing.body) {
+		t.Fatalf("hidden grant %d %s, missing grant %d %s", hidden.status, hidden.body, missing.status, missing.body)
 	}
 }
 

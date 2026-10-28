@@ -118,6 +118,8 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 	api, tenant, logs := newUnitAPI(t)
 	base := "/v1/tenants/" + tenant.String()
 	task := newID[ids.Task](t).String()
+	migration := newID[ids.Migration](t).String()
+	grant := newID[ids.Grant](t).String()
 	auth := map[string]string{"Authorization": "Bearer good.token.value"}
 	with := func(extra map[string]string) map[string]string {
 		out := map[string]string{"Authorization": auth["Authorization"]}
@@ -127,6 +129,7 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		return out
 	}
 	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
+	validMigration := `{"from_provider_id":"` + newID[ids.Provider](t).String() + `","to_provider_id":"` + newID[ids.Provider](t).String() + `"}`
 	cases := []struct {
 		name   string
 		req    unitRequest
@@ -156,6 +159,15 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		{"cancel zero version", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"0"`})}, 400},
 		{"decide invalid body", unitRequest{"POST", base + "/attention/" + newID[ids.Attention](t).String() + "/decisions", `{"kind":"answer"}`, with(map[string]string{"Idempotency-Key": "k3", "If-Match": `"2"`})}, 422},
 		{"review invalid body", unitRequest{"POST", base + "/tasks/" + task + "/reviews", `{"disposition":"accept"}`, with(map[string]string{"Idempotency-Key": "k4", "If-Match": `"2"`})}, 422},
+		{"malformed migration id", unitRequest{"GET", base + "/migration-passes/nope", "", auth}, 404},
+		{"create migration without key", unitRequest{"POST", base + "/migration-passes", validMigration, auth}, 400},
+		{"create migration malformed body", unitRequest{"POST", base + "/migration-passes", `{"from_provider_id":`, with(map[string]string{"Idempotency-Key": "m1"})}, 400},
+		{"create migration unknown field", unitRequest{"POST", base + "/migration-passes", strings.Replace(validMigration, "{", `{"force":true,`, 1), with(map[string]string{"Idempotency-Key": "m1"})}, 400},
+		{"migration command without If-Match", unitRequest{"POST", base + "/migration-passes/" + migration + "/preview", `{}`, with(map[string]string{"Idempotency-Key": "m2"})}, 428},
+		{"migration command unknown field", unitRequest{"POST", base + "/migration-passes/" + migration + "/preview", `{"force":true}`, with(map[string]string{"Idempotency-Key": "m2", "If-Match": `"1"`})}, 400},
+		{"malformed grant id", unitRequest{"POST", base + "/authority-grants/nope/revoke", `{}`, with(map[string]string{"Idempotency-Key": "r1"})}, 404},
+		{"revoke without key", unitRequest{"POST", base + "/authority-grants/" + grant + "/revoke", `{}`, auth}, 400},
+		{"revoke nonempty body", unitRequest{"POST", base + "/authority-grants/" + grant + "/revoke", `{"force":true}`, with(map[string]string{"Idempotency-Key": "r1"})}, 400},
 		{"events bad limit", unitRequest{"GET", base + "/events?limit=0", "", auth}, 422},
 		{"unknown route", unitRequest{"GET", base + "/tasks", "", auth}, 405},
 	}

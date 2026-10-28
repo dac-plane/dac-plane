@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MigrationPreview",
+  "description": "The harness qualification versions and server time captured by a migration preview.",
+  "type": "object",
+  "required": [
+    "from_version",
+    "to_version",
+    "previewed_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "from_version": {
+      "$ref": "../identity/common.schema.json#/$defs/generation"
+    },
+    "to_version": {
+      "$ref": "../identity/common.schema.json#/$defs/generation"
+    },
+    "previewed_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    }
+  }
+}

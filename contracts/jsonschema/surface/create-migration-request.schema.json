@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateMigrationRequest",
+  "description": "Body of POST /v1/tenants/{tenant}/migration-passes. The providers must differ; the Go contract enforces that comparison.",
+  "type": "object",
+  "required": [
+    "from_provider_id",
+    "to_provider_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "from_provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "to_provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    }
+  }
+}
