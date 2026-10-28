@@ -1,106 +1,74 @@
-# Issue #74 — Prove operational recovery and rolling upgrades
+# Issue #83 — Expose migration administration and authority revocation
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/74
-Rollout defect: https://github.com/dac-plane/dac-plane/issues/87
-Recovery blocker: https://github.com/dac-plane/dac-plane/issues/88
-Branch: `feature/74-operational-evidence`, from `main` at `ca20b3e`.
+Tracker: https://github.com/dac-plane/dac-plane/issues/83
+Branch: `feature/83-migration-administration-api`, from `main` at `ef636c4`.
 Parent: #65 (M2: Deployable control plane).
 
-Confirmed with the maintainer on 2026-10-26: correct the unsafe rollout order first, then prove #74
-with distinct old and next-release images. One PR closes #74 and #87. The schema-14 migration is an
-operations-only fixture and never enters the production migration source.
+## Direction
 
-## Findings that shape the work
+Extend Surface API v1 over the existing transport-neutral migration administration and authority
+revocation commands. Handlers remain thin and never access PostgreSQL. This issue adds no domain
+behavior, permission model, database migration, listener or provisioning endpoint.
 
-1. ADR-0009 and the Compose runbook say to migrate before rolling replicas, but the first deployable
-   release rejects every schema above 13. A running old replica also keeps its worker active after
-   readiness notices an out-of-range schema. Issue #87 records the defect.
-2. The base Compose service publishes fixed ports and the simulator dials one adapter endpoint, so
-   scaling that service does not create a deterministic two-replica test topology.
-3. The in-process simulator already has exact before/after-effect pauses and an effect ledger, but the
-   separate-process simulator exposes neither. Operations evidence needs a test-only control surface.
-4. PostgreSQL and outbox integration tests prove the mechanisms in-process; #74 must exercise them
-   through deployed processes and preserve the distinction from provider qualification.
+The historical connection revocation in `architecture-explore` is evidence only and is not the
+authority-grant contract adopted by the current application.
 
-## Work, in order
+## Implementation
 
-### 1. Correct the rollout decision
+1. **Surface contract**
+   - [x] Add schemas for migration creation, empty commands, preview evidence and migration views.
+   - [x] Extend OpenAPI 3.1 with migration create/read/preview/hold/release/execute/cancel and
+     authority-grant revocation.
+   - [x] Keep `Idempotency-Key` on every mutation; require `If-Match` only for migration transitions.
+2. **HTTP layer**
+   - [x] Project `application.MigrationView` as the pass plus optional preview evidence; do not expose
+     the maintenance claim.
+   - [x] Add thin handlers for every route with the established strict JSON, ETag, Problem Details,
+     visibility and replay rules.
+   - [x] Conceal pass-specific administrator denial and unowned authority grants as not found.
+3. **Verification**
+   - [x] Extend schema/Go agreement and bidirectional OpenAPI route conformance tests.
+   - [x] Exercise migration administration through HTTP, including completion, cancellation,
+     concealment, permission revocation and nonce replay.
+   - [x] Exercise standing-authority revocation through HTTP and verify durable revocation evidence.
+   - [x] Run `just test-contracts`, `just test-surface`, `just test-surface-race`, `just ci` and
+     `git diff --check`.
+4. **Delivery**
+   - [x] Commit as `feat(api): expose migration administration and authority revocation`.
+   - [x] Open a focused PR using the repository template with `Closes: #83`.
 
-- Add ADR-0011, superseding only ADR-0009's migration-first rollout order.
-- Roll every compatible new binary while the database remains on the current schema, then run the
-  explicit advisory-locked migration and verify readiness.
-- Permit binary rollback before migration. After migration, permit it only if the previous binary
-  declares the resulting schema in its serving range.
-- Update the Compose operator runbook and architecture links without changing the remaining ADR-0009
-  decisions.
+## API
 
-### 2. Add operations-only release fixtures
+All paths are under `/v1/tenants/{tenant}`.
 
-- Keep the normal image at production schema 13.
-- Build the old image from pinned revision `ca20b3e7438707f58d8735251f8ffb8abc5a7a32`.
-- Behind an `operationstest` build tag, build a next-release image that serves schemas 13–14 and
-  embeds one additive schema-14 probe migration. Tests prove the tagged source/range and prove the
-  normal source/range do not contain schema 14.
-- Add a dedicated Compose overlay with two named replicas, unique published ports, shared PostgreSQL,
-  and operations-only simulator control. Cleanup is scoped by Compose project name and preserves
-  failure logs under `.work/operations/`.
+| Route | Application call | Success |
+|---|---|---|
+| `POST /migration-passes` | `CreateMigration` | `201`, `Location`, `ETag` |
+| `GET /migration-passes/{migration}` | `GetMigration` | `200`, `ETag` |
+| `POST /migration-passes/{migration}/preview` | `AdministerMigration(preview)` | `200`, `ETag` |
+| `POST /migration-passes/{migration}/hold` | `AdministerMigration(hold)` | `200`, `ETag` |
+| `POST /migration-passes/{migration}/release` | `AdministerMigration(release)` | `200`, `ETag` |
+| `POST /migration-passes/{migration}/execute` | `AdministerMigration(execute)` | `202`, `ETag` |
+| `POST /migration-passes/{migration}/cancel` | `AdministerMigration(cancel)` | `200`, `ETag` |
+| `POST /authority-grants/{grant}/revoke` | `Revoke` | `204` |
 
-### 3. Make the simulator controllable without changing production contracts
+Creation takes `from_provider_id` and `to_provider_id`. Other mutations take a strict empty JSON
+object. The migration response contains `migration` and an optional `preview` with
+`from_version`, `to_version` and `previewed_at`.
 
-- `DAC_ADAPTER_URLS` lets the simulator keep concurrent connections to both replicas while sharing
-  one runtime, artifact store and ledger; existing `DAC_ADAPTER_URL` remains the single-endpoint form.
-- `DAC_SIM_CONTROL_ADDR`, when set, starts a test-only HTTP listener for exact or next-operation
-  pause registration, reached/release coordination, per-operation delivery/effect counts, and artifact digest/size
-  inspection. It is absent by default and exposed only on host loopback by the operations overlay.
-- Validate every role, operation, boundary and request size. Return status/evidence only, never tokens
-  or configuration.
-- Log the random worker owner at startup so the runner can map a database claim to a replica without
-  changing owner generation or adding a product endpoint.
+## Boundaries
 
-### 4. Implement four deployed scenarios
+No new permissions, role model, provider administration, grant read route, provisioning over HTTP,
+public maintenance claim, provider-transfer claim or architecture decision. Migration execution
+remains asynchronous and evidence-backed by the existing worker.
 
-- **Fencing:** pause after an effect, pause the claimant container, expire only the named outbox and
-  attempt leases, let the peer take over, then resume the stale claimant. Assert one effect, a higher
-  winning epoch and no stale settlement.
-- **Restart:** pause before the effect, kill the claimant, expire its named leases, restart it and let
-  valid recovery finish. Assert durable state, cursor recovery and exactly one effect.
-- **Backup/restore:** stop writes at `ready_for_review`, take a custom-format logical dump, recreate
-  the database from `template0`, restore as `dac_migrate`, restart both replicas while the external
-  simulator store remains alive, compare task/revision/artifact metadata and bytes evidence, then
-  accept the restored revision to `succeeded`.
-- **Upgrade:** start two pinned old-image replicas at schema 13, begin a task, roll both replicas to
-  the tagged next image one at a time, migrate to fixture schema 14, and finish the same task. Assert
-  API availability, adapter reconnection, one effect, new-replica readiness and old-image refusal at
-  schema 14.
+## Observed verification
 
-### 5. Recipes, CI and evidence
-
-- Add one recipe per scenario plus `just test-operations`; keep `just test-stack` unchanged.
-- Add a separate blocking CI operations job with full Git history and bounded timeout.
-- Record observed commands, versions, revisions/digests, claim owners/epochs, effect counts, artifact
-  hashes, durations and failures in `docs/architecture/operations-74.md`.
-- State the limits: Compose, one PostgreSQL primary, logical backup, deterministic simulators, no
-  provider qualification, HA, throughput, RPO, RTO or availability claim.
-- A remaining failed scenario opens a scoped issue and keeps #74 open; it is never waived.
-
-## Verification
-
-- Unit: tagged/default migration isolation and range; multi-endpoint simulator; pause lifecycle;
-  ledger/artifact inspection; malformed control requests; control disabled by default.
-- Deployed: the four operations scenarios using HTTPS, database observations, container controls and
-  simulator evidence.
-- Regression gates: `just test-operations`, `just test-stack`, `just image-repro`, then `just ci`.
-- Before merge, review the complete diff for correctness, architecture, security, performance and
-  scope; address every verified finding and record commands actually observed.
-
-## Recovery-contract correction
-
-- The first kill/restart run exposed that a committed `send_started` marker cannot distinguish a
-  crash before an effect from a lost reply after an effect. Issue #88 records that gap.
-- ADR-0012 resolves it without weakening the default: only a session that negotiates
-  `operation.replay` may receive the same stable operation and payload under a fresh delivery. Other
-  adapters retain uncertain reconciliation.
-- The replacement worker reruns the normal gates and holds the winning claim and Attempt-lease
-  epochs. The reference simulator serializes duplicate deliveries and records one effect.
-- #74, #87 and #88 may close together only after all four deployed scenarios and the regression
-  gates pass with observed evidence.
+- `just test-contracts`: passed.
+- `just test-surface`: passed.
+- `just test-surface-race`: passed.
+- `just ci`: passed, including integration race partitions, adapter conformance, vulnerability scan
+  and workflow lint.
+- Review mutation: inverting administrative-resource concealment made both new HTTP integration
+  scenarios fail with exposed `403` responses; restoring it returned the scenarios to green.
+- `git diff --check`: passed.

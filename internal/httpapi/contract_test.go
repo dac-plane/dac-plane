@@ -36,6 +36,8 @@ var (
 	decisionContract  = schematest.GoContract[DecisionRequest](schemaPath("decision-request.schema.json"))
 	cancelContract    = schematest.GoContract[CancelRequest](schemaPath("cancel-request.schema.json"))
 	reviewContract    = schematest.GoContract[ReviewRequest](schemaPath("review-request.schema.json"))
+	migrationContract = schematest.GoContract[CreateMigrationRequest](schemaPath("create-migration-request.schema.json"))
+	emptyContract     = schematest.GoContract[EmptyCommandRequest](schemaPath("empty-command-request.schema.json"))
 )
 
 func newID[K any](t *testing.T) ids.ID[K] {
@@ -78,6 +80,8 @@ func validRequests(t *testing.T) map[string]struct {
 		"cancel":            {cancelContract, []byte(`{}`)},
 		"accept":            {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionAccept})},
 		"request changes":   {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionRequestChanges, Rework: rework})},
+		"create migration":  {migrationContract, schematest.Marshal(t, CreateMigrationRequest{From: newID[ids.Provider](t), To: newID[ids.Provider](t)})},
+		"empty command":     {emptyContract, []byte(`{}`)},
 	}
 }
 
@@ -119,6 +123,9 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		{"review without revision", "accept", func(d map[string]any) { delete(d, "revision_id") }},
 		{"request changes without rework", "request changes", func(d map[string]any) { delete(d, "rework") }},
 		{"accept with rework", "request changes", func(d map[string]any) { d["disposition"] = "accept" }},
+		{"migration without source", "create migration", func(d map[string]any) { delete(d, "from_provider_id") }},
+		{"migration without target", "create migration", func(d map[string]any) { delete(d, "to_provider_id") }},
+		{"empty command with field", "empty command", func(d map[string]any) { d["force"] = true }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,6 +138,13 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 				t.Errorf("Go accepted %s", data)
 			}
 		})
+	}
+}
+
+func TestCreateMigrationRejectsSameProvider(t *testing.T) {
+	provider := newID[ids.Provider](t)
+	if err := (CreateMigrationRequest{From: provider, To: provider}).Validate(); err == nil {
+		t.Fatal("same source and target provider accepted")
 	}
 }
 
@@ -154,6 +168,8 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 	revision := lifecycle.ResultRevision{ID: newID[ids.Revision](t), Tenant: tenant, Task: task, Attempt: attempt.ID, Number: 1, Artifacts: []ids.ArtifactID{newID[ids.Artifact](t)}, CreatedAt: testNow}
 	review := lifecycle.ResultReview{ID: newID[ids.Review](t), Tenant: tenant, Task: task, Revision: revision.ID, Reviewer: owner, Disposition: lifecycle.DispositionRequestChanges, TaskVersion: 4, ReviewedAt: testNow}
 	rework := submissionBody(submission)
+	migration := lifecycle.MigrationPass{ID: newID[ids.Migration](t), Tenant: tenant, From: newID[ids.Provider](t), To: newID[ids.Provider](t), State: lifecycle.MigrationPreviewed, Version: 2, CreatedAt: testNow, UpdatedAt: testNow}
+	preview := store.MigrationPreview{FromVersion: 3, ToVersion: 4, At: testNow}
 	if strings.Contains(string(schematest.Marshal(t, rework)), "secret detail") {
 		t.Fatal("submission body exposes provider error text")
 	}
@@ -161,21 +177,24 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		schema string
 		body   any
 	}{
-		"submission":      {"submission.schema.json", submissionBody(submission)},
-		"revision view":   {"revision-view.schema.json", revisionBody(application.RevisionView{Revision: revision, Reviews: []lifecycle.ResultReview{review}})},
-		"review result":   {"review-result.schema.json", ReviewBody{Review: review, Rework: &rework}},
-		"accepted review": {"review-result.schema.json", ReviewBody{Review: review}},
-		"full task view":  {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Attempt: &attempt, Revisions: []application.RevisionView{{Revision: revision}}})},
-		"task view":       {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord})},
-		"attention":       {"attention-list.schema.json", AttentionListBody{Attention: []lifecycle.AttentionRequest{}}},
-		"cancel":          {"cancel-result.schema.json", CancelBody{Task: task.String(), State: "cancelling"}},
-		"decision":        {"decision-result.schema.json", DecisionBody{Attention: newID[ids.Attention](t).String(), Decision: newID[ids.Decision](t).String(), Kind: "deny", State: "decided"}},
-		"event page":      {"event-page.schema.json", eventPageBody(application.EventPage{Events: []store.StreamEvent{event, outside}, Next: application.EventCursor{Generation: 1, Position: 8, Stream: application.StreamTag(tenant, ids.TaskID{})}})},
-		"reset page":      {"event-page.schema.json", eventPageBody(application.EventPage{Next: application.EventCursor{Generation: 1, Stream: application.StreamTag(tenant, task)}, Reset: true})},
-		"problem":         {"problem.schema.json", problemFor(application.ErrNotFound)},
-		"problem 412":     {"problem.schema.json", problemFor(&lifecycle.TransitionError{Code: lifecycle.RejectVersionConflict})},
-		"problem 500":     {"problem.schema.json", problemFor(os.ErrClosed)},
-		"empty revisions": {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Revisions: nil})},
+		"submission":           {"submission.schema.json", submissionBody(submission)},
+		"revision view":        {"revision-view.schema.json", revisionBody(application.RevisionView{Revision: revision, Reviews: []lifecycle.ResultReview{review}})},
+		"review result":        {"review-result.schema.json", ReviewBody{Review: review, Rework: &rework}},
+		"accepted review":      {"review-result.schema.json", ReviewBody{Review: review}},
+		"full task view":       {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Attempt: &attempt, Revisions: []application.RevisionView{{Revision: revision}}})},
+		"task view":            {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord})},
+		"attention":            {"attention-list.schema.json", AttentionListBody{Attention: []lifecycle.AttentionRequest{}}},
+		"cancel":               {"cancel-result.schema.json", CancelBody{Task: task.String(), State: "cancelling"}},
+		"decision":             {"decision-result.schema.json", DecisionBody{Attention: newID[ids.Attention](t).String(), Decision: newID[ids.Decision](t).String(), Kind: "deny", State: "decided"}},
+		"event page":           {"event-page.schema.json", eventPageBody(application.EventPage{Events: []store.StreamEvent{event, outside}, Next: application.EventCursor{Generation: 1, Position: 8, Stream: application.StreamTag(tenant, ids.TaskID{})}})},
+		"reset page":           {"event-page.schema.json", eventPageBody(application.EventPage{Next: application.EventCursor{Generation: 1, Stream: application.StreamTag(tenant, task)}, Reset: true})},
+		"problem":              {"problem.schema.json", problemFor(application.ErrNotFound)},
+		"problem 412":          {"problem.schema.json", problemFor(&lifecycle.TransitionError{Code: lifecycle.RejectVersionConflict})},
+		"problem 500":          {"problem.schema.json", problemFor(os.ErrClosed)},
+		"empty revisions":      {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Revisions: nil})},
+		"migration":            {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview})},
+		"migration no preview": {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration})},
+		"migration preview":    {"migration-preview.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview}).Preview},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := schematest.Marshal(t, response.body)
@@ -197,6 +216,7 @@ func TestSurfaceSchemaEnumsMatchGoConstants(t *testing.T) {
 		{"review-request.schema.json", []string{"properties", "disposition", "enum"}, schematest.Strings(lifecycle.Dispositions())},
 		{"submission.schema.json", []string{"properties", "harness_mode", "enum"}, schematest.Strings(lifecycle.HarnessModes())},
 		{"event.schema.json", []string{"properties", "record_kind", "enum"}, schematest.Strings(lifecycle.RecordKinds())},
+		{"../lifecycle/migration-pass.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(lifecycle.MigrationStates())},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			got := schematest.Enum(t, schemaPath(tc.file), tc.path...)
@@ -214,6 +234,7 @@ type openAPIDocument struct {
 	Components struct {
 		Responses map[string]json.RawMessage `json:"responses"`
 		Params    map[string]json.RawMessage `json:"parameters"`
+		Bodies    map[string]json.RawMessage `json:"requestBodies"`
 	} `json:"components"`
 }
 
@@ -318,6 +339,10 @@ func TestContractConformanceOpenAPIReferencesResolve(t *testing.T) {
 			}
 		case strings.HasPrefix(ref, "#/components/parameters/"):
 			if document.Components.Params[strings.TrimPrefix(ref, "#/components/parameters/")] == nil {
+				t.Errorf("unresolved %s", ref)
+			}
+		case strings.HasPrefix(ref, "#/components/requestBodies/"):
+			if document.Components.Bodies[strings.TrimPrefix(ref, "#/components/requestBodies/")] == nil {
 				t.Errorf("unresolved %s", ref)
 			}
 		case strings.HasPrefix(ref, "#/components/"):

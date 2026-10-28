@@ -672,6 +672,217 @@
           }
         }
       }
+    },
+    "/v1/tenants/{tenant}/migration-passes": {
+      "post": {
+        "operationId": "createMigrationPass",
+        "summary": "Create a migration pass",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../jsonschema/surface/create-migration-request.schema.json" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The migration pass. Replaying the same Idempotency-Key and body returns it again.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../jsonschema/surface/migration-view.schema.json" }
+              }
+            },
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "Location": {
+                "description": "URL of the created migration pass.",
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/migration-passes/{migration}": {
+      "get": {
+        "operationId": "getMigrationPass",
+        "summary": "Read a migration pass",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Migration" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The migration pass and its current preview evidence, when present.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../jsonschema/surface/migration-view.schema.json" }
+              }
+            },
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } }
+          },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/migration-passes/{migration}/preview": {
+      "post": {
+        "operationId": "previewMigrationPass",
+        "summary": "Preview a migration pass",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Migration" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyCommand" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/MigrationView" },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "409": { "$ref": "#/components/responses/Problem409" },
+          "412": { "$ref": "#/components/responses/Problem412" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "428": { "$ref": "#/components/responses/Problem428" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/migration-passes/{migration}/hold": {
+      "post": {
+        "operationId": "holdMigrationPass",
+        "summary": "Hold a migration pass",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Migration" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyCommand" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/MigrationView" },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "409": { "$ref": "#/components/responses/Problem409" },
+          "412": { "$ref": "#/components/responses/Problem412" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "428": { "$ref": "#/components/responses/Problem428" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/migration-passes/{migration}/release": {
+      "post": {
+        "operationId": "releaseMigrationPass",
+        "summary": "Release a held migration pass",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Migration" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyCommand" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/MigrationView" },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "409": { "$ref": "#/components/responses/Problem409" },
+          "412": { "$ref": "#/components/responses/Problem412" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "428": { "$ref": "#/components/responses/Problem428" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/migration-passes/{migration}/execute": {
+      "post": {
+        "operationId": "executeMigrationPass",
+        "summary": "Execute a freshly previewed migration pass",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Migration" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyCommand" },
+        "responses": {
+          "202": { "$ref": "#/components/responses/MigrationView" },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "409": { "$ref": "#/components/responses/Problem409" },
+          "412": { "$ref": "#/components/responses/Problem412" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "428": { "$ref": "#/components/responses/Problem428" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/migration-passes/{migration}/cancel": {
+      "post": {
+        "operationId": "cancelMigrationPass",
+        "summary": "Cancel a migration pass before execution",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Migration" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyCommand" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/MigrationView" },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "409": { "$ref": "#/components/responses/Problem409" },
+          "412": { "$ref": "#/components/responses/Problem412" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "428": { "$ref": "#/components/responses/Problem428" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/authority-grants/{grant}/revoke": {
+      "post": {
+        "operationId": "revokeAuthorityGrant",
+        "summary": "Revoke a standing authority grant",
+        "parameters": [
+          { "$ref": "#/components/parameters/Tenant" },
+          { "$ref": "#/components/parameters/Grant" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyCommand" },
+        "responses": {
+          "204": { "description": "The authority grant is revoked. An exact replay has the same result." },
+          "400": { "$ref": "#/components/responses/Problem400" },
+          "401": { "$ref": "#/components/responses/Problem401" },
+          "403": { "$ref": "#/components/responses/Problem403" },
+          "404": { "$ref": "#/components/responses/Problem404" },
+          "422": { "$ref": "#/components/responses/Problem422" },
+          "500": { "$ref": "#/components/responses/Problem500" }
+        }
+      }
     }
   },
   "components": {
@@ -725,6 +936,24 @@
         "in": "path",
         "required": true,
         "description": "The attention request.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "Migration": {
+        "name": "migration",
+        "in": "path",
+        "required": true,
+        "description": "The migration pass.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "Grant": {
+        "name": "grant",
+        "in": "path",
+        "required": true,
+        "description": "The authority grant.",
         "schema": {
           "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
         }
@@ -789,7 +1018,34 @@
         }
       }
     },
+    "requestBodies": {
+      "EmptyCommand": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/empty-command-request.schema.json"
+            }
+          }
+        }
+      }
+    },
     "responses": {
+      "MigrationView": {
+        "description": "The updated migration pass and its current preview evidence, when present.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/migration-view.schema.json"
+            }
+          }
+        },
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          }
+        }
+      },
       "Problem400": {
         "description": "Malformed request",
         "content": {

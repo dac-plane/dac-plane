@@ -123,6 +123,14 @@ func (a *API) routes() []route {
 		{"GET " + prefix + "/attention/{attention}", a.authenticated(a.getAttention)},
 		{"POST " + prefix + "/attention/{attention}/decisions", a.authenticated(a.decide)},
 		{"GET " + prefix + "/events", a.authenticated(a.tenantEvents)},
+		{"POST " + prefix + "/migration-passes", a.authenticated(a.createMigration)},
+		{"GET " + prefix + "/migration-passes/{migration}", a.authenticated(a.getMigration)},
+		{"POST " + prefix + "/migration-passes/{migration}/preview", a.authenticated(a.previewMigration)},
+		{"POST " + prefix + "/migration-passes/{migration}/hold", a.authenticated(a.holdMigration)},
+		{"POST " + prefix + "/migration-passes/{migration}/release", a.authenticated(a.releaseMigration)},
+		{"POST " + prefix + "/migration-passes/{migration}/execute", a.authenticated(a.executeMigration)},
+		{"POST " + prefix + "/migration-passes/{migration}/cancel", a.authenticated(a.cancelMigration)},
+		{"POST " + prefix + "/authority-grants/{grant}/revoke", a.authenticated(a.revokeAuthority)},
 	}
 }
 

@@ -94,6 +94,27 @@ type CancelRequest struct{}
 // Validate reports whether the body is well formed.
 func (CancelRequest) Validate() error { return nil }
 
+// EmptyCommandRequest is the body of an administrative command whose payload
+// is carried entirely by its path and headers.
+type EmptyCommandRequest struct{}
+
+// Validate reports whether the body is well formed.
+func (EmptyCommandRequest) Validate() error { return nil }
+
+// CreateMigrationRequest is the body of POST /migration-passes.
+type CreateMigrationRequest struct {
+	From ids.ProviderID `json:"from_provider_id"`
+	To   ids.ProviderID `json:"to_provider_id"`
+}
+
+// Validate reports whether the body is well formed.
+func (r CreateMigrationRequest) Validate() error {
+	if r.From.IsZero() || r.To.IsZero() || r.From == r.To {
+		return fmt.Errorf("%w: migration requires distinct source and target providers", application.ErrInvalidCommand)
+	}
+	return nil
+}
+
 // ReviewRequest is the body of POST /tasks/{task}/reviews.
 type ReviewRequest struct {
 	Revision    ids.RevisionID           `json:"revision_id"`
@@ -207,6 +228,32 @@ type DecisionBody struct {
 type ReviewBody struct {
 	Review lifecycle.ResultReview `json:"review"`
 	Rework *SubmissionBody        `json:"rework,omitempty"`
+}
+
+// MigrationPreviewBody is the qualification snapshot required by execute.
+type MigrationPreviewBody struct {
+	FromVersion uint64    `json:"from_version"`
+	ToVersion   uint64    `json:"to_version"`
+	PreviewedAt time.Time `json:"previewed_at"`
+}
+
+// MigrationBody is the public projection of migration administration. The
+// worker's maintenance claim is deliberately not part of the Surface API.
+type MigrationBody struct {
+	Migration lifecycle.MigrationPass `json:"migration"`
+	Preview   *MigrationPreviewBody   `json:"preview,omitempty"`
+}
+
+func migrationBody(view application.MigrationView) MigrationBody {
+	body := MigrationBody{Migration: view.Pass}
+	if !view.Preview.At.IsZero() {
+		body.Preview = &MigrationPreviewBody{
+			FromVersion: view.Preview.FromVersion,
+			ToVersion:   view.Preview.ToVersion,
+			PreviewedAt: view.Preview.At.UTC(),
+		}
+	}
+	return body
 }
 
 // EventBody is one committed lifecycle event. RecordVersion is the record's
