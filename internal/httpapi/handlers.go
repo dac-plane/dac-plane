@@ -7,6 +7,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/application"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
 func (a *API) submitTask(w http.ResponseWriter, r *http.Request, actor identity.AuthorizationContext) error {
@@ -14,13 +15,14 @@ func (a *API) submitTask(w http.ResponseWriter, r *http.Request, actor identity.
 	if err != nil {
 		return err
 	}
-	body, err := decode[SubmitTaskRequest](r)
+	body, err := decodeLimited[SubmitTaskRequest](r, maxSubmitTaskBodyBytes)
 	if err != nil {
 		return err
 	}
 	submission, err := application.Submit(r.Context(), a.pool, application.SubmitTask{
 		Command: cmd, At: a.options.Now(), Provider: body.Provider, Demand: body.Demand, Deadline: body.Deadline,
-		Unit: body.Unit, Ceiling: body.Ceiling, Amount: body.Amount, Spend: body.Spend,
+		Brief: lifecycle.ExecutionBrief{Objective: body.Objective, AcceptanceCriteria: body.AcceptanceCriteria},
+		Unit:  body.Unit, Ceiling: body.Ceiling, Amount: body.Amount, Spend: body.Spend,
 	})
 	if err != nil {
 		return err

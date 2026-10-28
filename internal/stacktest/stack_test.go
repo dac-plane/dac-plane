@@ -42,12 +42,14 @@ func TestDevelopmentStackLifecycle(t *testing.T) {
 	submitted := request[httpapi.SubmissionBody](t, ctx, client, token, http.MethodPost, "/tasks", map[string]string{
 		"Idempotency-Key": "stack-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}, httpapi.SubmitTaskRequest{
-		Provider: mustProviderID(t),
-		Demand:   contracts.DemandPerson,
-		Deadline: time.Now().UTC().Add(time.Hour),
-		Unit:     "tokens",
-		Ceiling:  1000,
-		Amount:   100,
+		Objective:          "Complete the deployed stack fixture",
+		AcceptanceCriteria: []string{"The task reaches ready_for_review"},
+		Provider:           mustProviderID(t),
+		Demand:             contracts.DemandPerson,
+		Deadline:           time.Now().UTC().Add(time.Hour),
+		Unit:               "tokens",
+		Ceiling:            1000,
+		Amount:             100,
 	}, http.StatusCreated)
 
 	attention := poll(t, ctx, "attention request", func() (lifecycle.AttentionRequest, bool) {

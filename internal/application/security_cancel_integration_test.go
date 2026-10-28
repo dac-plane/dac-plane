@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -91,7 +92,7 @@ func TestSecurityCancelLostAcknowledgementPartialStopsAndRestart(t *testing.T) {
 	f.ingestNow(t, stopped)
 	before := f.reload(t, s.Nonce)
 	f.ingestNow(t, stopped)
-	if after := f.reload(t, s.Nonce); after.Task != before.Task || after.Attempt != before.Attempt || after.Budget != before.Budget || after.Task.State != lifecycle.TaskCancelled || after.Attempt.State != lifecycle.AttemptTerminated {
+	if after := f.reload(t, s.Nonce); !reflect.DeepEqual(after.Task, before.Task) || after.Attempt != before.Attempt || after.Budget != before.Budget || after.Task.State != lifecycle.TaskCancelled || after.Attempt.State != lifecycle.AttemptTerminated {
 		t.Fatalf("duplicate stop changed terminal state=%+v", after)
 	}
 	if f.count(t, "durable_event", "record_kind='budget' and event='release'") != 1 {

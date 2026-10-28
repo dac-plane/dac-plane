@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 )
@@ -133,6 +134,10 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 	if submission.Reservation.State != lifecycle.ReservationHeld {
 		return nil, fmt.Errorf("%w: the submission's reservation is no longer held for this amount", ErrInvalidCommand)
 	}
+	brief, present := submission.Task.Brief()
+	if !present {
+		return nil, fmt.Errorf("%w: legacy task has no execution brief", ErrInvalidCommand)
+	}
 
 	// Assertion time remains evidence, never the authorization clock.
 	u.lastAt = cmd.Assertion.AssertedAt
@@ -150,6 +155,7 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 	if err := enqueue(ctx, u, tenant, dispatchSpec{
 		operation: submission.Operation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
 		deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
+		start: contracts.RuntimeStart{Brief: brief},
 	}); err != nil {
 		return nil, err
 	}

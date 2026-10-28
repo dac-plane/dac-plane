@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -223,7 +224,7 @@ func decodeInto[T any](t *testing.T, r reply, status int) T {
 }
 
 func (s *surface) submitBody() httpapi.SubmitTaskRequest {
-	return httpapi.SubmitTaskRequest{Provider: s.provider, Demand: contracts.DemandPerson, Deadline: s.at.Add(time.Hour), Unit: "tokens", Ceiling: 1000, Amount: 100}
+	return httpapi.SubmitTaskRequest{Provider: s.provider, Objective: "Update the integration fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: s.at.Add(time.Hour), Unit: "tokens", Ceiling: 1000, Amount: 100}
 }
 
 func (s *surface) seed(t *testing.T, apply func(*store.UnitOfWork) error) {
@@ -280,12 +281,16 @@ func (s *surface) observe(t *testing.T, rt *simulator.Runtime, sub httpapi.Submi
 
 func TestSurfaceLifecycleThroughHTTP(t *testing.T) {
 	s := newSurface(t)
+	request := s.submitBody()
 
 	// Submit, replay, and reuse a key with another body.
-	created := s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-1", body: s.submitBody()})
+	created := s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-1", body: request})
 	sub := decodeInto[httpapi.SubmissionBody](t, created, http.StatusCreated)
 	if created.header.Get("Location") != "/v1/tenants/"+s.tenant.String()+"/tasks/"+sub.Task.ID.String() || created.header.Get("ETag") == "" {
 		t.Fatalf("Location %q ETag %q", created.header.Get("Location"), created.header.Get("ETag"))
+	}
+	if sub.Task.Objective != request.Objective || !slices.Equal(sub.Task.AcceptanceCriteria, request.AcceptanceCriteria) {
+		t.Fatalf("submission task brief = %q %v, want exact request", sub.Task.Objective, sub.Task.AcceptanceCriteria)
 	}
 	if again := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-1", body: s.submitBody()}), http.StatusCreated); again.Task.ID != sub.Task.ID {
 		t.Fatalf("replay created task %s, want %s", again.Task.ID, sub.Task.ID)
@@ -295,11 +300,16 @@ func TestSurfaceLifecycleThroughHTTP(t *testing.T) {
 	if r := s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-1", body: changed}); r.status != http.StatusUnprocessableEntity {
 		t.Fatalf("reused key with another body: %d %s", r.status, r.body)
 	}
+	changed = request
+	changed.AcceptanceCriteria = []string{"A changed acceptance criterion"}
+	if r := s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-1", body: changed}); r.status != http.StatusUnprocessableEntity {
+		t.Fatalf("reused key with another brief: %d %s", r.status, r.body)
+	}
 
 	// Owner and tenant reader see the task; another principal and an unbound
 	// identity do not, and cannot tell why.
 	taskPath := "/tasks/" + sub.Task.ID.String()
-	if view := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: taskPath, as: "owner"}), http.StatusOK); view.Task.ID != sub.Task.ID || view.Attempt == nil {
+	if view := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: taskPath, as: "owner"}), http.StatusOK); view.Task.ID != sub.Task.ID || view.Attempt == nil || view.Task.Objective != request.Objective || !slices.Equal(view.Task.AcceptanceCriteria, request.AcceptanceCriteria) {
 		t.Fatalf("owner view = %+v", view)
 	}
 	decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: taskPath, as: "reader"}), http.StatusOK)

@@ -117,6 +117,14 @@ func (r *reader) task(ctx context.Context, id ids.TaskID) (lifecycle.Task, error
 	if task.Owner != r.principal.ID && !r.tenantAll {
 		return lifecycle.Task{}, ErrNotFound
 	}
+	if _, present := task.Brief(); !present {
+		brief, briefErr := store.GetTaskExecutionBrief(ctx, r.uow, task)
+		if briefErr == nil {
+			task.Objective, task.AcceptanceCriteria = brief.Objective, brief.AcceptanceCriteria
+		} else if !errors.Is(briefErr, store.ErrNotFound) {
+			return lifecycle.Task{}, briefErr
+		}
+	}
 	return task, nil
 }
 

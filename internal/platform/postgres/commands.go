@@ -8,7 +8,45 @@ import (
 
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
+
+// GetTaskExecutionBrief loads the immutable brief recorded by the task's
+// original submission while the database is still at schema 13. From schema
+// 14 onward the backfilled task columns are authoritative: an absent pair is
+// a genuine legacy task and must not cause repeated command-history scans.
+func GetTaskExecutionBrief(ctx context.Context, q Querier, task lifecycle.Task) (lifecycle.ExecutionBrief, error) {
+	version, err := SchemaVersion(ctx, q)
+	if err != nil {
+		return lifecycle.ExecutionBrief{}, err
+	}
+	if version >= 14 {
+		return lifecycle.ExecutionBrief{}, ErrNotFound
+	}
+	var objective string
+	var criteria []byte
+	err = q.QueryRow(ctx, `
+		select result->>'objective', result->'acceptance_criteria'
+		from command_record
+		where tenant_id=$1 and principal_id=$2 and command='submit_task'
+		  and created_at=$3 and result->>'task'=$4
+		  and result ? 'objective' and result ? 'acceptance_criteria'
+		limit 1`, task.Tenant.String(), task.Owner.String(), task.CreatedAt, task.ID.String()).Scan(&objective, &criteria)
+	if err != nil {
+		if isNoRows(err) {
+			return lifecycle.ExecutionBrief{}, ErrNotFound
+		}
+		return lifecycle.ExecutionBrief{}, err
+	}
+	brief := lifecycle.ExecutionBrief{Objective: objective}
+	if err := json.Unmarshal(criteria, &brief.AcceptanceCriteria); err != nil {
+		return lifecycle.ExecutionBrief{}, corruptRow("command_record.result.acceptance_criteria", err)
+	}
+	if err := brief.Validate(); err != nil {
+		return lifecycle.ExecutionBrief{}, corruptRow("command_record.result.execution_brief", err)
+	}
+	return brief, nil
+}
 
 // CommandRecord binds one client nonce, scoped to its tenant, principal and
 // command kind, to the fingerprint of the request it first carried and to the

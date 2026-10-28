@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -392,6 +393,85 @@ func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
 	items, err = store.ListMigrationItems(f.ctx, f.pool, f.tenant, v.Pass.ID)
 	if err != nil || len(items) != 1 || items[0].SourceAttempt != s.Attempt.ID || items[0].SourceAttempt == late.Attempt.ID {
 		t.Fatalf("frozen migration snapshot enrolled later attempt: %+v, late=%s, err=%v", items, late.Attempt.ID, err)
+	}
+}
+
+func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
+	f, cmd := migrationFixture(t)
+	submission := f.submit(t, f.submitCommand("migration-legacy-brief"))
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations:        map[ids.OperationID]simulator.RuntimeOp{submission.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}},
+		MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, sourceRuntime)
+	frame := simulator.RowsFrame(false,
+		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "legacy-source-session"}),
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "legacy-source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
+	)
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 2 {
+		t.Fatalf("legacy source bindings=%+v", got)
+	}
+	if _, err := f.pool.Exec(f.ctx, `update task set objective=null, acceptance_criteria=null where tenant_id=$1 and task_id=$2`, f.tenant.String(), submission.Task.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `update command_record set result=result-'objective'-'acceptance_criteria' where tenant_id=$1 and command='submit_task' and result->>'task'=$2`, f.tenant.String(), submission.Task.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view = migrate(t, f, view, lifecycle.MigrationPreview, "migration-legacy-preview")
+	view = migrate(t, f, view, lifecycle.MigrationExecute, "migration-legacy-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "migration-legacy-brief",
+		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime},
+			wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cycle := range 2 {
+		if cycle > 0 {
+			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.ReapClaims(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
+	if err != nil || len(items) != 1 || items[0].State != lifecycle.MigrationItemUnresolved || items[0].Reason != "legacy_task_missing_execution_brief" || !items[0].QuiesceOperation.IsZero() || !items[0].TargetAttempt.IsZero() {
+		t.Fatalf("legacy migration items=%+v err=%v; want pre-quiesce refusal", items, err)
+	}
+	pass, err := store.GetMigrationPass(f.ctx, f.pool, f.tenant, view.Pass.ID)
+	if err != nil || pass.State != lifecycle.MigrationFailed {
+		t.Fatalf("legacy migration pass=%s err=%v; want failed", pass.State, err)
+	}
+	source, err := store.GetAttempt(f.ctx, f.pool, f.tenant, submission.Attempt.ID)
+	if err != nil || source.State != lifecycle.AttemptExecuting {
+		t.Fatalf("legacy source attempt=%s err=%v; want executing and never quiesced", source.State, err)
+	}
+	for _, sent := range sourceRuntime.Ledger().Sent() {
+		if sent.Method == contracts.MethodInterrupt {
+			t.Fatalf("legacy source was quiesced: %+v", sent)
+		}
 	}
 }
 
@@ -842,6 +922,19 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	runtimeOperation, err := store.GetOperationByAttempt(f.ctx, f.pool, f.tenant, target.ID)
 	if err != nil || runtimeOperation.ID != items[0].RestartOperation {
 		t.Fatalf("target runtime operation=%s err=%v; want migration restart operation %s", runtimeOperation.ID, err, items[0].RestartOperation)
+	}
+	var restart contracts.RuntimeStart
+	for _, request := range targetRuntime.Ledger().Sent() {
+		if request.Operation == items[0].RestartOperation {
+			if err := json.Unmarshal(request.Arguments, &restart); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	wantBrief, present := s.Task.Brief()
+	if !present || restart.Recovery == nil || restart.Recovery.Stage != contracts.MigrationTargetStarted || restart.Brief.Objective != wantBrief.Objective || !slices.Equal(restart.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) {
+		t.Fatalf("migration runtime start=%+v, want original brief plus target recovery", restart)
 	}
 	repeat := cmd
 	repeat.Command.Nonce = "migration-repeat-source-pass"

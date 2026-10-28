@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +61,33 @@ func TestProblemForMapsEveryErrorCategory(t *testing.T) {
 				t.Fatalf("problem echoes the error: %+v", problem)
 			}
 		})
+	}
+}
+
+func TestSubmitDecoderAcceptsMaximumMultibyteBrief(t *testing.T) {
+	criterion := strings.Repeat("😀", lifecycle.MaxAcceptanceCriterionCharacters)
+	criteria := make([]string, lifecycle.MaxAcceptanceCriteria)
+	for i := range criteria {
+		criteria[i] = criterion
+	}
+	body := SubmitTaskRequest{
+		Provider: newID[ids.Provider](t), Objective: strings.Repeat("😀", lifecycle.MaxObjectiveCharacters),
+		AcceptanceCriteria: criteria, Deadline: testNow.Add(time.Hour), Unit: "tokens", Ceiling: 100, Amount: 10,
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) <= maxBodyBytes || len(encoded) > maxSubmitTaskBodyBytes {
+		t.Fatalf("maximum multibyte brief encoded to %d bytes; want above default and within submit limit", len(encoded))
+	}
+	request := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(encoded))
+	decoded, err := decodeLimited[SubmitTaskRequest](request, maxSubmitTaskBodyBytes)
+	if err != nil {
+		t.Fatalf("decode maximum multibyte brief: %v", err)
+	}
+	if decoded.Objective != body.Objective || !slices.Equal(decoded.AcceptanceCriteria, body.AcceptanceCriteria) {
+		t.Fatal("maximum multibyte brief changed during decode")
 	}
 }
 
@@ -128,7 +156,7 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		}
 		return out
 	}
-	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
+	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","objective":"Update the fixture","acceptance_criteria":["The fixture is updated"],"deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
 	validMigration := `{"from_provider_id":"` + newID[ids.Provider](t).String() + `","to_provider_id":"` + newID[ids.Provider](t).String() + `"}`
 	cases := []struct {
 		name   string
@@ -144,7 +172,7 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		{"submit without key", unitRequest{"POST", base + "/tasks", validSubmit, auth}, 400},
 		{"submit oversized key", unitRequest{"POST", base + "/tasks", validSubmit, with(map[string]string{"Idempotency-Key": strings.Repeat("k", 129)})}, 400},
 		{"submit malformed JSON", unitRequest{"POST", base + "/tasks", `{"provider_id":`, with(map[string]string{"Idempotency-Key": "k1"})}, 400},
-		{"submit unknown field", unitRequest{"POST", base + "/tasks", strings.Replace(validSubmit, "{", `{"objective":"x",`, 1), with(map[string]string{"Idempotency-Key": "k1"})}, 400},
+		{"submit unknown field", unitRequest{"POST", base + "/tasks", strings.Replace(validSubmit, "{", `{"unexpected":"x",`, 1), with(map[string]string{"Idempotency-Key": "k1"})}, 400},
 		{"cancel null body", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `null`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
 		{"cancel trailing bracket", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}]`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},
 		{"cancel trailing brace", unitRequest{"POST", base + "/tasks/" + task + "/cancel", `{}}`, with(map[string]string{"Idempotency-Key": "k2", "If-Match": `"3"`})}, 400},

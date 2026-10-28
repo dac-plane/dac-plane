@@ -3,6 +3,7 @@
 package application_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
@@ -26,7 +27,7 @@ func TestSecurityUsageLateReportsRemainAccountedAfterTerminal(t *testing.T) {
 		t.Fatalf("late usage = %+v, want accounted", got)
 	}
 	after := f.reload(t, s.Nonce)
-	if after.Budget.Consumed != 1200 || after.Budget.Overshoot != 200 || after.Budget.Reserved != 0 || after.Reservation.State != lifecycle.ReservationReleased || after.Task != before.Task || after.Attempt != before.Attempt {
+	if after.Budget.Consumed != 1200 || after.Budget.Overshoot != 200 || after.Budget.Reserved != 0 || after.Reservation.State != lifecycle.ReservationReleased || !reflect.DeepEqual(after.Task, before.Task) || after.Attempt != before.Attempt {
 		t.Fatalf("late usage revived work or lost accounting: %+v", after)
 	}
 	if got := f.ingestNow(t, f.event(rt, s, 1, frame)); got.Duplicates != 1 {
@@ -73,7 +74,7 @@ func TestSecurityUsageNonLiveReportsCannotChangeAccounting(t *testing.T) {
 		})
 		f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
 			row(uint64(2+i), "usage.reported", map[string]any{"unit": s.Unit, "cumulative": 1200}))))
-		if after := f.reload(t, s.Nonce); after.Budget != before.Budget || after.Reservation != before.Reservation || after.Attempt != before.Attempt || after.Task != before.Task {
+		if after := f.reload(t, s.Nonce); after.Budget != before.Budget || after.Reservation != before.Reservation || after.Attempt != before.Attempt || !reflect.DeepEqual(after.Task, before.Task) {
 			t.Fatalf("%s usage changed primary state: %+v", mode, after)
 		}
 		if after, err := store.GetCursor(f.ctx, f.pool, f.tenant, s.Operation.ID, eventStream); err != nil || after != cursor {

@@ -150,7 +150,7 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h := newHarness(t, oldImage, oldImage)
 	h.start()
 	h.startSimulator()
-	submitted := h.submit()
+	submitted := h.submitLegacy()
 	attention := h.waitAttention()
 
 	h.replicaA = nextImage
@@ -166,12 +166,12 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")
-	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "14" {
-		t.Fatalf("schema version = %q, want 14", version)
+	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "15" {
+		t.Fatalf("schema version = %q, want 15", version)
 	}
 	output, err := h.composeOutput("run", "--rm", "--no-deps", "old-schema-check")
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
-		t.Fatalf("old image at schema 14 = %v, output %q", err, output)
+		t.Fatalf("old image at schema 15 = %v, output %q", err, output)
 	}
 
 	h.decide(attention)
@@ -179,7 +179,7 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.review(submitted.Task.ID, ready)
 	h.waitTask(submitted.Task.ID, lifecycle.TaskSucceeded)
 	h.assertEffectKind(submitted.Operation.ID, "turn_started", 1)
-	t.Logf("upgrade evidence: schema=14 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
+	t.Logf("upgrade evidence: schema=15 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
 }
 
 func newHarness(t *testing.T, replicaA, replicaB string) *harness {
@@ -436,6 +436,29 @@ func (h *harness) submit() httpapi.SubmissionBody {
 	return apiRequest[httpapi.SubmissionBody](h, "replica-a", http.MethodPost, "/tasks", map[string]string{
 		"Idempotency-Key": "ops-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}, httpapi.SubmitTaskRequest{
+		Objective:          "Complete the operations fixture",
+		AcceptanceCriteria: []string{"The task reaches ready_for_review"},
+		Provider:           mustProviderID(h.t), Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
+		Unit: "tokens", Ceiling: 1000, Amount: 100,
+	}, http.StatusCreated).body
+}
+
+// submitLegacy uses the pinned release's pre-ADR-0013 request shape. The
+// rolling-upgrade case proves that the new binary preserves a task created by
+// the previous strict API rather than pretending that image accepted fields
+// it did not know.
+func (h *harness) submitLegacy() httpapi.SubmissionBody {
+	type legacySubmitTaskRequest struct {
+		Provider ids.ProviderID   `json:"provider_id"`
+		Demand   contracts.Demand `json:"demand,omitempty"`
+		Deadline time.Time        `json:"deadline"`
+		Unit     lifecycle.Unit   `json:"unit"`
+		Ceiling  uint64           `json:"ceiling"`
+		Amount   uint64           `json:"amount"`
+	}
+	return apiRequest[httpapi.SubmissionBody](h, "replica-a", http.MethodPost, "/tasks", map[string]string{
+		"Idempotency-Key": "ops-legacy-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+	}, legacySubmitTaskRequest{
 		Provider: mustProviderID(h.t), Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
 		Unit: "tokens", Ceiling: 1000, Amount: 100,
 	}, http.StatusCreated).body
@@ -549,8 +572,12 @@ func (h *harness) composeBytesResultErr(input []byte, args ...string) ([]byte, e
 		"--profile", "dev", "--profile", "operations"}
 	command := exec.Command("docker", append(base, args...)...)
 	command.Dir = root
+	deploymentImage := currentImage
+	if h.replicaA == oldImage && h.replicaB == oldImage {
+		deploymentImage = oldImage
+	}
 	command.Env = append(os.Environ(),
-		"DAC_PLANE_IMAGE="+currentImage,
+		"DAC_PLANE_IMAGE="+deploymentImage,
 		"DAC_REPLICA_A_IMAGE="+h.replicaA,
 		"DAC_REPLICA_B_IMAGE="+h.replicaB,
 		"DAC_NEXT_IMAGE="+nextImage,

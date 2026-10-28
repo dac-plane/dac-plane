@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -67,11 +68,15 @@ func GetTask(ctx context.Context, q Querier, tenant ids.TenantID, id ids.TaskID)
 	var task lifecycle.Task
 	var state string
 	var idText, tenantText, ownerText string
+	var objective *string
+	var criteria []byte
 	err := q.QueryRow(ctx, `
-		select task_id::text, tenant_id::text, owner_id::text, state, version, created_at, updated_at
-		from task where tenant_id = $1 and task_id = $2`,
+		select task_id::text, tenant_id::text, owner_id::text,
+		       to_jsonb(t)->>'objective', coalesce(to_jsonb(t)->'acceptance_criteria', 'null'::jsonb),
+		       state, version, created_at, updated_at
+		from task t where tenant_id = $1 and task_id = $2`,
 		tenant.String(), id.String(),
-	).Scan(&idText, &tenantText, &ownerText, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
+	).Scan(&idText, &tenantText, &ownerText, &objective, &criteria, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.Task{}, ErrNotFound
@@ -88,6 +93,9 @@ func GetTask(ctx context.Context, q Querier, tenant ids.TenantID, id ids.TaskID)
 		return lifecycle.Task{}, err
 	}
 	task.State = lifecycle.TaskState(state)
+	if err := decodeTaskBrief(&task, objective, criteria); err != nil {
+		return lifecycle.Task{}, err
+	}
 	if err := task.Validate(); err != nil {
 		return lifecycle.Task{}, err
 	}
@@ -100,12 +108,34 @@ func InsertTask(ctx context.Context, u *UnitOfWork, task lifecycle.Task) (lifecy
 	if err := task.Validate(); err != nil {
 		return lifecycle.Task{}, false, err
 	}
-	inserted, err := insertReturning(ctx, u, `
-		insert into task (tenant_id, task_id, owner_id, state, version, created_at, updated_at)
-		values ($1, $2, $3, $4, $5, $6, $7)`,
-		task.Tenant.String(), task.ID.String(), task.Owner.String(),
-		string(task.State), int64(task.Version), task.CreatedAt, task.UpdatedAt,
-	)
+	version, err := SchemaVersion(ctx, u)
+	if err != nil {
+		return lifecycle.Task{}, false, err
+	}
+	var inserted bool
+	if version >= 14 {
+		var criteria any
+		if task.AcceptanceCriteria != nil {
+			encoded, marshalErr := json.Marshal(task.AcceptanceCriteria)
+			if marshalErr != nil {
+				return lifecycle.Task{}, false, marshalErr
+			}
+			criteria = encoded
+		}
+		inserted, err = insertReturning(ctx, u, `
+			insert into task (tenant_id, task_id, owner_id, objective, acceptance_criteria, state, version, created_at, updated_at)
+			values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)`,
+			task.Tenant.String(), task.ID.String(), task.Owner.String(), textOrNil(task.Objective), criteria,
+			string(task.State), int64(task.Version), task.CreatedAt, task.UpdatedAt,
+		)
+	} else {
+		inserted, err = insertReturning(ctx, u, `
+			insert into task (tenant_id, task_id, owner_id, state, version, created_at, updated_at)
+			values ($1, $2, $3, $4, $5, $6, $7)`,
+			task.Tenant.String(), task.ID.String(), task.Owner.String(),
+			string(task.State), int64(task.Version), task.CreatedAt, task.UpdatedAt,
+		)
+	}
 	if err != nil {
 		return lifecycle.Task{}, false, err
 	}
@@ -120,6 +150,7 @@ func InsertTask(ctx context.Context, u *UnitOfWork, task lifecycle.Task) (lifecy
 		return lifecycle.Task{}, false, loadErr
 	}
 	if stored.Tenant != task.Tenant || stored.Owner != task.Owner ||
+		stored.Objective != task.Objective || !slices.Equal(stored.AcceptanceCriteria, task.AcceptanceCriteria) ||
 		stored.State != task.State || stored.Version != task.Version {
 		return lifecycle.Task{}, false, ErrPayloadMismatch
 	}
@@ -133,11 +164,15 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 	var task lifecycle.Task
 	var state string
 	var idText, tenantText, ownerText string
+	var objective *string
+	var criteria []byte
 	err := u.QueryRow(ctx, `
-		select task_id::text, tenant_id::text, owner_id::text, state, version, created_at, updated_at
-		from task where tenant_id = $1 and task_id = $2 for update`,
+		select task_id::text, tenant_id::text, owner_id::text,
+		       to_jsonb(t)->>'objective', coalesce(to_jsonb(t)->'acceptance_criteria', 'null'::jsonb),
+		       state, version, created_at, updated_at
+		from task t where tenant_id = $1 and task_id = $2 for update`,
 		tenant.String(), id.String(),
-	).Scan(&idText, &tenantText, &ownerText, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
+	).Scan(&idText, &tenantText, &ownerText, &objective, &criteria, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.Task{}, false, ErrNotFound
@@ -155,6 +190,9 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 		return lifecycle.Task{}, false, parseErr
 	}
 	task.State = lifecycle.TaskState(state)
+	if err := decodeTaskBrief(&task, objective, criteria); err != nil {
+		return lifecycle.Task{}, false, err
+	}
 	if err := task.Validate(); err != nil {
 		return lifecycle.Task{}, false, err
 	}
@@ -192,6 +230,20 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 		return lifecycle.Task{}, false, err
 	}
 	return next, false, nil
+}
+
+func decodeTaskBrief(task *lifecycle.Task, objective *string, raw []byte) error {
+	if objective == nil && string(raw) == "null" {
+		return nil
+	}
+	if objective == nil || string(raw) == "null" {
+		return corruptRow("task.execution_brief", errors.New("objective and acceptance criteria are not paired"))
+	}
+	if err := json.Unmarshal(raw, &task.AcceptanceCriteria); err != nil {
+		return corruptRow("task.acceptance_criteria", err)
+	}
+	task.Objective = *objective
+	return nil
 }
 
 // GetTaskForUpdate locks a task row for the caller's read-modify-write.

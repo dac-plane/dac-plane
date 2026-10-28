@@ -113,6 +113,14 @@ func reviewResult(ctx context.Context, u *unit, c ReviewResultCommand) (json.Raw
 	if err != nil {
 		return nil, err
 	}
+	if _, present := task.Brief(); !present {
+		brief, briefErr := store.GetTaskExecutionBrief(ctx, u.uow, task)
+		if briefErr == nil {
+			task.Objective, task.AcceptanceCriteria = brief.Objective, brief.AcceptanceCriteria
+		} else if !errors.Is(briefErr, store.ErrNotFound) {
+			return nil, briefErr
+		}
+	}
 	head, err := store.LatestRevision(ctx, u.uow, tenant, task.ID)
 	if err != nil {
 		return nil, err
@@ -129,6 +137,12 @@ func reviewResult(ctx context.Context, u *unit, c ReviewResultCommand) (json.Raw
 	next, record, _, err := store.RecordReview(ctx, u.uow, head, review, nil, tr)
 	if err != nil {
 		return nil, err
+	}
+	// RecordReview reloads the persisted task. At schema 13 that row has no
+	// brief columns, so restore the immutable command-result fallback before a
+	// request-changes review schedules its next runtime attempt.
+	if brief, present := task.Brief(); present {
+		next.Objective, next.AcceptanceCriteria = brief.Objective, brief.AcceptanceCriteria
 	}
 	v := ReviewView{Review: record}
 	if c.Rework != nil {
@@ -148,7 +162,11 @@ func reviewResult(ctx context.Context, u *unit, c ReviewResultCommand) (json.Raw
 }
 
 func scheduleRework(ctx context.Context, u *unit, task lifecycle.Task, previous lifecycle.Attempt, t ReworkTerms, nonce string, actor identity.AuthorizationContext) (submission, error) {
-	c := SubmitTask{Command: Command{Actor: actor, Nonce: nonce}, At: u.at, Provider: t.Provider, Demand: t.Demand, Deadline: t.Deadline, Unit: t.Unit, Ceiling: 1, Amount: t.Amount, Spend: t.Spend}
+	brief, present := task.Brief()
+	if !present {
+		return submission{}, fmt.Errorf("%w: legacy task has no execution brief", ErrInvalidCommand)
+	}
+	c := SubmitTask{Command: Command{Actor: actor, Nonce: nonce}, At: u.at, Provider: t.Provider, Brief: brief, Demand: t.Demand, Deadline: t.Deadline, Unit: t.Unit, Ceiling: 1, Amount: t.Amount, Spend: t.Spend}
 	// Reuse submission validation, but authorize with the already authenticated
 	// owner from the surrounding command, not a new task or budget.
 	if err := c.validate(); err != nil {

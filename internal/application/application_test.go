@@ -9,6 +9,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
 var unitNow = time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
@@ -31,6 +32,10 @@ func validSubmit(t *testing.T) SubmitTask {
 		Command:  Command{Actor: unitActor(t), Nonce: "n-1"},
 		At:       unitNow,
 		Provider: provider,
+		Brief: lifecycle.ExecutionBrief{
+			Objective:          "Update the fixture",
+			AcceptanceCriteria: []string{"The requested file contains the expected content"},
+		},
 		Demand:   contracts.DemandPerson,
 		Deadline: unitNow.Add(time.Hour),
 		Unit:     "tokens",
@@ -51,6 +56,7 @@ func TestSubmitValidation(t *testing.T) {
 		"no deadline":         func(c *SubmitTask) { c.Deadline = time.Time{} },
 		"no command time":     func(c *SubmitTask) { c.At = time.Time{} },
 		"no provider":         func(c *SubmitTask) { c.Provider = ids.ProviderID{} },
+		"no brief":            func(c *SubmitTask) { c.Brief = lifecycle.ExecutionBrief{} },
 		"unknown demand":      func(c *SubmitTask) { c.Demand = "urgent" },
 		"malformed unit":      func(c *SubmitTask) { c.Unit = "Tokens" },
 		"zero amount":         func(c *SubmitTask) { c.Amount = 0 },
@@ -107,6 +113,7 @@ func submitDigest(t *testing.T, c SubmitTask) identity.Digest {
 	c = c.normalize()
 	digest, err := fingerprint(commandSubmitTask, submitPayload{
 		Provider: c.Provider.String(), Demand: string(c.Demand), Deadline: c.Deadline.Format(time.RFC3339Nano),
+		Objective: c.Brief.Objective, AcceptanceCriteria: c.Brief.AcceptanceCriteria,
 		Unit: string(c.Unit), Ceiling: c.Ceiling, Amount: c.Amount, Spend: c.Spend,
 	})
 	if err != nil {
@@ -136,7 +143,9 @@ func TestFingerprintIsCanonical(t *testing.T) {
 	changed.Amount++
 	governed := base
 	governed.Spend = true
-	for name, c := range map[string]SubmitTask{"amount": changed, "spend": governed} {
+	changedBrief := base
+	changedBrief.Brief.AcceptanceCriteria = []string{"A different outcome"}
+	for name, c := range map[string]SubmitTask{"amount": changed, "spend": governed, "brief": changedBrief} {
 		if got := submitDigest(t, c); got == want {
 			t.Errorf("%s: fingerprint did not change", name)
 		}

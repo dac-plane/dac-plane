@@ -4,9 +4,11 @@ package application_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
 	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
@@ -32,8 +35,12 @@ type resultFixture struct {
 }
 
 func newResultFixture(t *testing.T) *resultFixture {
+	return newResultFixtureAtVersion(t, migrations.CurrentVersion)
+}
+
+func newResultFixtureAtVersion(t *testing.T, version int64) *resultFixture {
 	t.Helper()
-	f := newFixture(t, lifecycle.HarnessLive)
+	f := newFixtureAtVersion(t, lifecycle.HarnessLive, version)
 	s, rt := f.executing(t, "result")
 	id := mustID[ids.Provider](t)
 	b, err := simulator.NewByteArtifactStore(simulator.Config{Tenant: f.tenant, Provider: id})
@@ -44,6 +51,31 @@ func newResultFixture(t *testing.T) *resultFixture {
 	rt.WithArtifactExport(b, map[string][]byte{"patch": data, "tests": []byte("exit=0")})
 	p := contracts.ResultProposed{SessionRef: "s-1", TurnRef: "t-1", SourceRevision: "source-sha-1", Artifacts: []contracts.ArtifactDeclaration{{NativeRef: "patch", Kind: lifecycle.ArtifactCodeChange, Digest: identity.DigestOf(data), Size: uint64(len(data)), MediaType: "text/plain"}}}
 	return &resultFixture{fixture: f, s: s, rt: rt, bytes: b, storeID: id, proposal: p}
+}
+
+func TestReviewRequestChangesPreservesSchema13Brief(t *testing.T) {
+	g := newResultFixtureAtVersion(t, 13)
+	g.propose(t, true)
+	first := g.finalize(t)
+	cmd := g.reviewCommand(t, first, "schema-13-rework", lifecycle.DispositionRequestChanges)
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
+	view, err := application.ReviewResult(g.ctx, g.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Rework == nil {
+		t.Fatal("schema-13 rework was not scheduled")
+	}
+	runtime := g.runtime(t, view.Rework.Operation.ID)
+	g.tick(t, runtime)
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(runtime.Ledger().Sent()[0].Arguments, &start); err != nil {
+		t.Fatal(err)
+	}
+	want, present := g.s.Task.Brief()
+	if !present || start.Brief.Objective != want.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, want.AcceptanceCriteria) {
+		t.Fatalf("schema-13 rework start=%+v, want original brief", start)
+	}
 }
 
 func (g *resultFixture) propose(t *testing.T, first bool) {
@@ -220,6 +252,14 @@ func TestReviewRequestChangesSchedulesNewAttemptAndPreservesLineage(t *testing.T
 	second := *v.Rework
 	rt := g.runtime(t, second.Operation.ID).WithArtifactExport(g.bytes, map[string][]byte{"patch": []byte("exact patch bytes")})
 	g.tick(t, rt)
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(rt.Ledger().Sent()[0].Arguments, &start); err != nil {
+		t.Fatal(err)
+	}
+	wantBrief, present := g.s.Task.Brief()
+	if !present || start.Recovery != nil || start.Brief.Objective != wantBrief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) {
+		t.Fatalf("rework runtime start=%+v, want original task brief", start)
+	}
 	g.at = time.Now().UTC().Truncate(time.Microsecond)
 	p := g.proposal
 	p.SessionRef, p.TurnRef, p.SourceRevision = "s-2", "t-2", "source-sha-2"

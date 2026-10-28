@@ -104,6 +104,6 @@ an exact operation or the next operation to reach a boundary, which lets a test 
 submission. The overlay binds that listener to host loopback only. Do not enable or publish it in a
 production deployment.
 
-The tagged next-release binary, schema-14 probe migration, pinned-old image and simulator evidence
+The tagged next-release binary, schema-15 probe migration, pinned-old image and simulator evidence
 listener exist only for this operations suite. They do not extend the release migration set or
 qualify a real provider.

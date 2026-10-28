@@ -69,9 +69,9 @@ func validRequests(t *testing.T) map[string]struct {
 		contract schematest.Contract
 		data     []byte
 	}{
-		"submit": {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
+		"submit": {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
 		"submit governed person": {submitContract, schematest.Marshal(t, SubmitTaskRequest{
-			Provider: newID[ids.Provider](t), Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
+			Provider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
 		})},
 		"assert submission": {assertionContract, schematest.Marshal(t, SpendAssertionRequest{SubmissionKey: "submit-1", Assertion: assertion})},
 		"assert review":     {assertionContract, schematest.Marshal(t, SpendAssertionRequest{ReviewKey: "review-1", Assertion: assertion})},
@@ -105,12 +105,16 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		change     func(map[string]any)
 	}{
 		{"submit without provider", "submit", func(d map[string]any) { delete(d, "provider_id") }},
+		{"submit without objective", "submit", func(d map[string]any) { delete(d, "objective") }},
+		{"submit blank objective", "submit", func(d map[string]any) { d["objective"] = "  " }},
+		{"submit without criteria", "submit", func(d map[string]any) { delete(d, "acceptance_criteria") }},
+		{"submit blank criterion", "submit", func(d map[string]any) { d["acceptance_criteria"] = []any{" "} }},
 		{"submit without deadline", "submit", func(d map[string]any) { delete(d, "deadline") }},
 		{"submit unknown demand", "submit", func(d map[string]any) { d["demand"] = "urgent" }},
 		{"submit zero ceiling", "submit", func(d map[string]any) { d["ceiling"] = 0 }},
 		{"submit zero amount", "submit", func(d map[string]any) { d["amount"] = 0 }},
 		{"submit malformed unit", "submit", func(d map[string]any) { d["unit"] = "USD Cents" }},
-		{"submit unknown field", "submit", func(d map[string]any) { d["objective"] = "x" }},
+		{"submit unknown field", "submit", func(d map[string]any) { d["unexpected"] = "x" }},
 		{"assert both keys", "assert submission", func(d map[string]any) { d["review_key"] = "review-1" }},
 		{"assert no key", "assert submission", func(d map[string]any) { delete(d, "submission_key") }},
 		{"assert without proof", "assert submission", func(d map[string]any) { delete(d["assertion"].(map[string]any), "proof") }},
@@ -152,7 +156,9 @@ func TestCreateMigrationRejectsSameProvider(t *testing.T) {
 // writes and validates it against its schema.
 func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 	tenant, owner, task := newID[ids.Tenant](t), newID[ids.Principal](t), newID[ids.Task](t)
-	taskRecord := lifecycle.Task{ID: task, Tenant: tenant, Owner: owner, State: lifecycle.TaskQueued, Version: 2, CreatedAt: testNow, UpdatedAt: testNow}
+	taskRecord := lifecycle.Task{ID: task, Tenant: tenant, Owner: owner, Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, State: lifecycle.TaskQueued, Version: 2, CreatedAt: testNow, UpdatedAt: testNow}
+	legacyTask := taskRecord
+	legacyTask.Objective, legacyTask.AcceptanceCriteria = "", nil
 	event := store.StreamEvent{Position: 7, Tenant: tenant, Task: task, Record: lifecycle.RecordTask, RecordID: task.Untyped(), Event: "submit", From: "draft", To: "queued", Version: 2, OccurredAt: testNow}
 	outside := store.StreamEvent{Position: 8, Tenant: tenant, Record: lifecycle.RecordHarness, RecordID: newID[ids.Any](t), Event: "promote", From: "off", To: "shadow", Version: 1, OccurredAt: testNow}
 	attempt := lifecycle.Attempt{ID: newID[ids.Attempt](t), Tenant: tenant, Task: task, Number: 1, State: lifecycle.AttemptExecuting, Version: 3, CreatedAt: testNow, UpdatedAt: testNow}
@@ -183,6 +189,7 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		"accepted review":      {"review-result.schema.json", ReviewBody{Review: review}},
 		"full task view":       {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Attempt: &attempt, Revisions: []application.RevisionView{{Revision: revision}}})},
 		"task view":            {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord})},
+		"legacy task view":     {"task-view.schema.json", taskBody(application.TaskView{Task: legacyTask})},
 		"attention":            {"attention-list.schema.json", AttentionListBody{Attention: []lifecycle.AttentionRequest{}}},
 		"cancel":               {"cancel-result.schema.json", CancelBody{Task: task.String(), State: "cancelling"}},
 		"decision":             {"decision-result.schema.json", DecisionBody{Attention: newID[ids.Attention](t).String(), Decision: newID[ids.Decision](t).String(), Kind: "deny", State: "decided"}},

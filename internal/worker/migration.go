@@ -260,6 +260,19 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemQueued {
 		return lifecycle.MigrationItem{}, store.ErrStaleVersion
 	}
+	if _, err := executionBrief(ctx, u, tenant, current.SourceAttempt); errors.Is(err, store.ErrNotFound) {
+		current.State, current.Reason, current.UpdatedAt = lifecycle.MigrationItemUnresolved, "legacy_task_missing_execution_brief", now.UTC()
+		if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+			return lifecycle.MigrationItem{}, err
+		}
+		if err := u.Commit(ctx); err != nil {
+			return lifecycle.MigrationItem{}, err
+		}
+		committed = true
+		return lifecycle.MigrationItem{}, store.ErrStaleVersion
+	} else if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
 	if _, _, err := store.LockResultScope(ctx, u, tenant, current.SourceAttempt); err != nil {
 		return lifecycle.MigrationItem{}, err
 	}
@@ -403,7 +416,16 @@ func validateMigrationReceipt(reply contracts.Reply, request contracts.Request, 
 		return contracts.MigrationReceipt{}, store.ErrPayloadMismatch
 	}
 	var sent contracts.MigrationRequest
-	if err := json.Unmarshal(request.Arguments, &sent); err != nil {
+	if stage == contracts.MigrationTargetStarted {
+		var start contracts.RuntimeStart
+		if err := json.Unmarshal(request.Arguments, &start); err != nil {
+			return contracts.MigrationReceipt{}, err
+		}
+		if err := start.Validate(); err != nil {
+			return contracts.MigrationReceipt{}, err
+		}
+		sent = *start.Recovery
+	} else if err := json.Unmarshal(request.Arguments, &sent); err != nil {
 		return contracts.MigrationReceipt{}, err
 	}
 	if (stage == contracts.MigrationTargetEnvironmentReady && receipt.EnvironmentRef == "") || (stage != contracts.MigrationTargetEnvironmentReady && receipt.EnvironmentRef != sent.EnvironmentRef) || (stage != contracts.MigrationSourceQuiesced && !slices.Equal(receipt.ContextRefs, sent.ContextRefs)) {
@@ -730,7 +752,19 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 	if err != nil {
 		return contracts.MigrationReceipt{}, false, err
 	}
-	body, err := json.Marshal(payload)
+	var wirePayload any = payload
+	if method == contracts.MethodStartTurn {
+		brief, briefErr := w.executionBrief(ctx, tenant, attempt)
+		if briefErr != nil {
+			return contracts.MigrationReceipt{}, false, briefErr
+		}
+		start := contracts.RuntimeStart{Brief: brief, Recovery: &payload}
+		if err := start.Validate(); err != nil {
+			return contracts.MigrationReceipt{}, false, err
+		}
+		wirePayload = start
+	}
+	body, err := json.Marshal(wirePayload)
 	if err != nil {
 		return contracts.MigrationReceipt{}, false, err
 	}
@@ -753,6 +787,25 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 		return contracts.MigrationReceipt{}, false, err
 	}
 	return receipt, true, nil
+}
+
+func (w *Worker) executionBrief(ctx context.Context, tenant ids.TenantID, attemptID ids.AttemptID) (lifecycle.ExecutionBrief, error) {
+	return executionBrief(ctx, w.pool, tenant, attemptID)
+}
+
+func executionBrief(ctx context.Context, q store.Querier, tenant ids.TenantID, attemptID ids.AttemptID) (lifecycle.ExecutionBrief, error) {
+	attempt, err := store.GetAttempt(ctx, q, tenant, attemptID)
+	if err != nil {
+		return lifecycle.ExecutionBrief{}, err
+	}
+	task, err := store.GetTask(ctx, q, tenant, attempt.Task)
+	if err != nil {
+		return lifecycle.ExecutionBrief{}, err
+	}
+	if brief, present := task.Brief(); present {
+		return brief, nil
+	}
+	return store.GetTaskExecutionBrief(ctx, q, task)
 }
 
 func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {
