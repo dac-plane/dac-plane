@@ -383,6 +383,27 @@ func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
 	if legacyObjective != nil || legacyCriteria != nil {
 		t.Fatalf("legacy task acquired fabricated brief: %v, %s", legacyObjective, legacyCriteria)
 	}
+	// Once migration 14 has run, task columns are authoritative. Even a later
+	// matching command record must not turn a genuine legacy task into a
+	// fallback scan or fabricate a brief that the backfill did not observe.
+	f.seed(t, func(u *store.UnitOfWork) error {
+		if _, err := store.InsertCommandRecord(f.ctx, u, store.CommandRecord{
+			Tenant: f.tenant, Principal: f.principal, Command: "submit_task", Nonce: "late-legacy-brief",
+			RequestDigest: identity.DigestOf([]byte("late-legacy-brief")), CreatedAt: f.at.Add(time.Minute),
+		}); err != nil {
+			return err
+		}
+		result, err := json.Marshal(map[string]any{
+			"task": legacy.ID.String(), "objective": "Late objective", "acceptance_criteria": []string{"Late criterion"},
+		})
+		if err != nil {
+			return err
+		}
+		return store.SetCommandResult(f.ctx, u, f.tenant, f.principal, "submit_task", "late-legacy-brief", result)
+	})
+	if _, err := store.GetTaskExecutionBrief(f.ctx, f.pool, f.tenant, legacy.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("schema-14 legacy fallback = %v, want not found without command-history lookup", err)
+	}
 	legacyView, err := application.GetTask(f.ctx, f.pool, f.actor, legacy.ID)
 	if err != nil {
 		t.Fatal(err)

@@ -260,6 +260,19 @@ func (w *Worker) prepareSourceQuiesce(ctx context.Context, tenant ids.TenantID, 
 	if current.SourceAttempt.IsZero() || current.State != lifecycle.MigrationItemQueued {
 		return lifecycle.MigrationItem{}, store.ErrStaleVersion
 	}
+	if _, err := executionBrief(ctx, u, tenant, current.SourceAttempt); errors.Is(err, store.ErrNotFound) {
+		current.State, current.Reason, current.UpdatedAt = lifecycle.MigrationItemUnresolved, "legacy_task_missing_execution_brief", now.UTC()
+		if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {
+			return lifecycle.MigrationItem{}, err
+		}
+		if err := u.Commit(ctx); err != nil {
+			return lifecycle.MigrationItem{}, err
+		}
+		committed = true
+		return lifecycle.MigrationItem{}, store.ErrStaleVersion
+	} else if err != nil {
+		return lifecycle.MigrationItem{}, err
+	}
 	if _, _, err := store.LockResultScope(ctx, u, tenant, current.SourceAttempt); err != nil {
 		return lifecycle.MigrationItem{}, err
 	}
@@ -777,18 +790,22 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 }
 
 func (w *Worker) executionBrief(ctx context.Context, tenant ids.TenantID, attemptID ids.AttemptID) (lifecycle.ExecutionBrief, error) {
-	attempt, err := store.GetAttempt(ctx, w.pool, tenant, attemptID)
+	return executionBrief(ctx, w.pool, tenant, attemptID)
+}
+
+func executionBrief(ctx context.Context, q store.Querier, tenant ids.TenantID, attemptID ids.AttemptID) (lifecycle.ExecutionBrief, error) {
+	attempt, err := store.GetAttempt(ctx, q, tenant, attemptID)
 	if err != nil {
 		return lifecycle.ExecutionBrief{}, err
 	}
-	task, err := store.GetTask(ctx, w.pool, tenant, attempt.Task)
+	task, err := store.GetTask(ctx, q, tenant, attempt.Task)
 	if err != nil {
 		return lifecycle.ExecutionBrief{}, err
 	}
 	if brief, present := task.Brief(); present {
 		return brief, nil
 	}
-	return store.GetTaskExecutionBrief(ctx, w.pool, tenant, task.ID)
+	return store.GetTaskExecutionBrief(ctx, q, tenant, task.ID)
 }
 
 func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {

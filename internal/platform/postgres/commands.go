@@ -12,12 +12,20 @@ import (
 )
 
 // GetTaskExecutionBrief loads the immutable brief recorded by the task's
-// original submission. It is the schema-13 compatibility source and remains a
-// truthful fallback for rows created before migration 14 populated columns.
+// original submission while the database is still at schema 13. From schema
+// 14 onward the backfilled task columns are authoritative: an absent pair is
+// a genuine legacy task and must not cause repeated command-history scans.
 func GetTaskExecutionBrief(ctx context.Context, q Querier, tenant ids.TenantID, task ids.TaskID) (lifecycle.ExecutionBrief, error) {
+	version, err := SchemaVersion(ctx, q)
+	if err != nil {
+		return lifecycle.ExecutionBrief{}, err
+	}
+	if version >= 14 {
+		return lifecycle.ExecutionBrief{}, ErrNotFound
+	}
 	var objective string
 	var criteria []byte
-	err := q.QueryRow(ctx, `
+	err = q.QueryRow(ctx, `
 		select result->>'objective', result->'acceptance_criteria'
 		from command_record
 		where tenant_id=$1 and command='submit_task' and result->>'task'=$2
