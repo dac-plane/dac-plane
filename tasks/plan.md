@@ -1,74 +1,78 @@
-# Issue #83 — Expose migration administration and authority revocation
+# Issue #75 — Qualify the first production providers
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/83
-Branch: `feature/83-migration-administration-api`, from `main` at `ef636c4`.
+Tracker: https://github.com/dac-plane/dac-plane/issues/75
+Branch: `feature/75-provider-qualification-plan`, from `main` at `5ac7fa2`.
 Parent: #65 (M2: Deployable control plane).
+Tasks are tracked as linked GitHub sub-issues rather than duplicated in a local checklist.
 
 ## Direction
 
-Extend Surface API v1 over the existing transport-neutral migration administration and authority
-revocation commands. Handlers remain thin and never access PostgreSQL. This issue adds no domain
-behavior, permission model, database migration, listener or provisioning endpoint.
+Complete M2 by qualifying one production agent runtime, one execution-environment provider and one
+artifact byte store against the existing provider-neutral contracts. Qualification is an evidence
+decision, not a vendor-integration claim: every selected provider must pass its applicable conformance
+and failure suite against a pinned real version. A failed candidate remains unqualified and in shadow
+or off mode.
 
-The historical connection revocation in `architecture-explore` is evidence only and is not the
-authority-grant contract adopted by the current application.
+Publishing, operating and demonstrating dac-plane are intentionally downstream work. They are tracked
+under #94 and cannot weaken or bypass the #75 qualification gate.
 
-## Implementation
+## Task List
 
-1. **Surface contract**
-   - [x] Add schemas for migration creation, empty commands, preview evidence and migration views.
-   - [x] Extend OpenAPI 3.1 with migration create/read/preview/hold/release/execute/cancel and
-     authority-grant revocation.
-   - [x] Keep `Idempotency-Key` on every mutation; require `If-Match` only for migration transitions.
-2. **HTTP layer**
-   - [x] Project `application.MigrationView` as the pass plus optional preview evidence; do not expose
-     the maintenance claim.
-   - [x] Add thin handlers for every route with the established strict JSON, ETag, Problem Details,
-     visibility and replay rules.
-   - [x] Conceal pass-specific administrator denial and unowned authority grants as not found.
-3. **Verification**
-   - [x] Extend schema/Go agreement and bidirectional OpenAPI route conformance tests.
-   - [x] Exercise migration administration through HTTP, including completion, cancellation,
-     concealment, permission revocation and nonce replay.
-   - [x] Exercise standing-authority revocation through HTTP and verify durable revocation evidence.
-   - [x] Run `just test-contracts`, `just test-surface`, `just test-surface-race`, `just ci` and
-     `git diff --check`.
-4. **Delivery**
-   - [x] Commit as `feat(api): expose migration administration and authority revocation`.
-   - [x] Open a focused PR using the repository template with `Closes: #83`.
+### Phase 1: Provider qualification
 
-## API
+1. [#91 — qualify the first production agent runtime](https://github.com/dac-plane/dac-plane/issues/91)
+2. [#92 — qualify the first execution environment provider](https://github.com/dac-plane/dac-plane/issues/92)
+3. [#93 — qualify the first artifact byte store](https://github.com/dac-plane/dac-plane/issues/93)
 
-All paths are under `/v1/tenants/{tenant}`.
+The three roles have independent qualification decisions. Candidate investigation may proceed in
+parallel, but shared adapter-contract changes must be decided before provider-specific implementations
+diverge. Each issue owns its adapter, provider-specific recipe and observed evidence note.
 
-| Route | Application call | Success |
+### Checkpoint: close M2
+
+- Every qualified provider passes the full applicable conformance and failure suite.
+- Exact provider and adapter revisions, commands, durations, failures and limits are recorded.
+- Unsupported capabilities are not advertised; failed providers remain shadow or off.
+- `just ci` passes with no simulator behavior leaking into the release binary.
+- #75 closes only after #91, #92 and #93 are complete; #65 closes only after #75.
+
+### Phase 2: Release and adoption
+
+Successor epic: [#94 — release, operate and demonstrate dac-plane](https://github.com/dac-plane/dac-plane/issues/94)
+
+1. [#95 — publish the first supported dac-plane distribution](https://github.com/dac-plane/dac-plane/issues/95)
+2. [#96 — operate the first supported dac-plane pilot](https://github.com/dac-plane/dac-plane/issues/96)
+3. [#97 — demonstrate the deployment from an external application](https://github.com/dac-plane/dac-plane/issues/97)
+
+The dependency order is #75 → #95 → #96 → #97. The external example belongs in a separate repository
+and consumes only the published Surface API, OpenAPI document and adapter kit. It must not import
+`internal/`, share the product database or rely on simulator-only controls.
+
+## Architecture Decisions
+
+- Keep production adapters out of the dac-plane process; they connect through ControlFrame as
+  required by ADR-0008. Go adapters can use `adapterkit`; adapters in other languages use the same
+  JSON Schemas and conformance suite.
+- Keep provider names and provider-specific fields out of the neutral schemas.
+- Publish immutable, versioned artifacts before any external example depends on dac-plane.
+- Use ADR-0009's Compose substrate for the first pilot; Kubernetes and unmeasured availability claims
+  remain out of scope.
+- Treat the example as an independent consumer and demonstration, not as the canonical first-party
+  workspace or proof of production readiness.
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
 |---|---|---|
-| `POST /migration-passes` | `CreateMigration` | `201`, `Location`, `ETag` |
-| `GET /migration-passes/{migration}` | `GetMigration` | `200`, `ETag` |
-| `POST /migration-passes/{migration}/preview` | `AdministerMigration(preview)` | `200`, `ETag` |
-| `POST /migration-passes/{migration}/hold` | `AdministerMigration(hold)` | `200`, `ETag` |
-| `POST /migration-passes/{migration}/release` | `AdministerMigration(release)` | `200`, `ETag` |
-| `POST /migration-passes/{migration}/execute` | `AdministerMigration(execute)` | `202`, `ETag` |
-| `POST /migration-passes/{migration}/cancel` | `AdministerMigration(cancel)` | `200`, `ETag` |
-| `POST /authority-grants/{grant}/revoke` | `Revoke` | `204` |
+| A candidate documents a capability it cannot uphold under failure | High | Require executed failure and recovery evidence before live qualification. |
+| One vendor couples runtime and environment roles | Medium | Test and record each role independently even if one deployment supplies both. |
+| Release automation publishes incompatible image and kit versions | High | Publish one compatibility statement from an immutable tag and verify from a clean consumer. |
+| The example bypasses public contracts for convenience | High | Separate repository, no internal imports or database access, and an end-to-end public-interface test. |
+| Pilot evidence is overstated as production readiness | Medium | Record exact topology and limits; make no SLO, HA, RPO or RTO claim without measurement. |
 
-Creation takes `from_provider_id` and `to_provider_id`. Other mutations take a strict empty JSON
-object. The migration response contains `migration` and an optional `preview` with
-`from_version`, `to_version` and `previewed_at`.
+## Verification
 
-## Boundaries
-
-No new permissions, role model, provider administration, grant read route, provisioning over HTTP,
-public maintenance claim, provider-transfer claim or architecture decision. Migration execution
-remains asynchronous and evidence-backed by the existing worker.
-
-## Observed verification
-
-- `just test-contracts`: passed.
-- `just test-surface`: passed.
-- `just test-surface-race`: passed.
-- `just ci`: passed, including integration race partitions, adapter conformance, vulnerability scan
-  and workflow lint.
-- Review mutation: inverting administrative-resource concealment made both new HTTP integration
-  scenarios fail with exposed `403` responses; restoring it returned the scenarios to green.
-- `git diff --check`: passed.
+- Confirm #91, #92 and #93 are linked sub-issues of #75.
+- Confirm #95, #96 and #97 are linked sub-issues of #94.
+- Confirm every issue has explicit scope, acceptance criteria, verification and dependency statements.
+- Run `git diff --check` for this planning change.
