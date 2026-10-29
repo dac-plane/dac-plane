@@ -119,6 +119,7 @@ func (a *Adapter) reconstruct() error {
 		if err := a.config.Native.Call(ctx, "thread/resume", map[string]any{"threadId": op.ThreadID, "model": a.config.Model, "modelProvider": a.config.Provider}, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
+				a.setThreadReady(op.ThreadID)
 				continue
 			}
 			return fmt.Errorf("resume Codex thread %s: %w", op.ThreadID, err)
@@ -195,16 +196,28 @@ func (a *Adapter) beginStartup() {
 	a.deferredMu.Unlock()
 }
 
-func (a *Adapter) abortStartup() {
+func (a *Adapter) abortStartup(thread string) {
 	a.deferredMu.Lock()
-	defer a.deferredMu.Unlock()
 	a.pendingStart--
-	if a.pendingStart == 0 {
-		for thread := range a.deferred {
-			if _, err := a.config.Journal.OperationByThread(thread); err != nil {
-				a.deferredCount -= len(a.deferred[thread])
-				delete(a.deferred, thread)
-			}
+	shouldDrain := thread != "" && !a.readyThreads[thread] && !a.flushing[thread]
+	if shouldDrain {
+		a.flushing[thread] = true
+	}
+	a.discardUnknownDeferredLocked()
+	a.deferredMu.Unlock()
+	if shouldDrain {
+		a.drainThread(thread)
+	}
+}
+
+func (a *Adapter) discardUnknownDeferredLocked() {
+	if a.pendingStart != 0 {
+		return
+	}
+	for thread := range a.deferred {
+		if _, err := a.config.Journal.OperationByThread(thread); err != nil {
+			a.deferredCount -= len(a.deferred[thread])
+			delete(a.deferred, thread)
 		}
 	}
 }
@@ -222,14 +235,7 @@ func (a *Adapter) setThreadReady(thread string) {
 	a.deferredMu.Unlock()
 	a.drainThread(thread)
 	a.deferredMu.Lock()
-	if a.pendingStart == 0 {
-		for other := range a.deferred {
-			if _, err := a.config.Journal.OperationByThread(other); err != nil {
-				a.deferredCount -= len(a.deferred[other])
-				delete(a.deferred, other)
-			}
-		}
-	}
+	a.discardUnknownDeferredLocked()
 	a.deferredMu.Unlock()
 }
 
@@ -352,10 +358,11 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		return accepted(r, map[string]string{"session_ref": op.ThreadID, "turn_ref": op.TurnID}), nil
 	}
 	a.beginStartup()
+	mappedThread := ""
 	startupReady := false
 	defer func() {
 		if !startupReady {
-			a.abortStartup()
+			a.abortStartup(mappedThread)
 		}
 	}()
 	var started struct {
@@ -380,6 +387,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if _, err = a.config.Journal.AppendEvent(r.Operation, "runtime:"+started.Thread.ID, "runtime.started", map[string]any{"native_ref": started.Thread.ID}); err != nil {
 		return wire.Reply{}, err
 	}
+	mappedThread = started.Thread.ID
 	prompt := briefPrompt(r.Operation, input.Brief)
 	var turn struct {
 		Turn struct {
@@ -703,6 +711,14 @@ func (a *Adapter) processNotification(m appserver.Message) {
 	if err != nil {
 		return
 	}
+	turnID := binding.Turn.ID
+	if turnID == "" {
+		turnID = binding.TurnID
+	}
+	op, err = a.bindObservedTurn(op, turnID)
+	if err != nil {
+		return
+	}
 	switch m.Method {
 	case "turn/completed":
 		a.turnCompleted(op, binding.Turn.ID, binding.Turn.Status, m.Params)
@@ -780,6 +796,10 @@ func (a *Adapter) processNativeRequest(m appserver.Message) {
 	if err != nil {
 		return
 	}
+	op, err = a.bindObservedTurn(op, p.TurnID)
+	if err != nil {
+		return
+	}
 	action := "process.exec"
 	if m.Method == "item/fileChange/requestApproval" {
 		action = "fs.write"
@@ -793,6 +813,25 @@ func (a *Adapter) processNativeRequest(m appserver.Message) {
 		return
 	}
 	_, _ = a.config.Journal.AppendEvent(op.ID, "attention:"+p.ItemID, "attention.requested", map[string]any{"native_ref": p.ItemID, "kind": "action_approval", "action": action, "action_digest": digest, "scope": map[string]string{"class": "global"}, "expires_at": a.config.Now().Add(15 * time.Minute)})
+}
+
+func (a *Adapter) bindObservedTurn(op journal.Operation, turn string) (journal.Operation, error) {
+	if op.TurnID != "" || turn == "" {
+		return op, nil
+	}
+	if err := a.ensureStartEvents(journal.Operation{ID: op.ID, ThreadID: op.ThreadID, TurnID: turn}); err != nil {
+		return op, err
+	}
+	if err := a.config.Journal.UpdateOperation(op.ID, func(current *journal.Operation) error {
+		current.TurnID = turn
+		current.State = "running"
+		return nil
+	}); err != nil {
+		return op, err
+	}
+	op.TurnID = turn
+	op.State = "running"
+	return op, nil
 }
 
 func canonicalHash(raw []byte) (string, error) {

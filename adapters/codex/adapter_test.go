@@ -38,6 +38,7 @@ type fakeNative struct {
 	notifications       chan appserver.Message
 	requests            chan appserver.Message
 	failThreadStart     bool
+	failTurnStart       bool
 	failResume          bool
 	failReplyOnce       bool
 	completeOnTurnStart bool
@@ -72,6 +73,10 @@ func (f *fakeNative) Call(_ context.Context, method string, params, result any) 
 			<-f.releaseTurnStart
 		}
 		response = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}}
+		if f.failTurnStart {
+			f.requests <- appserver.Message{ID: json.RawMessage(`17`), Method: "item/commandExecution/requestApproval", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"approval-during-start","command":"touch result.txt"}`)}
+			return errors.New("turn/start response lost")
+		}
 		if f.completeOnTurnStart {
 			f.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
 		}
@@ -277,6 +282,41 @@ func TestNativeEventsContinueDrainingWhileTurnStartWaits(t *testing.T) {
 		events, err := f.store.EventsAfter(testOperation, 0)
 		return err == nil && len(events) >= 302
 	})
+}
+
+func TestFailedTurnStartReleasesBufferedApprovalRequest(t *testing.T) {
+	f := setup(t)
+	f.native.failTurnStart = true
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err == nil {
+		t.Fatal("failed turn/start was accepted")
+	}
+	waitFor(t, func() bool {
+		request, err := f.store.NativeRequest("approval-during-start")
+		if err != nil || request.Operation != testOperation {
+			return false
+		}
+		events, err := f.store.EventsAfter(testOperation, 0)
+		if err != nil {
+			return false
+		}
+		for _, event := range events {
+			if event.Kind == "attention.requested" {
+				return true
+			}
+		}
+		return false
+	})
+	events, err := f.store.EventsAfter(testOperation, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := map[string]int{}
+	for i, event := range events {
+		positions[event.Kind] = i
+	}
+	if !(positions["runtime.started"] < positions["turn.started"] && positions["turn.started"] < positions["attention.requested"]) {
+		t.Fatalf("recovered startup event order: %+v", events)
+	}
 }
 
 func TestLostThreadStartDoesNotCreateSecondNativeTurn(t *testing.T) {
