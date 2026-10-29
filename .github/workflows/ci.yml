@@ -69,7 +69,7 @@ jobs:
         run: just test-race
 
   adapter:
-    name: Codex adapter and protocol conformance
+    name: Provider adapters and protocol conformance
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -83,6 +83,9 @@ jobs:
 
       - name: Run deterministic Codex adapter tests
         run: just test-codex-adapter
+
+      - name: Run deterministic E2B adapter tests
+        run: just test-e2b-adapter
 
       - name: Run adapter protocol conformance
         run: just test-conformance

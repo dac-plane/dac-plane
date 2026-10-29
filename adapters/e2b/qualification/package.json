@@ -1,0 +1,12 @@
+{
+  "name": "dac-e2b-qualification-tools",
+  "private": true,
+  "description": "Pinned E2B CLI used only by the live Embed qualification",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@e2b/cli": "2.23.0",
+    "e2b": "2.61.0"
+  }
+}
