@@ -133,8 +133,8 @@ test-e2b-adapter:
     cd {{ e2b_adapter_dir }} && go test -race ./...
     cd {{ e2b_adapter_dir }} && go test -tags=e2bqualification -run '^$' ./...
 
-# Run the real E2B Embed qualification on an isolated disposable Linux/KVM host.
-[doc('Qualify pinned E2B Embed (needs private Linux/KVM host and Docker Compose)')]
+# Run the real E2B Cloud qualification with a bounded, secret-backed sandbox probe.
+[doc('Qualify managed E2B Cloud (requires APIKEY_E2B and incurs sandbox usage)')]
 [group('test')]
 qualify-e2b-environment:
     ./adapters/e2b/qualification/run.sh

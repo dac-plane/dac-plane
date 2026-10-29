@@ -1,7 +1,7 @@
 {
   "name": "dac-e2b-qualification-tools",
   "private": true,
-  "description": "Pinned E2B CLI used only by the live Embed qualification",
+  "description": "Pinned E2B CLI used only by the live Cloud qualification",
   "engines": {
     "node": ">=22.19.0"
   },

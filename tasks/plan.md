@@ -1,26 +1,34 @@
-# Issue #92 — Qualify E2B Embed as the first execution-environment provider
+# Issue #92 — Qualify E2B Cloud as the first execution-environment provider
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/92
 Branch: `feature/92-e2b-environment-qualification`, from merged #103.
 Parent: #75. Depends on #72 and #73. #102 owns task environment assignment and cancellation orchestration.
 
-## Provider pin and qualification boundary
+## Provider decision and qualification boundary
 
-The plan named E2B Runtime Embed release `2026.30` at `f32ee8a2a50052f32e3632ceb451111a98dd5104`, but that commit does not contain `embed/`. Use the exact Embed package source revision `7a69f45621f864495695e698dc5a2b93a56d2d52`; its Compose `.env` pins the runtime source used to build its service images at `7278c2a380767c9989da73cf4c04b1af1b32da18`. Record both revisions and every resulting OCI digest. This is a commit-pinned Embed package, not a claim that release `2026.30` contains Embed.
+Use E2B Cloud's managed sandbox API. E2B provisions and operates the Firecracker hosts; DAC needs no customer-owned Linux/KVM machine, Render service, or self-hosted OpenSandbox cluster. The E2B key is supplied through the existing local `APIKEY_E2B` environment entry and GitHub Actions secret of the same name. Never print or persist the key in the repository, tests, evidence, logs, or artifacts.
 
-Use E2B Embed on an isolated disposable Linux/KVM host. Its Compose deployment uses host networking and the unauthenticated orchestrator API on port 5008; all host ports except the explicitly required trusted API path must be firewalled, with 5008 and the egress proxy ports unreachable externally. This qualifies one host only.
+Use the documented E2B control API v2 (`https://api.e2b.app`) and its stable metadata lookup for create reconciliation. Pin and record the adapter commit and E2B CLI/SDK versions used by the qualification. E2B does not expose a customer-selectable build revision for E2B Cloud; record the qualification date, API surface, returned service metadata, and that provider server revision is managed and not pinnable. The open-source Embed source/runtime commits are not part of this qualification.
 
-The E2B sandbox-create idempotency feature is disabled by default in the pinned offline Embed setup. Persist DAC operation identity in sandbox metadata, reconcile by querying that identity before any retry, and do not advertise `operation.replay` unless provider-side idempotency and crash-window tests prove the guarantee. Unknown or ambiguous outcomes remain errors; never issue an unverified second create.
+The adapter remains out-of-process and imports `adapterkit` only. Keep E2B-specific API fields inside `adapters/e2b`; do not change DAC's public contracts. E2B Cloud execution is billable after any account credits, so create only two short-lived default sandboxes, use the account's configured budget/usage guard, and always clean them up. Do not switch the provider to live based only on deterministic tests.
 
 ## Implementation
 
-1. Add independent `adapters/e2b` Go module and executable using `adapterkit` only. Keep provider protocol parsing local to the adapter; do not import `internal/` or change public contracts.
-2. Implement the existing environment methods: provision an E2B sandbox for the fenced migration target-environment stage, stop the bound sandbox for source/target cleanup, and observe a sandbox by provider resource reference. Persist operation fingerprints, sandbox mappings, state, and monotonic observation sequence in bbolt.
-3. Add deterministic fake-HTTP tests for strict provider responses, operation replay, create lost-reply reconciliation, ambiguous outcomes, adapter restart, stale/duplicate observations, cancellation response, and credential redaction. Do not advertise replay absent a tested provider guarantee.
-4. Add a pinned Embed qualification runner that fetches `7a69f45621f864495695e698dc5a2b93a56d2d52`, validates Linux/KVM and Docker Compose prerequisites, records OCI image digests, and documents private-host firewall requirements. Keep generated keys, data, and logs under `.work/`.
-5. Exercise two isolated sandboxes, filesystem/process separation, configured egress, stop/observe, adapter restart/reconciliation, and cleanup on the real host. Record exact commands, revisions, image digests, versions, durations, failures, resource cleanup, and provider disposition in an evidence note. If Linux/KVM is unavailable, leave this gate explicitly unverified and the provider off/shadow.
-6. Run focused adapter/conformance checks during development, then `just ci-fast`, provider qualification when a suitable host exists, `just ci`, and `git diff --check` for final acceptance.
+1. Keep `adapters/e2b` as an independent Go module with an executable, durable bbolt operation/resource mapping, monotonic observations, and existing provision/stop/observe methods. Correct API request and response mapping against E2B Cloud's official v2 API; persist operation identity in sandbox metadata and reconcile an uncertain create before any retry. Do not advertise `operation.replay` without a provider-side guarantee.
+2. Make cancellation durable even if it arrives before provision begins. Report provider 404 observations as the contract's `absent` state. Add regression coverage for both behaviors.
+3. Replace the Embed Compose/KVM qualification runner with a Cloud qualification runner that reads `APIKEY_E2B` from the process environment, writes it only to a mode-0600 temporary file when a CLI needs a file, and removes it on exit. Use the production Cloud API origin, the pinned CLI/SDK lockfile, two isolated sandboxes, positive filesystem/process checks, a verified denied-egress probe, stop/observe, journal close/reopen recovery, and deletion/cleanup verification. Do not print command environments or secrets.
+4. Add a manually triggered GitHub Actions qualification job that receives the existing `APIKEY_E2B` secret, runs the same repository recipe on a standard Ubuntu runner, uploads only sanitized evidence, and reports a failing result if cleanup or required probes fail. It does not need KVM, Docker, an E2B Embed source checkout, or privileged runner access.
+5. Rewrite `adapters/e2b/README.md` and `evidence.md` for the managed service. Separate deterministic results from observed live Cloud results; record date, API surface, package versions, adapter commit, sandbox references in redacted form, elapsed times, isolation/egress outcomes, cleanup, failures, cost/credit boundary, and explicit limits. Keep disposition off/unqualified until every required live scenario passes.
+6. Correct the unrelated invalid-cursor fixture in `internal/httpapi/api_test.go` that made the existing PR integration job fail: use a stream tag with an actually invalid shape, preserving parser behavior.
+
+## Verification
+
+- Run `just test-e2b-adapter` and the focused `internal/httpapi` test that previously failed.
+- Run the tagged qualification compile and `just ci-fast`, then `git diff --check`.
+- Run the live recipe with the configured E2B key, capture its exit code and redacted logs, and verify all created sandboxes are deleted even after failure.
+- Run the manual GitHub workflow with the repository secret and same qualification recipe. Do not claim the real provider acceptance criterion until its observed result passes.
+- Recheck PR #104's review threads, CI, and description; report the actual current state. #92 remains open until the real provider evidence is complete.
 
 ## Limits
 
-This issue qualifies only the pinned single-host E2B Embed deployment. It does not qualify E2B Cloud/BYOC, multi-host scaling, high availability, ordinary task-to-environment assignment, or task cancellation orchestration (#102). No production availability, throughput, RPO, or RTO claim follows.
+This qualifies the E2B Cloud API and account configuration observed during the run, not a pinnable E2B server build, E2B BYOC/Embed, multi-region availability, task assignment/cancellation integration (#102), provider-wide availability, throughput, or cost guarantees. The deterministic fake-provider suite does not replace live evidence.

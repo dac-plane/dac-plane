@@ -20,6 +20,7 @@ var ErrPayloadMismatch = errors.New("operation payload changed")
 var operations = []byte("operations")
 var eventBucket = []byte("events")
 var sequences = []byte("observation_sequences")
+var cancellations = []byte("pre_start_cancellations")
 
 type Operation struct {
 	ID, Hash, Tenant, Attempt, Method, ResourceRef, State string
@@ -52,12 +53,31 @@ func Open(path string) (*Store, error) {
 			return err
 		}
 		_, err := tx.CreateBucketIfNotExists(sequences)
+		if err != nil {
+			return err
+		}
+		_, err = tx.CreateBucketIfNotExists(cancellations)
 		return err
 	}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func (s *Store) CancelBeforeStart(operation string) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		return tx.Bucket(cancellations).Put([]byte(operation), []byte{1})
+	})
+}
+
+func (s *Store) WasCancelledBeforeStart(operation string) (bool, error) {
+	var cancelled bool
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		cancelled = tx.Bucket(cancellations).Get([]byte(operation)) != nil
+		return nil
+	})
+	return cancelled, err
 }
 
 func (s *Store) RecordObservation(operation, resource string, payload func(uint64) (json.RawMessage, error)) (json.RawMessage, uint64, error) {

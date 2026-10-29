@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -56,10 +57,12 @@ type migrationRequest struct {
 }
 
 type sandbox struct {
-	SandboxID string            `json:"sandboxID"`
-	Template  string            `json:"templateID"`
-	State     string            `json:"state"`
-	Metadata  map[string]string `json:"metadata"`
+	SandboxID   string            `json:"sandboxID"`
+	SandboxId   string            `json:"sandboxId,omitempty"`
+	Template    string            `json:"templateID"`
+	State       string            `json:"state"`
+	EnvdVersion string            `json:"envdVersion"`
+	Metadata    map[string]string `json:"metadata"`
 }
 
 type migrationReceipt struct {
@@ -124,6 +127,9 @@ func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
 	defer a.mu.Unlock()
 	op, err := a.cfg.Journal.Operation(cancel.Operation)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return a.cfg.Journal.CancelBeforeStart(cancel.Operation)
+		}
 		return err
 	}
 	if op.Method != "provision" {
@@ -167,6 +173,13 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	cancelled, err := a.cfg.Journal.WasCancelledBeforeStart(req.Operation)
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	if cancelled {
+		return rejected(req, wire.FailureCancelled, "provision was cancelled before it started"), nil
+	}
 	hash := digest(req.Arguments)
 	op, created, err := a.cfg.Journal.Begin(journal.Operation{ID: req.Operation, Hash: hash, Tenant: req.Tenant, Attempt: req.Attempt, Method: req.Method})
 	if err != nil {
@@ -203,11 +216,21 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 	body := map[string]any{"templateID": a.cfg.TemplateID, "allow_internet_access": allowInternet, "metadata": map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt}}
 	var createdSandbox sandbox
 	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &createdSandbox); err != nil {
+		var status apiError
+		if errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusRequestTimeout && status.status != http.StatusConflict && status.status != http.StatusTooManyRequests {
+			if resetErr := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
+				return wire.Reply{}, resetErr
+			}
+			return wire.Reply{}, fmt.Errorf("E2B rejected sandbox create: %w", err)
+		}
 		found, lookupErr := a.findOperation(ctx, req.Operation)
 		if lookupErr == nil && found != nil {
 			return a.finishProvision(req, m, *found)
 		}
 		return wire.Reply{}, fmt.Errorf("E2B create reply is uncertain: %w", err)
+	}
+	if createdSandbox.SandboxID == "" {
+		createdSandbox.SandboxID = createdSandbox.SandboxId
 	}
 	if createdSandbox.SandboxID == "" {
 		return wire.Reply{}, errors.New("E2B create response omitted sandbox identity")
@@ -312,7 +335,7 @@ func (a *Adapter) observe(ctx context.Context, req wire.Request) (wire.Reply, er
 		if !errors.As(err, &status) || status.status != http.StatusNotFound {
 			return wire.Reply{}, err
 		}
-		state = "stopped"
+		state = "absent"
 	} else {
 		switch strings.ToLower(sbx.State) {
 		case "running":

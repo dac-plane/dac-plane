@@ -21,6 +21,7 @@ type fakeE2B struct {
 	deleted              int
 	sandboxes            map[string]sandbox
 	dropFirstCreateReply bool
+	rejectCreateStatus   int
 	hideList             bool
 	malformedList        bool
 }
@@ -34,6 +35,12 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/v2/sandboxes":
+		if f.rejectCreateStatus != 0 {
+			status := f.rejectCreateStatus
+			f.rejectCreateStatus = 0
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
 		var input struct {
 			Template string            `json:"templateID"`
 			Allow    *bool             `json:"allow_internet_access"`
@@ -60,7 +67,7 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(sbx)
+		_ = json.NewEncoder(w).Encode(map[string]string{"sandboxId": sbx.SandboxID, "templateID": sbx.Template, "state": sbx.State})
 	case r.Method == http.MethodGet && r.URL.Path == "/v2/sandboxes":
 		if f.malformedList {
 			w.Header().Set("Content-Type", "application/json")
@@ -167,6 +174,24 @@ func TestLostCreateReplyReconcilesBeforeRedelivery(t *testing.T) {
 	}
 	if fake.created != 1 {
 		t.Fatalf("duplicate sandbox create count %d", fake.created)
+	}
+}
+
+func TestDefinitiveCreateRejectionCanRetry(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, rejectCreateStatus: http.StatusUnauthorized}
+	adapter, store := newTestAdapter(t, fake)
+	request := provisionRequest("retry-rejected-create", "delivery-1")
+	if _, err := adapter.Send(context.Background(), request); err == nil {
+		t.Fatal("expected explicit provider rejection")
+	}
+	operation, err := store.Operation(request.Operation)
+	if err != nil || operation.State != "prepared" {
+		t.Fatalf("operation after explicit rejection=%+v err=%v", operation, err)
+	}
+	request.Delivery = "delivery-2"
+	reply, err := adapter.Send(context.Background(), request)
+	if err != nil || reply.Outcome != wire.OutcomeOK || fake.created != 1 {
+		t.Fatalf("retry reply outcome=%q err=%v creates=%d", reply.Outcome, err, fake.created)
 	}
 }
 
@@ -287,7 +312,7 @@ func TestCancelProvisionDeletesOnlyRecordedSandboxAndReplays(t *testing.T) {
 	}
 }
 
-func TestObserveReportsDeletedSandboxAsStopped(t *testing.T) {
+func TestObserveReportsDeletedSandboxAsAbsent(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{"sbx-1": {SandboxID: "sbx-1", State: "running"}}}
 	adapter, _ := newTestAdapter(t, fake)
 	args, _ := json.Marshal(migrationRequest{Migration: "migration-1", Operation: "stop-after-observe", Source: "attempt-source", Stage: "source_cleaned", Epoch: 1, EnvRef: "sandbox:sbx-1"})
@@ -300,8 +325,24 @@ func TestObserveReportsDeletedSandboxAsStopped(t *testing.T) {
 		t.Fatalf("observe reply=%+v err=%v", observed, err)
 	}
 	var state observation
-	if err := json.Unmarshal(observed.Result, &state); err != nil || state.State != "stopped" {
+	if err := json.Unmarshal(observed.Result, &state); err != nil || state.State != "absent" {
 		t.Fatalf("state=%+v err=%v", state, err)
+	}
+}
+
+func TestCancelBeforeProvisionPreventsSandboxCreation(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}}
+	adapter, _ := newTestAdapter(t, fake)
+	request := provisionRequest("cancel-before-start", "delivery-1")
+	if err := adapter.Cancel(context.Background(), wire.Cancel{Operation: request.Operation, Delivery: "cancel-1"}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := adapter.Send(context.Background(), request)
+	if err != nil || reply.Outcome != wire.OutcomeFailed || reply.Failure == nil || reply.Failure.Code != wire.FailureCancelled {
+		t.Fatalf("provision reply=%+v err=%v", reply, err)
+	}
+	if fake.created != 0 {
+		t.Fatalf("pre-cancelled operation created %d sandboxes", fake.created)
 	}
 }
 
