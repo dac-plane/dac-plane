@@ -112,7 +112,28 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: providerID, Role: wire.RoleRuntime, Handler: handler, TLS: tlsConfig, Logger: logger})
+	nativeFailure := make(chan error, 1)
+	go func() {
+		select {
+		case <-native.Done():
+			if ctx.Err() == nil {
+				err := native.Err()
+				if err == nil {
+					err = errors.New("Codex app-server exited")
+				}
+				nativeFailure <- err
+				cancel()
+			}
+		case <-ctx.Done():
+		}
+	}()
+	runErr := adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: providerID, Role: wire.RoleRuntime, Handler: handler, TLS: tlsConfig, Logger: logger})
+	select {
+	case nativeErr := <-nativeFailure:
+		return fmt.Errorf("Codex app-server exited: %w", nativeErr)
+	default:
+		return runErr
+	}
 }
 
 func tokenSource(tlsConfig *tls.Config) (adapterkit.TokenSource, error) {

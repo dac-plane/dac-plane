@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,14 +32,15 @@ type nativeCall struct {
 	params json.RawMessage
 }
 type fakeNative struct {
-	mu              sync.Mutex
-	calls           []nativeCall
-	replies         []json.RawMessage
-	notifications   chan appserver.Message
-	requests        chan appserver.Message
-	failThreadStart bool
-	failResume      bool
-	failReplyOnce   bool
+	mu                  sync.Mutex
+	calls               []nativeCall
+	replies             []json.RawMessage
+	notifications       chan appserver.Message
+	requests            chan appserver.Message
+	failThreadStart     bool
+	failResume          bool
+	failReplyOnce       bool
+	completeOnTurnStart bool
 }
 
 func newFakeNative() *fakeNative {
@@ -63,6 +65,9 @@ func (f *fakeNative) Call(_ context.Context, method string, params, result any) 
 		response = map[string]any{"thread": map[string]any{"id": "thread-1"}}
 	case "turn/start":
 		response = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}}
+		if f.completeOnTurnStart {
+			f.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
+		}
 	case "thread/resume":
 		response = map[string]any{"thread": map[string]any{"id": "thread-1", "turns": []any{map[string]any{"id": "turn-1", "status": "inProgress"}}}}
 	case "thread/read":
@@ -166,6 +171,64 @@ func TestStartCarriesBriefAndReplaysMapping(t *testing.T) {
 	rejected, err := f.adapter.Send(context.Background(), changed)
 	if err != nil || rejected.Durability != wire.DurabilityRejected || rejected.Failure.Code != wire.FailureStalePrecondition {
 		t.Fatalf("changed=%+v err=%v", rejected, err)
+	}
+}
+
+func TestStreamWakesForAnAppendedEvent(t *testing.T) {
+	f := setup(t)
+	if _, _, err := f.store.Begin(journal.Operation{ID: testOperation, Tenant: testTenant, Attempt: testAttempt, ArgumentsHash: journal.Hash([]byte("stream"))}); err != nil {
+		t.Fatal(err)
+	}
+	s := &stream{store: f.store, operation: testOperation}
+	result := make(chan error, 1)
+	go func() {
+		frame, err := s.Next(context.Background())
+		if err == nil && (frame.Kind != wire.StreamRows || frame.Rows == nil || len(frame.Rows.Entries) != 1) {
+			err = errors.New("stream did not return the appended event")
+		}
+		result <- err
+	}()
+	if _, err := f.store.AppendEvent(testOperation, "stream-event", "progress", map[string]string{"state": "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not wake after an event was appended")
+	}
+}
+
+func TestCompletionDuringTurnStartFollowsDurableStartEvents(t *testing.T) {
+	f := setup(t)
+	f.native.completeOnTurnStart = true
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		events, err := f.store.EventsAfter(testOperation, 0)
+		if err != nil {
+			return false
+		}
+		for _, event := range events {
+			if event.Kind == "turn.finished" {
+				return true
+			}
+		}
+		return false
+	})
+	events, err := f.store.EventsAfter(testOperation, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := map[string]int{}
+	for i, event := range events {
+		positions[event.Kind] = i
+	}
+	if !(positions["runtime.started"] < positions["turn.started"] && positions["turn.started"] < positions["turn.finished"]) {
+		t.Fatalf("startup/completion order: %+v", events)
 	}
 }
 
@@ -330,6 +393,27 @@ func TestApprovalDecisionAndCancellation(t *testing.T) {
 	}
 }
 
+func TestExpiredApprovalIsNotDeliveredToCodex(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.requests <- appserver.Message{ID: json.RawMessage(`17`), Method: "item/commandExecution/requestApproval", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"approval-expired","command":"touch result.txt"}`)}
+	waitFor(t, func() bool { _, err := f.store.NativeRequest("approval-expired"); return err == nil })
+	decision := `{"decision_id":"01a18301-0000-7000-8000-000000000030","attempt":"` + testAttempt + `","native_ref":"approval-expired","kind":"approve_once","expires_at":"2026-10-28T14:59:59Z"}`
+	request := startRequest(decision)
+	request.Method = "steer_turn"
+	reply, err := f.adapter.Send(context.Background(), request)
+	if err != nil || reply.Durability != wire.DurabilityRejected || reply.Failure.Code != wire.FailureStalePrecondition {
+		t.Fatalf("expired decision=%+v err=%v", reply, err)
+	}
+	f.native.mu.Lock()
+	defer f.native.mu.Unlock()
+	if len(f.native.replies) != 0 {
+		t.Fatalf("expired decision delivered to native app-server: %s", f.native.replies)
+	}
+}
+
 func TestPreparedDecisionIsRetriedBeforeAcceptance(t *testing.T) {
 	f := setup(t)
 	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
@@ -379,7 +463,7 @@ func TestRestartRequiresNativeApprovalRequestToBeReissued(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := newFakeNative()
-	adapter, err := New(Config{Native: native, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022"})
+	adapter, err := New(Config{Native: native, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022", Now: func() time.Time { return time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,6 +546,62 @@ func TestUnknownNativeTurnStatusCannotBecomeCompleted(t *testing.T) {
 		for _, event := range events {
 			if event.Kind == "turn.finished" {
 				return strings.Contains(string(event.Payload), `"outcome":"failed"`)
+			}
+		}
+		return false
+	})
+}
+
+func TestCompletedTurnWithoutExportableChangesReportsFailure(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
+	waitForProtocolResultFailure(t, f)
+}
+
+func TestCompletedTurnWithOnlyDeletedFilesReportsFailure(t *testing.T) {
+	f := setup(t)
+	deleted := filepath.Join(f.workspace, "delete-me.txt")
+	if err := os.WriteFile(deleted, []byte("baseline"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(deleted); err != nil {
+		t.Fatal(err)
+	}
+	f.native.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
+	waitForProtocolResultFailure(t, f)
+}
+
+func TestCompletedTurnWithMoreThan32ChangedFilesReportsFailure(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 33; i++ {
+		path := filepath.Join(f.workspace, fmt.Sprintf("change-%02d.txt", i))
+		if err := os.WriteFile(path, []byte("changed"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.native.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
+	waitForProtocolResultFailure(t, f)
+}
+
+func waitForProtocolResultFailure(t *testing.T, f *fixture) {
+	t.Helper()
+	waitFor(t, func() bool {
+		events, err := f.store.EventsAfter(testOperation, 0)
+		if err != nil {
+			return false
+		}
+		for _, event := range events {
+			if event.Kind == "turn.finished" {
+				return strings.Contains(string(event.Payload), `"outcome":"failed"`) && strings.Contains(string(event.Payload), "protocol_violation")
 			}
 		}
 		return false

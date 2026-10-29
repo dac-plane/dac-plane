@@ -46,10 +46,11 @@ type Config struct {
 }
 
 type Adapter struct {
-	config   Config
-	stop     chan struct{}
-	session  string
-	nativeMu sync.Mutex
+	config    Config
+	stop      chan struct{}
+	session   string
+	nativeMu  sync.Mutex
+	startupMu sync.Mutex
 }
 
 func New(config Config) (*Adapter, error) {
@@ -143,7 +144,7 @@ func (a *Adapter) Send(ctx context.Context, request wire.Request) (wire.Reply, e
 	case "start_turn":
 		return a.start(ctx, request)
 	case "steer_turn":
-		return a.steer(request)
+		return a.steer(ctx, request)
 	case "interrupt":
 		return a.interrupt(ctx, request)
 	case "export_artifacts":
@@ -212,6 +213,10 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		}
 		return accepted(r, map[string]string{"session_ref": op.ThreadID, "turn_ref": op.TurnID}), nil
 	}
+	// Keep native notifications behind the durable mapping and start events.
+	// A fast turn can complete before turn/start returns its RPC response.
+	a.startupMu.Lock()
+	defer a.startupMu.Unlock()
 	var started struct {
 		Thread struct {
 			ID string `json:"id"`
@@ -291,11 +296,14 @@ type decision struct {
 	ExpiresAt    time.Time       `json:"expires_at"`
 }
 
-func (a *Adapter) steer(r wire.Request) (wire.Reply, error) {
+func (a *Adapter) steer(ctx context.Context, r wire.Request) (wire.Reply, error) {
 	a.nativeMu.Lock()
 	defer a.nativeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return rejected(r, wire.FailureStalePrecondition, "decision request expired"), nil
+	}
 	var d decision
-	if err := decodeStrict(r.Arguments, &d); err != nil || d.DecisionID == "" || d.NativeRef == "" {
+	if err := decodeStrict(r.Arguments, &d); err != nil || d.DecisionID == "" || d.NativeRef == "" || d.ExpiresAt.IsZero() {
 		a.logDecisionFailure("invalid_arguments", nil)
 		return rejected(r, wire.FailureInvalidArguments, "invalid decision"), nil
 	}
@@ -338,11 +346,19 @@ func (a *Adapter) steer(r wire.Request) (wire.Reply, error) {
 	} else if !errors.Is(decisionErr, os.ErrNotExist) {
 		return wire.Reply{}, decisionErr
 	}
+	if !d.ExpiresAt.IsZero() && !a.config.Now().Before(d.ExpiresAt) {
+		a.logDecisionFailure("decision_expired", nil)
+		return rejected(r, wire.FailureStalePrecondition, "decision request expired"), nil
+	}
 	if decisionErr != nil {
 		record := journal.Decision{ID: d.DecisionID, NativeRef: d.NativeRef, Kind: d.Kind, State: "prepared", RequestID: native.RequestID}
 		if err = a.config.Journal.PutDecision(record); err != nil {
 			return wire.Reply{}, err
 		}
+	}
+	if err := ctx.Err(); err != nil || (!d.ExpiresAt.IsZero() && !a.config.Now().Before(d.ExpiresAt)) {
+		a.logDecisionFailure("decision_expired", nil)
+		return rejected(r, wire.FailureStalePrecondition, "decision request expired"), nil
 	}
 	choice := "decline"
 	if d.Kind == "approve_once" {
@@ -499,6 +515,8 @@ func (a *Adapter) consume() {
 	}
 }
 func (a *Adapter) notification(m appserver.Message) {
+	a.startupMu.Lock()
+	defer a.startupMu.Unlock()
 	var binding struct {
 		ThreadID, TurnID string `json:"-"`
 		Turn             struct {
@@ -548,20 +566,30 @@ func (a *Adapter) turnCompleted(op journal.Operation, turnID, status string, raw
 	case "interrupted":
 		outcome = "interrupted"
 	}
+	var resultErr error
+	if outcome == "completed" {
+		resultErr = a.propose(op, turnID)
+		if resultErr != nil {
+			outcome = "failed"
+		}
+	}
 	payload := map[string]any{"session_ref": op.ThreadID, "turn_ref": turnID, "outcome": outcome, "ended_at": a.config.Now()}
 	if outcome == "failed" {
-		payload["failure"] = map[string]any{"code": "provider_error", "summary": "Codex turn failed", "details_digest": journal.Hash(raw)}
+		code, summary, details := "provider_error", "Codex turn failed", raw
+		if resultErr != nil {
+			code, summary, details = "protocol_violation", "Codex result could not be represented", []byte(resultErr.Error())
+		}
+		payload["failure"] = map[string]any{"code": code, "summary": summary, "details_digest": journal.Hash(details)}
 	}
 	_, _ = a.config.Journal.AppendEvent(op.ID, "turn-finished:"+turnID, "turn.finished", payload)
 	if outcome == "interrupted" {
 		_, _ = a.config.Journal.AppendEvent(op.ID, "runtime-stopped:"+turnID, "runtime.stopped", map[string]any{"had_active_run": true})
 	}
-	if outcome == "completed" {
-		a.propose(op, turnID)
-	}
 	_ = a.config.Journal.UpdateOperation(op.ID, func(current *journal.Operation) error { current.State = outcome; return nil })
 }
 func (a *Adapter) nativeRequest(m appserver.Message) {
+	a.startupMu.Lock()
+	defer a.startupMu.Unlock()
 	a.nativeMu.Lock()
 	defer a.nativeMu.Unlock()
 	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {
@@ -612,10 +640,10 @@ func canonicalHash(raw []byte) (string, error) {
 	return journal.Hash(canonical), nil
 }
 
-func (a *Adapter) propose(op journal.Operation, turn string) {
+func (a *Adapter) propose(op journal.Operation, turn string) error {
 	current, err := snapshot(a.config.Workspace)
 	if err != nil {
-		return
+		return fmt.Errorf("snapshot result workspace: %w", err)
 	}
 	paths := make([]string, 0)
 	for path, digest := range current {
@@ -623,9 +651,17 @@ func (a *Adapter) propose(op journal.Operation, turn string) {
 			paths = append(paths, path)
 		}
 	}
+	for path := range op.Baseline {
+		if _, exists := current[path]; !exists {
+			paths = append(paths, path)
+		}
+	}
 	sort.Strings(paths)
-	if len(paths) == 0 || len(paths) > 32 {
-		return
+	if len(paths) == 0 {
+		return errors.New("completed turn produced no artifact changes")
+	}
+	if len(paths) > 32 {
+		return fmt.Errorf("completed turn changed %d files; result contract permits at most 32 artifacts", len(paths))
 	}
 	declarations := make([]map[string]any, 0, len(paths))
 	for _, relative := range paths {
@@ -646,8 +682,10 @@ func (a *Adapter) propose(op journal.Operation, turn string) {
 		declarations = append(declarations, map[string]any{"native_ref": relative, "kind": "code_change", "digest": digest, "size": info.Size(), "media_type": artifact.MediaType})
 	}
 	if len(declarations) > 0 {
-		_, _ = a.config.Journal.AppendEvent(op.ID, "result:"+turn, "result.proposed", map[string]any{"session_ref": op.ThreadID, "turn_ref": turn, "source_revision": "codex-turn:" + turn, "artifacts": declarations})
+		_, err = a.config.Journal.AppendEvent(op.ID, "result:"+turn, "result.proposed", map[string]any{"session_ref": op.ThreadID, "turn_ref": turn, "source_revision": "codex-turn:" + turn, "artifacts": declarations})
+		return err
 	}
+	return errors.New("completed turn produced no exportable artifact files")
 }
 
 type stream struct {
@@ -672,6 +710,7 @@ func (s *stream) Next(ctx context.Context) (wire.StreamFrame, error) {
 		return wire.StreamFrame{Kind: wire.StreamCursorTooOld, ServerTime: time.Now().UTC()}, nil
 	}
 	for {
+		changed := s.store.Changed()
 		entries, err := s.store.EventsAfter(s.operation, s.after)
 		if err != nil {
 			return wire.StreamFrame{}, err
@@ -680,7 +719,6 @@ func (s *stream) Next(ctx context.Context) (wire.StreamFrame, error) {
 			s.after = entries[len(entries)-1].UpdatedSequence
 			return wire.StreamFrame{Kind: wire.StreamRows, ServerTime: time.Now().UTC(), Rows: &wire.Rows{Entries: entries}}, nil
 		}
-		changed := s.store.Changed()
 		select {
 		case <-ctx.Done():
 			return wire.StreamFrame{}, ctx.Err()

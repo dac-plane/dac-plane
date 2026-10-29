@@ -300,6 +300,12 @@ func (c *Client) Reply(id json.RawMessage, result any) error {
 }
 func (c *Client) NotificationMessages() <-chan Message { return c.Notifications }
 func (c *Client) RequestMessages() <-chan Message      { return c.Requests }
+func (c *Client) Done() <-chan struct{}                { return c.done }
+func (c *Client) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
 func (c *Client) Close() error {
 	_ = c.stdin.Close()
 	if c.cmd.Process != nil {

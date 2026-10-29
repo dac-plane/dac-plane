@@ -126,6 +126,7 @@ test-codex-adapter:
 [group('test')]
 qualify-codex-runtime: stack-certs
     #!/usr/bin/env bash
+    set -euo pipefail
     if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
     mkdir -p .work/codex-qualification
     compose=(docker compose -p dac-codex-qualification --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml --profile dev --profile qualification)

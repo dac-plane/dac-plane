@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -38,6 +39,9 @@ func TestReaderRoutesResponsesRequestsAndNotifications(t *testing.T) {
 		t.Fatal("request was not routed")
 	}
 	<-client.done
+	if client.Err() != io.EOF {
+		t.Fatalf("native exit error=%v, want EOF", client.Err())
+	}
 }
 
 func TestMalformedNativeMessageFailsPendingCalls(t *testing.T) {
