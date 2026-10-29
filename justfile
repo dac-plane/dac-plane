@@ -7,6 +7,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 go_dirs := "cmd internal"
 adapterkit_dirs := "adapterkit"
+codex_adapter_dir := "adapters/codex"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
@@ -26,17 +27,19 @@ default:
 
 # Run every check CI runs, in CI's order
 [group('ci')]
-ci: fmt-check mod-check deps-check vet vet-integration test test-race test-adapterkit test-integration-other-race test-security-race test-conformance vuln lint-workflows
+ci: fmt-check mod-check deps-check vet vet-integration test test-race test-adapterkit test-codex-adapter test-integration-other-race test-security-race test-conformance vuln lint-workflows
 
 # Rewrite Go files into gofmt style
 [group('dev')]
 fmt:
     gofmt -w {{ go_dirs }}
+    cd {{ codex_adapter_dir }} && gofmt -w .
 
 # Fail if any Go file or this justfile is not formatted, listing the files
 [group('check')]
 fmt-check:
     unformatted="$(gofmt -l {{ go_dirs }})"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+    unformatted="$(cd {{ codex_adapter_dir }} && gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
     {{ just_executable() }} --unstable --fmt --check
 
 # Verify module checksums and that go.mod and go.sum are tidy
@@ -45,12 +48,14 @@ mod-check:
     go mod verify
     go mod tidy -diff
     cd adapterkit && go mod verify && go mod tidy -diff
+    cd {{ codex_adapter_dir }} && go mod verify && go mod tidy -diff
 
 # Run go vet on every package
 [group('check')]
 vet:
     go vet ./...
     cd adapterkit && go vet ./...
+    cd {{ codex_adapter_dir }} && go vet ./...
 
 # Unit files build without tags; integration files only build behind the
 # integration tag, so they need their own vet pass.
@@ -62,6 +67,7 @@ vet-integration:
 [group('check')]
 deps-check:
     go list -deps ./cmd/dac-plane | while IFS= read -r dep; do case "$dep" in */internal/simulator|*/internal/testsupport|*/internal/testsupport/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "release binary imports forbidden package: $dep"; exit 1;; esac; done
+    cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "Codex adapter imports control-plane internal package: $dep"; exit 1;; esac; done
 
 # Run unit tests, including the JSON Schema contract conformance suites
 [group('test')]
@@ -101,6 +107,38 @@ test-integration-other-race:
 test-adapterkit:
     cd adapterkit && go test ./...
     cd adapterkit && go test -race ./...
+
+# The Codex adapter is an independent module. Deterministic tests use a fake
+# app-server and the published ControlFrame conformance suite; no credential is required.
+[group('test')]
+test-codex-adapter:
+    cd {{ codex_adapter_dir }} && go test ./...
+    cd {{ codex_adapter_dir }} && go test -race ./...
+
+# Run the secret-backed Codex qualification against the deployed HTTPS and
+# ControlFrame boundaries. The disposable artifact service is a test fixture,
+# not the production store qualified by #93.
+[doc('Qualify pinned Codex app-server against Camer (needs Docker and DAC_CODEX_API_KEY_FILE)')]
+[group('test')]
+qualify-codex-runtime: stack-certs
+    #!/usr/bin/env bash
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    mkdir -p .work/codex-qualification
+    compose=(docker compose -p dac-codex-qualification --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >.work/codex-qualification/compose.log 2>&1 || true; if credential=$(tr -d '\r\n' <"$DAC_CODEX_API_KEY_FILE") && [[ -n "$credential" ]] && grep -Fq -- "$credential" .work/codex-qualification/compose.log; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    # A live harness needs an explicit tenant policy before approval-once can
+    # issue a grant. Keep this qualification-only policy out of product setup.
+    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/codex-qualification/version.txt
+    docker image inspect dac-codex-adapter:qualification | jq -r '.[0].Id' | tee .work/codex-qualification/image-id.txt
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/
 
 # The conformance suite runs the simulator adapter as a separate OS process,
 # the way a real provider adapter runs outside the control plane.
@@ -282,6 +320,7 @@ test-operations: (_test-operations '^Test(MultiReplicaFencing|ProcessKillAndRest
 vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_version)
     {{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd adapterkit && ../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
+    cd {{ codex_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
 
 # Lint GitHub Actions workflows
 [group('check')]

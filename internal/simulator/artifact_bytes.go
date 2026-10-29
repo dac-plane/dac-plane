@@ -43,7 +43,7 @@ func (s *ByteArtifactStore) Ledger() *Ledger            { return s.ledger }
 
 // Stored returns the current byte observation for artifact. It is used by
 // the separate-process qualification fixture to compare external bytes with
-// restored product metadata; it does not expose the bytes themselves.
+// restored product metadata.
 func (s *ByteArtifactStore) Stored(artifact ids.ArtifactID) lifecycle.StoredObject {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -52,6 +52,15 @@ func (s *ByteArtifactStore) Stored(artifact ids.ArtifactID) lifecycle.StoredObje
 		return lifecycle.StoredObject{}
 	}
 	return lifecycle.StoredObject{Present: true, Digest: identity.DigestOf(data), Size: uint64(len(data))}
+}
+
+// Bytes returns a copy of staged bytes for test evidence. The simulator is a
+// qualification fixture; production artifact stores do not expose this API.
+func (s *ByteArtifactStore) Bytes(artifact ids.ArtifactID) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.staged[artifact]
+	return append([]byte(nil), data...), ok
 }
 func (s *ByteArtifactStore) Cancel(ctx context.Context, c contracts.Cancel) error {
 	if err := ctx.Err(); err != nil {

@@ -1,0 +1,102 @@
+services:
+  codex-init:
+    image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+    command: ["sh", "-c", "mkdir -p /codex/home /workspace && chown -R 65532:65532 /codex /workspace"]
+    volumes:
+      - codex-data:/codex
+      - codex-workspace:/workspace
+    profiles: ["qualification"]
+    restart: "no"
+
+  artifact-adapter:
+    image: ${DAC_SIM_ADAPTER_IMAGE:-dac-sim-adapter:qualification}
+    build:
+      context: ../..
+      target: dac-sim-adapter
+    command: ["/run/config/scenario.json"]
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ARTIFACT_STORE_CLIENT_ID: artifact-adapter
+      DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_SIM_ARTIFACT_ONLY: "true"
+      DAC_SIM_ARTIFACT_ADDR: :8082
+      DAC_SIM_ARTIFACT_PUBLIC_URL: https://artifact-adapter:8082
+      DAC_SIM_ARTIFACT_CERT_FILE: /run/config/tls.crt
+      DAC_SIM_ARTIFACT_KEY_FILE: /run/secrets/tls.key
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+      - source: tls_cert
+        target: /run/config/tls.crt
+      - source: sim_scenario
+        target: /run/config/scenario.json
+    secrets:
+      - artifact_client_secret
+      - source: tls_key
+        target: tls.key
+    depends_on:
+      dac-plane:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+    profiles: ["qualification"]
+    ports:
+      - "127.0.0.1:${DAC_CODEX_ARTIFACT_PORT:-18082}:8082"
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  codex-adapter:
+    image: ${DAC_CODEX_ADAPTER_IMAGE:-dac-codex-adapter:qualification}
+    build:
+      context: ../..
+      target: dac-codex-adapter
+    environment:
+      HOME: /codex/home
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ADAPTER_CLIENT_ID: runtime-adapter
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/runtime_client_secret
+      DAC_PROVIDER_ID: 01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10
+      DAC_CODEX_APP_SERVER: /codex-app-server
+      DAC_CODEX_HOME: /codex/home
+      DAC_CODEX_STATE: /codex/adapter.db
+      DAC_CODEX_WORKSPACE: /workspace
+      DAC_CODEX_MODEL_PROVIDER: camer
+      DAC_CODEX_MODEL: deepseek-v4-flash-0731
+      DAC_CODEX_BASE_URL: https://api.ai.camer.digital/v1
+      DAC_CODEX_API_KEY_FILE: /run/secrets/camer_api_key
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+    secrets:
+      - runtime_client_secret
+      - camer_api_key
+    volumes:
+      - codex-data:/codex
+      - codex-workspace:/workspace
+    depends_on:
+      codex-init:
+        condition: service_completed_successfully
+      artifact-adapter:
+        condition: service_started
+    profiles: ["qualification"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+volumes:
+  codex-data:
+  codex-workspace:
+
+secrets:
+  camer_api_key:
+    file: ${DAC_CODEX_API_KEY_FILE:?set DAC_CODEX_API_KEY_FILE to the Camer credential file}

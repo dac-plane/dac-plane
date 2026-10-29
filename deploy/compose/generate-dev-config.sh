@@ -46,7 +46,7 @@ issue_certificate() {
 # Operations evidence addresses two replicas directly; both names remain
 # development-only identities under the same throwaway CA.
 rm -f "$output/server.crt" "$output/server.key" "$output/server.csr"
-issue_certificate server dac-plane "DNS:dac-plane,DNS:replica-a,DNS:replica-b,DNS:localhost,IP:127.0.0.1"
+issue_certificate server dac-plane "DNS:dac-plane,DNS:replica-a,DNS:replica-b,DNS:artifact-adapter,DNS:localhost,IP:127.0.0.1"
 issue_certificate issuer issuer "DNS:issuer,DNS:localhost,IP:127.0.0.1"
 
 if [ -e "$output/issuer.p12" ]; then
