@@ -12,7 +12,7 @@ E2B Cloud is managed software: E2B does not expose a customer-pinnable server bu
 
 The adapter persists operation fingerprints and sandbox mappings in bbolt, stores the stable DAC operation ID as E2B sandbox metadata, and looks up that metadata before retrying an uncertain create. If the provider cannot establish whether the first create succeeded, the operation remains uncertain and the adapter does not issue a second create. It does not advertise `operation.replay` without a provider-side guarantee.
 
-Sandbox creation sets `allow_internet_access=false`. The live qualification verifies host connectivity first, then probes a direct IP connection from the sandbox and rejects unexpected error classes. E2B API keys are read from `APIKEY_E2B` by the qualification runner and are not persisted or logged. The adapter service itself reads `DAC_E2B_API_KEY_FILE` at runtime.
+Sandbox creation sets `allow_internet_access=false` and denies outbound IPv4 (`0.0.0.0/0`) through the v2 network policy. E2B Cloud rejects an IPv6 deny CIDR (`::/0`); the qualification claims only the IPv4 behavior it probes. It verifies host connectivity first and rejects unexpected error classes. E2B API keys are read from `APIKEY_E2B` by the qualification runner and are not persisted or logged. The adapter service itself reads `DAC_E2B_API_KEY_FILE` at runtime.
 
 ## Configuration
 

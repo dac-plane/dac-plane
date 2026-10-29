@@ -63,6 +63,10 @@ type sandbox struct {
 	State       string            `json:"state"`
 	EnvdVersion string            `json:"envdVersion"`
 	Metadata    map[string]string `json:"metadata"`
+	Network     struct {
+		DenyOut []string `json:"denyOut"`
+	} `json:"network"`
+	AllowInternetAccess *bool `json:"allowInternetAccess"`
 }
 
 type migrationReceipt struct {
@@ -135,6 +139,12 @@ func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
 	if op.Method != "provision" {
 		return nil
 	}
+	if op.ResourceRef == "" && op.State == "prepared" {
+		return a.cfg.Journal.Update(cancel.Operation, func(current *journal.Operation) error {
+			current.State = "cancelled"
+			return nil
+		})
+	}
 	ref := op.ResourceRef
 	if ref == "" && op.State == "create_sent" {
 		sbx, findErr := a.findOperation(ctx, cancel.Operation)
@@ -185,6 +195,9 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 	if err != nil {
 		return rejected(req, wire.FailureInvalidArguments, "operation identity or payload mismatch"), nil
 	}
+	if op.State == "cancelled" {
+		return rejected(req, wire.FailureCancelled, "provision was cancelled before it started"), nil
+	}
 	if op.ResourceRef != "" && len(op.Receipt) != 0 {
 		return accepted(req, op.Receipt), nil
 	}
@@ -213,7 +226,14 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 		return wire.Reply{}, err
 	}
 	allowInternet := false
-	body := map[string]any{"templateID": a.cfg.TemplateID, "allow_internet_access": allowInternet, "metadata": map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt}}
+	body := map[string]any{
+		"templateID":            a.cfg.TemplateID,
+		"allow_internet_access": allowInternet,
+		"network": map[string]any{
+			"denyOut": []string{"0.0.0.0/0"},
+		},
+		"metadata": map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt},
+	}
 	var createdSandbox sandbox
 	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &createdSandbox); err != nil {
 		var status apiError

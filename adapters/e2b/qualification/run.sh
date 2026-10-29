@@ -44,4 +44,4 @@ export DAC_E2B_API_KEY="$APIKEY_E2B"
 export DAC_PROVIDER_ID
 
 cd "$root/adapters/e2b"
-go test -count=1 -timeout=10m -tags=e2bqualification -run '^TestE2BCloudLiveProvider$' ./... | tee "$work/live-test.txt"
+go test -v -count=1 -timeout=10m -tags=e2bqualification -run '^TestE2BCloudLiveProvider$' ./... | tee "$work/live-test.txt"

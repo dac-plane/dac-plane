@@ -42,15 +42,18 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var input struct {
-			Template string            `json:"templateID"`
-			Allow    *bool             `json:"allow_internet_access"`
+			Template string `json:"templateID"`
+			Allow    *bool  `json:"allow_internet_access"`
+			Network  struct {
+				DenyOut []string `json:"denyOut"`
+			} `json:"network"`
 			Metadata map[string]string `json:"metadata"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			http.Error(w, "bad request", 400)
 			return
 		}
-		if input.Template != "base" || input.Allow == nil || *input.Allow || input.Metadata[metadataOperation] == "" {
+		if input.Template != "base" || input.Allow == nil || *input.Allow || len(input.Network.DenyOut) != 1 || input.Network.DenyOut[0] != "0.0.0.0/0" || input.Metadata[metadataOperation] == "" {
 			http.Error(w, "invalid create request", 400)
 			return
 		}
@@ -343,6 +346,26 @@ func TestCancelBeforeProvisionPreventsSandboxCreation(t *testing.T) {
 	}
 	if fake.created != 0 {
 		t.Fatalf("pre-cancelled operation created %d sandboxes", fake.created)
+	}
+}
+
+func TestCancelAfterRejectedProvisionPreventsRetry(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, rejectCreateStatus: http.StatusUnauthorized}
+	adapter, _ := newTestAdapter(t, fake)
+	request := provisionRequest("cancel-rejected-create", "delivery-1")
+	if _, err := adapter.Send(context.Background(), request); err == nil {
+		t.Fatal("first create should be rejected")
+	}
+	if err := adapter.Cancel(context.Background(), wire.Cancel{Operation: request.Operation, Delivery: "cancel-1"}); err != nil {
+		t.Fatal(err)
+	}
+	retry := provisionRequest(request.Operation, "delivery-2")
+	reply, err := adapter.Send(context.Background(), retry)
+	if err != nil || reply.Outcome != wire.OutcomeFailed || reply.Failure == nil || reply.Failure.Code != wire.FailureCancelled {
+		t.Fatalf("provision retry=%+v err=%v, want cancelled", reply, err)
+	}
+	if fake.created != 0 || len(fake.sandboxes) != 0 {
+		t.Fatalf("creates=%d remaining sandboxes=%d, want no create", fake.created, len(fake.sandboxes))
 	}
 }
 

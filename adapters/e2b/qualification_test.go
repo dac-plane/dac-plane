@@ -97,7 +97,7 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 		if providerInfo.EnvdVersion == "" {
 			t.Fatalf("provider metadata omitted runtime version for sandbox %d", i+1)
 		}
-		t.Logf("provider service metadata: envd_version=%s template=%s", providerInfo.EnvdVersion, providerInfo.Template)
+		t.Logf("provider service metadata: envd_version=%s template=%s internet_access=%t deny_out=%v", providerInfo.EnvdVersion, providerInfo.Template, providerInfo.AllowInternetAccess != nil && *providerInfo.AllowInternetAccess, providerInfo.Network.DenyOut)
 	}
 	if refs[0] == refs[1] {
 		t.Fatal("provider returned one resource for two operations")
