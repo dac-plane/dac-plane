@@ -45,7 +45,7 @@ RUN set -eu; \
       arm64) archive=codex-app-server-aarch64-unknown-linux-musl.tar.gz; expected=431e82c7dfa08c2aa97cdd637d09324557c8de8140279184259eefbe871e4e26 ;; \
       *) echo "unsupported Codex architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    curl -fL --retry 3 -o /tmp/codex-app-server.tar.gz \
+    curl --proto '=https' --proto-redir '=https' -fL --retry 3 -o /tmp/codex-app-server.tar.gz \
       "https://github.com/openai/codex/releases/download/rust-v${CODEX_APP_SERVER_VERSION}/${archive}"; \
     echo "${expected}  /tmp/codex-app-server.tar.gz" | sha256sum -c -; \
     mkdir -p /out; \

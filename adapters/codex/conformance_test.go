@@ -39,6 +39,7 @@ func TestControlFrameConformance(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+			defer cancel()
 			_ = adapterkit.Run(runCtx, adapterkit.Config{URL: endpoint.URL, Token: func(context.Context) (adapterkit.Token, error) {
 				return adapterkit.Token{Value: "fixture-token", Expiry: time.Now().Add(time.Hour)}, nil
 			}, Provider: "01a18301-0000-7000-8000-000000000030", Role: wire.RoleRuntime, Handler: adapter, TLS: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: endpoint.RootCAs}, Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), BackoffBase: time.Millisecond, BackoffMax: 10 * time.Millisecond})
