@@ -46,12 +46,23 @@ type Config struct {
 }
 
 type Adapter struct {
-	config    Config
-	stop      chan struct{}
-	session   string
-	nativeMu  sync.Mutex
-	startupMu sync.Mutex
+	config       Config
+	stop         chan struct{}
+	session      string
+	nativeMu     sync.Mutex
+	deferredMu   sync.Mutex
+	deferred     map[string][]deferredNative
+	readyThreads map[string]bool
+	pendingStart int
+	fatal        chan error
 }
+
+type deferredNative struct {
+	message appserver.Message
+	request bool
+}
+
+const maxDeferredNativeMessages = 4096
 
 func New(config Config) (*Adapter, error) {
 	if config.Native == nil || config.Journal == nil || config.Workspace == "" || config.Model == "" || config.Provider == "" || config.ProviderID == "" {
@@ -75,7 +86,7 @@ func New(config Config) (*Adapter, error) {
 	if _, err := rand.Read(sessionBytes); err != nil {
 		return nil, fmt.Errorf("create native session identity: %w", err)
 	}
-	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes)}
+	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, readyThreads: map[string]bool{}, fatal: make(chan error, 1)}
 	if err := a.reconstruct(); err != nil {
 		return nil, err
 	}
@@ -134,6 +145,7 @@ func (a *Adapter) reconstruct() error {
 		if err := a.ensureStartEvents(op); err != nil {
 			return err
 		}
+		a.setThreadReady(op.ThreadID)
 		_, _ = a.config.Journal.AppendEvent(op.ID, "reconnected:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume"})
 	}
 	return nil
@@ -169,6 +181,94 @@ func (a *Adapter) Subscribe(_ context.Context, cursor wire.Cursor) (adapterkit.S
 		return nil, err
 	}
 	return &stream{store: a.config.Journal, operation: cursor.Operation, after: cursor.After, connected: true, stale: cursor.Generation != 1}, nil
+}
+
+// Fatal reports unrecoverable adapter-internal event-buffer failures. The
+// executable uses it to terminate so the process supervisor can restart it.
+func (a *Adapter) Fatal() <-chan error { return a.fatal }
+
+func (a *Adapter) beginStartup() {
+	a.deferredMu.Lock()
+	a.pendingStart++
+	a.deferredMu.Unlock()
+}
+
+func (a *Adapter) abortStartup() {
+	a.deferredMu.Lock()
+	defer a.deferredMu.Unlock()
+	a.pendingStart--
+	if a.pendingStart == 0 {
+		for thread := range a.deferred {
+			if _, err := a.config.Journal.OperationByThread(thread); err != nil {
+				delete(a.deferred, thread)
+			}
+		}
+	}
+}
+
+func (a *Adapter) setThreadReady(thread string) {
+	a.deferredMu.Lock()
+	a.flushThreadLocked(thread)
+	if a.pendingStart > 0 {
+		a.pendingStart--
+	}
+	if a.pendingStart == 0 {
+		for other := range a.deferred {
+			if _, err := a.config.Journal.OperationByThread(other); err != nil {
+				delete(a.deferred, other)
+			}
+		}
+	}
+	a.deferredMu.Unlock()
+}
+
+func (a *Adapter) flushThreadLocked(thread string) {
+	a.readyThreads[thread] = true
+	queued := a.deferred[thread]
+	delete(a.deferred, thread)
+	for _, item := range queued {
+		if item.request {
+			a.processNativeRequest(item.message)
+		} else {
+			a.processNotification(item.message)
+		}
+	}
+}
+
+func (a *Adapter) deferNative(thread string, op journal.Operation, opErr error, item deferredNative) bool {
+	a.deferredMu.Lock()
+	defer a.deferredMu.Unlock()
+	if a.readyThreads[thread] {
+		return false
+	}
+	if opErr == nil && op.TurnID != "" {
+		a.flushThreadLocked(thread)
+		return false
+	}
+	if opErr != nil && a.pendingStart == 0 {
+		return true
+	}
+	count := 0
+	for _, queued := range a.deferred {
+		count += len(queued)
+	}
+	if count >= maxDeferredNativeMessages {
+		select {
+		case a.fatal <- errors.New("native events exceeded the startup buffer limit"):
+		default:
+		}
+		return true
+	}
+	a.deferred[thread] = append(a.deferred[thread], item)
+	return true
+}
+
+func nativeThreadID(m appserver.Message) string {
+	var params struct {
+		ThreadID string `json:"threadId"`
+	}
+	_ = json.Unmarshal(m.Params, &params)
+	return params.ThreadID
 }
 
 type executionBrief struct {
@@ -213,10 +313,13 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		}
 		return accepted(r, map[string]string{"session_ref": op.ThreadID, "turn_ref": op.TurnID}), nil
 	}
-	// Keep native notifications behind the durable mapping and start events.
-	// A fast turn can complete before turn/start returns its RPC response.
-	a.startupMu.Lock()
-	defer a.startupMu.Unlock()
+	a.beginStartup()
+	startupReady := false
+	defer func() {
+		if !startupReady {
+			a.abortStartup()
+		}
+	}()
 	var started struct {
 		Thread struct {
 			ID string `json:"id"`
@@ -236,6 +339,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	}); err != nil {
 		return wire.Reply{}, err
 	}
+	if _, err = a.config.Journal.AppendEvent(r.Operation, "runtime:"+started.Thread.ID, "runtime.started", map[string]any{"native_ref": started.Thread.ID}); err != nil {
+		return wire.Reply{}, err
+	}
 	prompt := briefPrompt(r.Operation, input.Brief)
 	var turn struct {
 		Turn struct {
@@ -249,12 +355,14 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if turn.Turn.ID == "" {
 		return wire.Reply{}, errors.New("Codex returned no turn id")
 	}
-	if err = a.config.Journal.UpdateOperation(r.Operation, func(op *journal.Operation) error { op.TurnID = turn.Turn.ID; op.State = "running"; return nil }); err != nil {
-		return wire.Reply{}, err
-	}
 	if err = a.ensureStartEvents(journal.Operation{ID: r.Operation, ThreadID: started.Thread.ID, TurnID: turn.Turn.ID}); err != nil {
 		return wire.Reply{}, err
 	}
+	if err = a.config.Journal.UpdateOperation(r.Operation, func(op *journal.Operation) error { op.TurnID = turn.Turn.ID; op.State = "running"; return nil }); err != nil {
+		return wire.Reply{}, err
+	}
+	a.setThreadReady(started.Thread.ID)
+	startupReady = true
 	return accepted(r, map[string]string{"session_ref": started.Thread.ID, "turn_ref": turn.Turn.ID}), nil
 }
 
@@ -515,8 +623,21 @@ func (a *Adapter) consume() {
 	}
 }
 func (a *Adapter) notification(m appserver.Message) {
-	a.startupMu.Lock()
-	defer a.startupMu.Unlock()
+	if m.Method != "turn/completed" && m.Method != "thread/tokenUsage/updated" && !strings.HasPrefix(m.Method, "item/") && !strings.Contains(m.Method, "delta") {
+		return
+	}
+	thread := nativeThreadID(m)
+	if thread == "" {
+		return
+	}
+	op, err := a.config.Journal.OperationByThread(thread)
+	if a.deferNative(thread, op, err, deferredNative{message: m}) {
+		return
+	}
+	a.processNotification(m)
+}
+
+func (a *Adapter) processNotification(m appserver.Message) {
 	var binding struct {
 		ThreadID, TurnID string `json:"-"`
 		Turn             struct {
@@ -588,8 +709,21 @@ func (a *Adapter) turnCompleted(op journal.Operation, turnID, status string, raw
 	_ = a.config.Journal.UpdateOperation(op.ID, func(current *journal.Operation) error { current.State = outcome; return nil })
 }
 func (a *Adapter) nativeRequest(m appserver.Message) {
-	a.startupMu.Lock()
-	defer a.startupMu.Unlock()
+	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {
+		return
+	}
+	thread := nativeThreadID(m)
+	if thread == "" {
+		return
+	}
+	op, err := a.config.Journal.OperationByThread(thread)
+	if a.deferNative(thread, op, err, deferredNative{message: m, request: true}) {
+		return
+	}
+	a.processNativeRequest(m)
+}
+
+func (a *Adapter) processNativeRequest(m appserver.Message) {
 	a.nativeMu.Lock()
 	defer a.nativeMu.Unlock()
 	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {

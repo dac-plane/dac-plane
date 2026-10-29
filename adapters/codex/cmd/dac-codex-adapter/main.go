@@ -112,7 +112,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	nativeFailure := make(chan error, 1)
+	processFailure := make(chan error, 1)
 	go func() {
 		select {
 		case <-native.Done():
@@ -121,16 +121,19 @@ func run() error {
 				if err == nil {
 					err = errors.New("Codex app-server exited")
 				}
-				nativeFailure <- err
+				processFailure <- fmt.Errorf("Codex app-server exited: %w", err)
 				cancel()
 			}
+		case err := <-handler.Fatal():
+			processFailure <- fmt.Errorf("adapter event handling failed: %w", err)
+			cancel()
 		case <-ctx.Done():
 		}
 	}()
 	runErr := adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: providerID, Role: wire.RoleRuntime, Handler: handler, TLS: tlsConfig, Logger: logger})
 	select {
-	case nativeErr := <-nativeFailure:
-		return fmt.Errorf("Codex app-server exited: %w", nativeErr)
+	case failure := <-processFailure:
+		return failure
 	default:
 		return runErr
 	}

@@ -41,6 +41,9 @@ type fakeNative struct {
 	failResume          bool
 	failReplyOnce       bool
 	completeOnTurnStart bool
+	blockTurnStart      bool
+	turnStartEntered    chan struct{}
+	releaseTurnStart    chan struct{}
 }
 
 func newFakeNative() *fakeNative {
@@ -64,6 +67,10 @@ func (f *fakeNative) Call(_ context.Context, method string, params, result any) 
 	case "thread/start":
 		response = map[string]any{"thread": map[string]any{"id": "thread-1"}}
 	case "turn/start":
+		if f.blockTurnStart {
+			close(f.turnStartEntered)
+			<-f.releaseTurnStart
+		}
 		response = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}}
 		if f.completeOnTurnStart {
 			f.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
@@ -230,6 +237,46 @@ func TestCompletionDuringTurnStartFollowsDurableStartEvents(t *testing.T) {
 	if !(positions["runtime.started"] < positions["turn.started"] && positions["turn.started"] < positions["turn.finished"]) {
 		t.Fatalf("startup/completion order: %+v", events)
 	}
+}
+
+func TestNativeEventsContinueDrainingWhileTurnStartWaits(t *testing.T) {
+	f := setup(t)
+	f.native.blockTurnStart = true
+	f.native.turnStartEntered = make(chan struct{})
+	f.native.releaseTurnStart = make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(f.native.releaseTurnStart)
+		}
+	}()
+	started := make(chan error, 1)
+	go func() {
+		_, err := f.adapter.Send(context.Background(), startRequest(validStart))
+		started <- err
+	}()
+	select {
+	case <-f.native.turnStartEntered:
+	case <-time.After(time.Second):
+		t.Fatal("turn/start RPC did not begin")
+	}
+	for i := 0; i < 300; i++ {
+		message := appserver.Message{Method: "item/agentMessage/delta", Params: json.RawMessage(fmt.Sprintf(`{"threadId":"thread-1","delta":"%d"}`, i))}
+		select {
+		case f.native.notifications <- message:
+		case <-time.After(time.Second):
+			t.Fatalf("native notifications stopped draining at event %d", i)
+		}
+	}
+	close(f.native.releaseTurnStart)
+	released = true
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		events, err := f.store.EventsAfter(testOperation, 0)
+		return err == nil && len(events) >= 302
+	})
 }
 
 func TestLostThreadStartDoesNotCreateSecondNativeTurn(t *testing.T) {
