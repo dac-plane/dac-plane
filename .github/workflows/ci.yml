@@ -68,6 +68,25 @@ jobs:
       - name: Run race tests
         run: just test-race
 
+  adapter:
+    name: Codex adapter and protocol conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Run deterministic Codex adapter tests
+        run: just test-codex-adapter
+
+      - name: Run adapter protocol conformance
+        run: just test-conformance
+
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
@@ -89,6 +108,25 @@ jobs:
 
       - name: Run remaining PostgreSQL integration tests under race
         run: just test-integration-other-race
+
+  security:
+    name: Security and lifecycle integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Pre-pull PostgreSQL test image
+        run: docker pull postgres:16.15-alpine || true
+
+      - name: Run security and lifecycle integration tests under race
+        run: just test-security-race
 
   vulnerabilities:
     name: Go vulnerabilities
@@ -146,7 +184,7 @@ jobs:
   stack:
     name: Image and deployment stack
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

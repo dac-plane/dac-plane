@@ -50,7 +50,9 @@ as an environmental gate and does not reject Codex.
      independently qualified #92 provider and this runtime adapter to prove task cancellation
      convergence. #92 owns environment-provider and isolation qualification; #102 owns the DAC
      orchestration path.
-   - [x] Run complete repository CI and review the final diff; `git diff --check` passed.
+   - [x] Run `just ci-fast` and review the final diff; `git diff --check` passed.
+   - [ ] Pass the full parallel PR workflow, including Codex image reproducibility, security-race,
+     deployed stack and operations jobs.
    - [ ] Keep #91 open until #101 proves cross-adapter cancellation and every other required #91
      acceptance check passes. #101 depends on #92 and #102, not on #91 being closed.
 

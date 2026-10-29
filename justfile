@@ -1,7 +1,6 @@
 # dac-plane developer and CI tasks. Run `just` to list them.
-#
-# CI calls these same recipes, so a green local `just ci` and a green CI run
-# check the same things. Tool versions are pinned here and nowhere else.
+# GitHub runs the full checks as parallel jobs. Use `just ci-fast` for the
+# local, non-deployment gate; `just ci` runs every CI recipe serially.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -25,9 +24,14 @@ sdkroot := if os() == "macos" { 'SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 default:
     @{{ just_executable() }} --list
 
-# Run every check CI runs, in CI's order
+# Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci: fmt-check mod-check deps-check vet vet-integration test test-race test-adapterkit test-codex-adapter test-integration-other-race test-security-race test-conformance vuln lint-workflows
+ci-fast: fmt-check mod-check deps-check vet vet-integration test test-race test-codex-adapter test-conformance vuln lint-workflows
+
+# Full local equivalent of the parallel GitHub PR checks. This is intentionally
+# slower and is best used for final local verification or CI diagnosis.
+[group('ci')]
+ci: ci-fast test-integration-other-race test-security-race image-repro test-stack test-operations
 
 # Rewrite Go files into gofmt style
 [group('dev')]
@@ -216,18 +220,19 @@ test-surface-race:
 test-contracts:
     go test ./... -run 'ContractConformance|SchemaAndGo|SchemasAccept|SchemaEnums|EveryContractSchema|EveryValidatedRecord|NoVendorIdentifiers'
 
-# Build both distroless image targets from their pinned bases.
+# Build the control plane, simulator and Codex adapter images from pinned bases.
 [group('image')]
 image-build:
     docker buildx build --load --target dac-plane -t dac-plane:dev .
     docker buildx build --load --target dac-sim-adapter -t dac-sim-adapter:dev .
+    docker buildx build --load --target dac-codex-adapter -t dac-codex-adapter:dev .
 
 # Build each target twice as OCI archives and compare the resulting manifest
 # digest. Timestamps are fixed to the source commit as documented by BuildKit.
 [group('image')]
 image-repro:
     mkdir -p .work/image-repro
-    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
+    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter dac-codex-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
 
 # Generate throwaway development certificates and credentials under .work/.
 [group('stack')]

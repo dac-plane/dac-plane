@@ -90,17 +90,26 @@ A change to the baseline is a change to what future implementation builds agains
 
 ## Go verification
 
-Checks are recipes in the root `justfile`; CI (`.github/workflows/ci.yml`) calls the same
-recipes. Run `just` to list them and `just ci` before opening a PR. Integration tests need Docker
-and run uncached (`-count=1`), because a cached result would pass without starting PostgreSQL;
-on macOS the recipe points `SDKROOT` at the active Xcode SDK to avoid a broken Command Line Tools
-linker. Tool versions (govulncheck, actionlint) are pinned in the justfile only, and CI pins the
-version of just.
+Checks are recipes in the root `justfile`; the GitHub PR workflow (`.github/workflows/ci.yml`) runs
+them in parallel jobs. During development, run the narrowest recipe that covers the changed code;
+for the Codex adapter, use `just test-codex-adapter` and `just test-conformance`. Use `just ci-fast`
+for the local non-deployment gate. The PR workflow runs the full integration, image, stack and
+operations gates. `just ci` is the serial local equivalent for reproducing or diagnosing that full
+gate; it is not the edit loop. Before opening a PR, run the relevant focused checks and
+`git diff --check`; use the parallel PR checks as the full merge gate.
+
+Integration tests need Docker and run uncached (`-count=1`), because a cached result would pass
+without starting PostgreSQL; on macOS the recipe points `SDKROOT` at the active Xcode SDK to avoid a
+broken Command Line Tools linker. Tool versions (govulncheck, actionlint) are pinned in the justfile
+only, and CI pins the version of just.
 
 ```sh
-just ci              # fmt-check, mod-check, vet, test, test-race, test-integration, vuln, lint-workflows
-just test-contracts  # schema conformance and the contract coverage guards only
-just fmt             # rewrite Go files into gofmt style
+just test-codex-adapter  # deterministic Codex adapter and race tests
+just test-conformance    # published adapter protocol conformance
+just ci-fast             # broad local checks without deployment/integration suites
+just ci                  # all CI recipes serially; use for full local diagnosis
+just test-contracts      # schema conformance and the contract coverage guards only
+just fmt                 # rewrite Go files into gofmt style
 ```
 
 Every schema under `contracts/jsonschema/` must compile against JSON Schema 2020-12, and every

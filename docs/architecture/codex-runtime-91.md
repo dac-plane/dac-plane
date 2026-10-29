@@ -48,8 +48,10 @@ brief decoding and bounds, operation mapping, changed-payload rejection, the los
 crash window, restart resume/read, ordered journal identities, approval and denial translation,
 prepared-decision retry, interruption, exact artifact hashing and upload, unsafe upload rejection,
 credential redaction, malformed native messages and the published ControlFrame conformance suite.
-Repository-wide `just ci` passed on 2026-10-29 after the implementation edits. `git diff --check`
-also passed after the evidence update.
+The previous local `just ci` run passed on 2026-10-29 before the CI recipes were aligned with all
+parallel PR jobs. After adding the fast local gate and the missing PR jobs, `just ci-fast` passed;
+the full PR workflow still needs to run against the pushed branch. `git diff --check` passed after
+the evidence update.
 
 The adapter does not advertise `operation.replay`. If `thread/start` succeeds but its reply is lost
 before the returned thread identifier is journaled, app-server exposes no stable caller correlation
@@ -129,7 +131,9 @@ workspace-containment claim follows from the observations in this note.
    - [x] Targeted deployed approval/artifact scenario passed in 16.261 seconds.
    - [ ] Complete full task cancellation in #101 after #102 provides task-environment orchestration
      and #92 qualifies the environment provider.
-   - [x] `just ci` passed; `git diff --check` passed after the final evidence and scope edits.
+   - [x] `just ci-fast` passed; `git diff --check` passed after the final evidence and scope edits.
+   - [ ] Full parallel PR workflow, including reproducible Codex image build, security-race tests,
+     deployed stack and operations suite, is pending on the pushed branch.
 
 The full deployed run reached the cancellation case after successful approval/artifact and denial
 scenarios. It stopped waiting after 305.283 seconds with `runtime_stopped=true` and
