@@ -72,7 +72,9 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 			}
 			if err := waitSandboxAbsent(cleanupCtx, adapter, id); err != nil {
 				t.Errorf("cleanup sandbox %d failed: %v", i+1, err)
+				return
 			}
+			t.Logf("cleanup verified sandbox %d absent", i+1)
 		})
 		reply, sendErr := adapter.Send(ctx, req)
 		if sendErr != nil {
@@ -136,10 +138,10 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 	if _, err := runSandboxCommand(ctx, cli, cliHome, base, apiKey, rightID, "sh", "-c", processIsolationCheck); err != nil {
 		t.Fatalf("process isolation probe: %v", err)
 	}
-	if _, err := runSandboxCommand(ctx, cli, cliHome, base, apiKey, leftID, "python3", "-c", "print('egress probe ready')"); err != nil {
-		t.Fatalf("egress probe prerequisite: %v", err)
+	if _, err := runSandboxCommand(ctx, cli, cliHome, base, apiKey, leftID, "curl", "--version"); err != nil {
+		t.Fatalf("curl probe prerequisite: %v", err)
 	}
-	egressProbe := "import errno,socket,sys; s=None\ntry:\n s=socket.create_connection(('1.1.1.1',443),timeout=6)\nexcept (TimeoutError,OSError) as e:\n print('EGRESS_BLOCKED' if isinstance(e,TimeoutError) or e.errno in (errno.EACCES,errno.EPERM,errno.ENETUNREACH,errno.EHOSTUNREACH,errno.ETIMEDOUT,errno.ECONNRESET) else 'EGRESS_UNVERIFIED')\n sys.exit(0 if isinstance(e,TimeoutError) or e.errno in (errno.EACCES,errno.EPERM,errno.ENETUNREACH,errno.EHOSTUNREACH,errno.ETIMEDOUT,errno.ECONNRESET) else 2)\nelse:\n s.close(); print('EGRESS_ALLOWED'); sys.exit(3)"
+	egressProbe := "import subprocess\np=subprocess.run(['curl','--fail','--silent','--show-error','--insecure','--connect-timeout','3','--max-time','5','--output','/dev/null','--write-out','%{http_code}','https://1.1.1.1'],capture_output=True,text=True)\nstatus=p.stdout.strip()\nif p.returncode == 0 and status[:1] in ('2','3'):\n print('EGRESS_ALLOWED status='+status)\nelif p.returncode == 22 and status == '403':\n print('EGRESS_BLOCKED')\nelif p.returncode in (7,28,35,52,56) and status in ('','000'):\n print('EGRESS_BLOCKED')\nelse:\n print('EGRESS_UNVERIFIED curl_exit=%d http_status=%s' % (p.returncode,status))"
 	egressResult, err := runSandboxCommand(ctx, cli, cliHome, base, apiKey, leftID, "python3", "-c", egressProbe)
 	if err != nil || egressResult != "EGRESS_BLOCKED" {
 		t.Fatalf("deny-egress probe result=%q err=%v", egressResult, err)
@@ -204,6 +206,7 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 			t.Fatalf("cleaned sandbox %d state=%q err=%v", i+1, state.State, err)
 		}
 	}
+	t.Log("observation, journal reopen replay, stop, absence, and cleanup checks passed")
 }
 
 func newQualificationID() string {

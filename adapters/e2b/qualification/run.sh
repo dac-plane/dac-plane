@@ -30,7 +30,7 @@ mkdir -p "$work"
 mkdir -p "$work/cli"
 cp "$root/adapters/e2b/qualification/package.json" "$root/adapters/e2b/qualification/package-lock.json" "$work/cli/"
 npm ci --prefix "$work/cli" --ignore-scripts --no-audit --no-fund
-curl -fsS --max-time 10 https://example.com >/dev/null
+curl -kfsS --connect-timeout 3 --max-time 8 -o /dev/null https://1.1.1.1
 cli_home="$work/cli-home"
 mkdir -p "$cli_home"
 env HOME="$cli_home" XDG_CONFIG_HOME="$cli_home/.config" E2B_API_KEY="$APIKEY_E2B" "$work/cli/node_modules/.bin/e2b" --version > "$work/e2b-cli-version.txt"
