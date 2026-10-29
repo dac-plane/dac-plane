@@ -18,6 +18,11 @@
 //	                                the scenario has an artifact store, its own client in
 //	DAC_ARTIFACT_STORE_CLIENT_ID and DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE
 //	DAC_SIM_CONTROL_ADDR            optional simulator evidence listener (tests only)
+//	DAC_SIM_ARTIFACT_ONLY           serve only the scenario's artifact store (tests only)
+//	DAC_SIM_ARTIFACT_ADDR           HTTPS byte-upload listener used with artifact-only mode
+//	DAC_SIM_ARTIFACT_PUBLIC_URL     listener URL reachable by the runtime adapter
+//	DAC_SIM_ARTIFACT_CERT_FILE      upload-listener certificate
+//	DAC_SIM_ARTIFACT_KEY_FILE       upload-listener private key
 package main
 
 import (
@@ -122,14 +127,22 @@ func run(args []string, stderr io.Writer) int {
 	if err != nil {
 		return fail(2, err)
 	}
-	set, err := scenario.adapters(tlsConfig)
+	artifactOnly := strings.EqualFold(strings.TrimSpace(os.Getenv("DAC_SIM_ARTIFACT_ONLY")), "true")
+	set, err := scenario.adapters(tlsConfig, artifactOnly)
 	if err != nil {
 		return fail(2, err)
+	}
+	var uploads *artifactUploadHandler
+	if artifactOnly {
+		uploads, err = configureArtifactOnly(set, os.Getenv)
+		if err != nil {
+			return fail(2, err)
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
-	workers := len(urls)*len(set.adapters) + 1
+	workers := len(urls)*len(set.adapters) + 2
 	errs := make(chan error, workers)
 	var wg sync.WaitGroup
 	for _, endpoint := range urls {
@@ -153,6 +166,16 @@ func run(args []string, stderr io.Writer) int {
 		go func() {
 			defer wg.Done()
 			if err := serveControl(ctx, addr, set, logger.With("component", "control")); err != nil && !errors.Is(err, context.Canceled) {
+				errs <- err
+				stop()
+			}
+		}()
+	}
+	if uploads != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := serveArtifactUploads(ctx, os.Getenv("DAC_SIM_ARTIFACT_ADDR"), os.Getenv("DAC_SIM_ARTIFACT_CERT_FILE"), os.Getenv("DAC_SIM_ARTIFACT_KEY_FILE"), uploads, logger.With("component", "artifact-upload")); err != nil && !errors.Is(err, context.Canceled) {
 				errs <- err
 				stop()
 			}
@@ -215,7 +238,7 @@ func readScenario(path string) (scenarioFile, error) {
 
 // adapters builds the runtime, and the artifact store it exports to when
 // the scenario names one, each with its own token source.
-func (s scenarioFile) adapters(tlsConfig *tls.Config) (*simulatorSet, error) {
+func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simulatorSet, error) {
 	tenant, err := ids.Parse[ids.Tenant](s.Tenant)
 	if err != nil {
 		return nil, fmt.Errorf("scenario: tenant_id: %w", err)
@@ -227,20 +250,23 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config) (*simulatorSet, error) {
 	if s.Role != string(contracts.RoleRuntime) {
 		return nil, fmt.Errorf("scenario: role: dac-sim-adapter serves a %s", contracts.RoleRuntime)
 	}
-	runtimeToken, err := tokenSource("DAC_ADAPTER", tlsConfig)
-	if err != nil {
-		return nil, err
+	set := &simulatorSet{}
+	if !artifactOnly {
+		runtimeToken, err := tokenSource("DAC_ADAPTER", tlsConfig)
+		if err != nil {
+			return nil, err
+		}
+		scenario, err := s.runtimeScenario()
+		if err != nil {
+			return nil, err
+		}
+		runtime, err := simulator.NewRuntime(simulator.Config{Tenant: tenant, Provider: provider}, scenario)
+		if err != nil {
+			return nil, err
+		}
+		set.runtime = runtime
+		set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay}}}
 	}
-	scenario, err := s.runtimeScenario()
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: tenant, Provider: provider}, scenario)
-	if err != nil {
-		return nil, err
-	}
-	set := &simulatorSet{runtime: runtime}
-	set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay}}}
 	if s.ArtifactStore == nil {
 		return set, nil
 	}
@@ -256,7 +282,9 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config) (*simulatorSet, error) {
 	for ref, text := range s.ArtifactStore.Fixtures {
 		fixtures[ref] = []byte(text)
 	}
-	runtime.WithArtifactExport(store, fixtures)
+	if set.runtime != nil {
+		set.runtime.WithArtifactExport(store, fixtures)
+	}
 	set.store = store
 	storeToken, err := tokenSource("DAC_ARTIFACT_STORE", tlsConfig)
 	if err != nil {
