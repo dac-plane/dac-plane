@@ -46,15 +46,17 @@ type Config struct {
 }
 
 type Adapter struct {
-	config       Config
-	stop         chan struct{}
-	session      string
-	nativeMu     sync.Mutex
-	deferredMu   sync.Mutex
-	deferred     map[string][]deferredNative
-	readyThreads map[string]bool
-	pendingStart int
-	fatal        chan error
+	config        Config
+	stop          chan struct{}
+	session       string
+	nativeMu      sync.Mutex
+	deferredMu    sync.Mutex
+	deferred      map[string][]deferredNative
+	flushing      map[string]bool
+	readyThreads  map[string]bool
+	pendingStart  int
+	deferredCount int
+	fatal         chan error
 }
 
 type deferredNative struct {
@@ -86,7 +88,7 @@ func New(config Config) (*Adapter, error) {
 	if _, err := rand.Read(sessionBytes); err != nil {
 		return nil, fmt.Errorf("create native session identity: %w", err)
 	}
-	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, readyThreads: map[string]bool{}, fatal: make(chan error, 1)}
+	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, fatal: make(chan error, 1)}
 	if err := a.reconstruct(); err != nil {
 		return nil, err
 	}
@@ -200,6 +202,7 @@ func (a *Adapter) abortStartup() {
 	if a.pendingStart == 0 {
 		for thread := range a.deferred {
 			if _, err := a.config.Journal.OperationByThread(thread); err != nil {
+				a.deferredCount -= len(a.deferred[thread])
 				delete(a.deferred, thread)
 			}
 		}
@@ -208,13 +211,21 @@ func (a *Adapter) abortStartup() {
 
 func (a *Adapter) setThreadReady(thread string) {
 	a.deferredMu.Lock()
-	a.flushThreadLocked(thread)
 	if a.pendingStart > 0 {
 		a.pendingStart--
 	}
+	if a.readyThreads[thread] || a.flushing[thread] {
+		a.deferredMu.Unlock()
+		return
+	}
+	a.flushing[thread] = true
+	a.deferredMu.Unlock()
+	a.drainThread(thread)
+	a.deferredMu.Lock()
 	if a.pendingStart == 0 {
 		for other := range a.deferred {
 			if _, err := a.config.Journal.OperationByThread(other); err != nil {
+				a.deferredCount -= len(a.deferred[other])
 				delete(a.deferred, other)
 			}
 		}
@@ -222,44 +233,71 @@ func (a *Adapter) setThreadReady(thread string) {
 	a.deferredMu.Unlock()
 }
 
-func (a *Adapter) flushThreadLocked(thread string) {
-	a.readyThreads[thread] = true
-	queued := a.deferred[thread]
-	delete(a.deferred, thread)
-	for _, item := range queued {
-		if item.request {
-			a.processNativeRequest(item.message)
-		} else {
-			a.processNotification(item.message)
+func (a *Adapter) drainThread(thread string) {
+	for {
+		a.deferredMu.Lock()
+		queued := a.deferred[thread]
+		delete(a.deferred, thread)
+		a.deferredCount -= len(queued)
+		if len(queued) == 0 {
+			a.flushing[thread] = false
+			a.readyThreads[thread] = true
+			a.deferredMu.Unlock()
+			return
+		}
+		a.deferredMu.Unlock()
+		for _, item := range queued {
+			if item.request {
+				a.processNativeRequest(item.message)
+			} else {
+				a.processNotification(item.message)
+			}
 		}
 	}
 }
 
 func (a *Adapter) deferNative(thread string, op journal.Operation, opErr error, item deferredNative) bool {
 	a.deferredMu.Lock()
-	defer a.deferredMu.Unlock()
 	if a.readyThreads[thread] {
+		a.deferredMu.Unlock()
 		return false
 	}
 	if opErr == nil && op.TurnID != "" {
-		a.flushThreadLocked(thread)
-		return false
-	}
-	if opErr != nil && a.pendingStart == 0 {
+		startFlusher := !a.flushing[thread]
+		if startFlusher {
+			a.flushing[thread] = true
+		}
+		if a.deferredCount >= maxDeferredNativeMessages {
+			select {
+			case a.fatal <- errors.New("native events exceeded the startup buffer limit"):
+			default:
+			}
+			a.deferredMu.Unlock()
+			return true
+		}
+		a.deferred[thread] = append(a.deferred[thread], item)
+		a.deferredCount++
+		a.deferredMu.Unlock()
+		if startFlusher {
+			a.drainThread(thread)
+		}
 		return true
 	}
-	count := 0
-	for _, queued := range a.deferred {
-		count += len(queued)
+	if opErr != nil && a.pendingStart == 0 {
+		a.deferredMu.Unlock()
+		return true
 	}
-	if count >= maxDeferredNativeMessages {
+	if a.deferredCount >= maxDeferredNativeMessages {
 		select {
 		case a.fatal <- errors.New("native events exceeded the startup buffer limit"):
 		default:
 		}
+		a.deferredMu.Unlock()
 		return true
 	}
 	a.deferred[thread] = append(a.deferred[thread], item)
+	a.deferredCount++
+	a.deferredMu.Unlock()
 	return true
 }
 
