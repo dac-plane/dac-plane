@@ -228,6 +228,7 @@ func (a *Adapter) setThreadReady(thread string) {
 		a.pendingStart--
 	}
 	if a.readyThreads[thread] || a.flushing[thread] {
+		a.discardUnknownDeferredLocked()
 		a.deferredMu.Unlock()
 		return
 	}

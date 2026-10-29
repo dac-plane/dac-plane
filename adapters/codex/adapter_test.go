@@ -319,6 +319,30 @@ func TestFailedTurnStartReleasesBufferedApprovalRequest(t *testing.T) {
 	}
 }
 
+func TestStartupReadyEarlyReturnPurgesUnmappedDeferredEvents(t *testing.T) {
+	f := setup(t)
+	if _, _, err := f.store.Begin(journal.Operation{ID: testOperation, Tenant: testTenant, Attempt: testAttempt, ArgumentsHash: journal.Hash([]byte("mapped"))}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UpdateOperation(testOperation, func(op *journal.Operation) error {
+		op.ThreadID, op.TurnID = "thread-1", "turn-1"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.adapter.beginStartup()
+	f.adapter.deferNative("orphan-thread", journal.Operation{}, os.ErrNotExist, deferredNative{message: appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"orphan-thread"}`)}})
+	known, err := f.store.Operation(testOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.adapter.deferNative("thread-1", known, nil, deferredNative{message: appserver.Message{Method: "item/agentMessage/delta", Params: json.RawMessage(`{"threadId":"thread-1","delta":"ready"}`)}})
+	f.adapter.setThreadReady("thread-1")
+	if f.adapter.deferredCount != 0 || len(f.adapter.deferred) != 0 {
+		t.Fatalf("orphaned deferred state remains: count=%d queues=%v", f.adapter.deferredCount, f.adapter.deferred)
+	}
+}
+
 func TestLostThreadStartDoesNotCreateSecondNativeTurn(t *testing.T) {
 	f := setup(t)
 	f.native.failThreadStart = true
