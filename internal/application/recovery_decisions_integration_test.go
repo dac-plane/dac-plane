@@ -167,13 +167,16 @@ func TestRecoveryLostDecisionFenceKeepsBatchMoving(t *testing.T) {
 			t.Run(outcome+"/"+fence, func(t *testing.T) {
 				f := newFixture(t, lifecycle.HarnessLive)
 				s, rt := f.executing(t, "batch-decision")
+				// Provision the follow-up's environment before the decision
+				// exists, so that worker never claims the decision row.
+				nextCommand := f.submitCommand("next-in-batch")
+				nextCommand.Demand = contracts.DemandBackground
+				next := f.submit(t, nextCommand)
+				f.dispatchPendingEnvironments(t)
 				f.raise(t, rt, s, 2, question("question", f.at.Add(time.Hour)))
 				cmd := f.decideCommand("answer", f.attention(t, s), lifecycle.DecisionDeny)
 				cmd.At = f.at
 				view := f.decide(t, cmd)
-				nextCommand := f.submitCommand("next-in-batch")
-				nextCommand.Demand = contracts.DemandBackground
-				next := f.submit(t, nextCommand)
 				steer := f.steer(t, s)
 				if fence == "late_attempt_expiry" {
 					// Expire after the initial fence check, inside the same

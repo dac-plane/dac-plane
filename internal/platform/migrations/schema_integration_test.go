@@ -611,8 +611,8 @@ func TestMigrationQualifyHarnessAndRefuseDowngrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.ApplyVersion(ctx, 14, false); err != nil {
-		t.Fatalf("ApplyVersion(14, down) before testing version 13: %v", err)
+	if _, err := provider.DownTo(ctx, 13); err != nil {
+		t.Fatalf("DownTo(13) before testing version 13: %v", err)
 	}
 	if _, err := provider.ApplyVersion(ctx, 13, false); err != nil {
 		t.Fatalf("ApplyVersion(13, down) on an empty history: %v", err)
@@ -623,8 +623,8 @@ func TestMigrationQualifyHarnessAndRefuseDowngrade(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `insert into provisioning_change (operation, tenant_id, provider_id) values ('qualify_harness', $1, $2)`, f.tenant, f.provider); err != nil {
 		t.Fatalf("record qualify_harness: %v", err)
 	}
-	if _, err := provider.ApplyVersion(ctx, 14, false); err != nil {
-		t.Fatalf("ApplyVersion(14, down) before testing version 13 refusal: %v", err)
+	if _, err := provider.DownTo(ctx, 13); err != nil {
+		t.Fatalf("DownTo(13) before testing version 13 refusal: %v", err)
 	}
 	if _, err = provider.ApplyVersion(ctx, 13, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade while version 13 harness qualifications exist") {
 		t.Fatalf("ApplyVersion(13, down) error = %v, want qualification-preserving refusal", err)

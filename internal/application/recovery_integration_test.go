@@ -99,6 +99,7 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("loss"))
+	f.dispatchPendingEnvironments(t)
 	rt := f.runtime(t, s.Operation.ID)
 	var mu sync.Mutex
 	effects := 0

@@ -77,6 +77,7 @@ func TestSecurityRecoveryAccountsUsageOnBothSidesOfOutcome(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
 			s := f.submit(t, f.submitCommand("usage-recovery"))
+			f.dispatchPendingEnvironments(t)
 			rt := f.runtime(t, s.Operation.ID)
 			usageSeq, outcomeSeq := uint64(1), uint64(2)
 			if !usageFirst {

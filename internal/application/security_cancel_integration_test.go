@@ -41,8 +41,8 @@ func (p *lostCancelAcknowledgement) Cancel(ctx context.Context, c contracts.Canc
 func TestSecurityCancelLostAcknowledgementPartialStopsAndRestart(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
+	// Provisioning bound the attempt's environment resource before execution.
 	s, rt := f.executing(t, "cancel-loss")
-	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false, row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "box", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at}))))
 	f.cancel(t, s, "cancel-loss-command")
 	p := &lostCancelAcknowledgement{}
 	tick := func() {
@@ -79,7 +79,7 @@ func TestSecurityCancelLostAcknowledgementPartialStopsAndRestart(t *testing.T) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	partial := f.event(rt, s, 1, simulator.RowsFrame(false, row(3, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))
+	partial := f.event(rt, s, 1, simulator.RowsFrame(false, row(2, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))
 	f.ingestNow(t, partial)
 	f.ingestNow(t, partial)
 	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
@@ -89,10 +89,13 @@ func TestSecurityCancelLostAcknowledgementPartialStopsAndRestart(t *testing.T) {
 		t.Fatal("partial stops not retained")
 	}
 	f.reopen(t)
-	stopped := f.event(rt, s, 1, simulator.RowsFrame(false, row(4, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "box", State: lifecycle.RunAbsent, Sequence: 2, ObservedAt: f.at})))
-	f.ingestNow(t, stopped)
+	// Only the environment provider can report its resource stopped.
+	stopped := f.environmentEvent(s, f.environmentStopOperation(t, s), simulator.RowsFrame(false, row(1, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+		ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunAbsent, Sequence: 2, ObservedAt: f.at,
+	})))
+	f.ingestEnvironmentNow(t, stopped)
 	before := f.reload(t, s.Nonce)
-	f.ingestNow(t, stopped)
+	f.ingestEnvironmentNow(t, stopped)
 	if after := f.reload(t, s.Nonce); !reflect.DeepEqual(after.Task, before.Task) || after.Attempt != before.Attempt || after.Budget != before.Budget || after.Task.State != lifecycle.TaskCancelled || after.Attempt.State != lifecycle.AttemptTerminated {
 		t.Fatalf("duplicate stop changed terminal state=%+v", after)
 	}

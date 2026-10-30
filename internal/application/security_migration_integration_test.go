@@ -248,11 +248,12 @@ func TestSecurityMigrationStalePreviewAndClaimTakeover(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.tick(t, runtime)
+	// Provisioning already bound the source environment resource; only the
+	// environment provider may observe it, so the runtime reports its session.
 	frame := simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "takeover-session"}),
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "takeover-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
 	)
-	if got := f.ingest(t, f.event(runtime, s, 1, frame)); got.Applied != 2 {
+	if got := f.ingest(t, f.event(runtime, s, 1, frame)); got.Applied != 1 {
 		t.Fatalf("takeover source bindings=%+v", got)
 	}
 	outboxBefore, bindingsBefore := f.count(t, "outbox", "true"), f.count(t, "binding", "true")
@@ -415,9 +416,8 @@ func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
 	f.tick(t, sourceRuntime)
 	frame := simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "legacy-source-session"}),
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "legacy-source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
 	)
-	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 2 {
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 1 {
 		t.Fatalf("legacy source bindings=%+v", got)
 	}
 	if _, err := f.pool.Exec(f.ctx, `update task set objective=null, acceptance_criteria=null where tenant_id=$1 and task_id=$2`, f.tenant.String(), submission.Task.ID.String()); err != nil {
@@ -437,7 +437,7 @@ func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
 	}
 	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "migration-legacy-brief",
 		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime},
-			wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment})))
+			wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: sourceEnvironment, cmd.To: targetEnvironment})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,9 +494,8 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 	f.tick(t, sourceRuntime)
 	frame := simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "exhausted-source-session"}),
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "exhausted-source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
 	)
-	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 2 {
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 1 {
 		t.Fatalf("source bindings=%+v", got)
 	}
 	view, err := application.CreateMigration(f.ctx, f.pool, cmd)
@@ -509,7 +508,7 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +545,7 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 		}
 		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("migration-exhausted-%d", cycle),
 			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: quiescePort, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: sourceEnvironment, cmd.To: targetEnvironment})))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -596,9 +595,8 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 	f.tick(t, sourceRuntime)
 	frame := simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "budget-source-session"}),
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "budget-source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
 	)
-	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 2 {
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 1 {
 		t.Fatalf("source bindings=%+v", got)
 	}
 	view, err := application.CreateMigration(f.ctx, f.pool, cmd)
@@ -611,7 +609,7 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +651,7 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 		}
 		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("migration-budget-recheck-%d", pass),
 			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: droppingSourceStop, cmd.To: droppingTargetStop})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: droppingSourceStop, cmd.To: droppingTargetStop})))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -812,9 +810,8 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	f.tick(t, sourceRuntime)
 	frame := simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "source-session"}),
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "source-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
 	)
-	if got := f.ingest(t, f.event(sourceRuntime, s, 1, frame)); got.Applied != 2 {
+	if got := f.ingest(t, f.event(sourceRuntime, s, 1, frame)); got.Applied != 1 {
 		t.Fatalf("source binding ingestion=%+v", got)
 	}
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
@@ -827,7 +824,7 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -849,7 +846,7 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 		}
 		w, err := worker.New(restartedPool, slog.New(slog.NewTextHandler(&workerLog, nil)), nil, worker.DefaultConfig(), "migration-e2e",
 			wiretest.Ports(t, restartedPool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: droppingRuntime, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: corruptingEnvironment})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: sourceEnvironment, cmd.To: corruptingEnvironment})))
 		if err != nil {
 			restartedPool.Close()
 			t.Fatal(err)
@@ -985,9 +982,8 @@ func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
 	f.tick(t, runtime)
 	frame := simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "stale-worker-session"}),
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "stale-worker-environment", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at.Add(time.Minute)}),
 	)
-	if got := f.ingest(t, f.event(runtime, s, 1, frame)); got.Applied != 2 {
+	if got := f.ingest(t, f.event(runtime, s, 1, frame)); got.Applied != 1 {
 		t.Fatalf("source bindings=%+v", got)
 	}
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
@@ -1000,7 +996,7 @@ func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1013,7 +1009,7 @@ func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
 		t.Helper()
 		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), owner,
 			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: source, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.provider: sourceEnvironment, cmd.To: targetEnvironment})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: sourceEnvironment, cmd.To: targetEnvironment})))
 		if err != nil {
 			t.Fatal(err)
 		}

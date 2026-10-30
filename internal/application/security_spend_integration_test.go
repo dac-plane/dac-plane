@@ -257,8 +257,12 @@ func TestSecuritySpendProofCannotReplayThroughAnotherCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd.Nonce = "security-original"
+	// The receipt dispatches environment provisioning; the runtime start waits
+	// for readiness, so the replay must name the same operations and receipt.
 	again, err := application.Assert(f.ctx, f.pool, cmd)
-	if err != nil || again.Dispatch.ID != accepted.Dispatch.ID || *again.Receipt != *accepted.Receipt || again.Reservation != accepted.Reservation {
+	if err != nil || accepted.Receipt == nil || again.Receipt == nil || again.Dispatch != nil ||
+		again.Operation.ID != accepted.Operation.ID || again.Attempt.EnvironmentOperation != accepted.Attempt.EnvironmentOperation ||
+		*again.Receipt != *accepted.Receipt || again.Reservation != accepted.Reservation {
 		t.Fatalf("original replay = %+v, %v", again, err)
 	}
 	rt := f.runtime(t, s.Operation.ID)

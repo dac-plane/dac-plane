@@ -218,6 +218,14 @@ func TestEventForgedEnvelopesRefusedBeforeMutation(t *testing.T) {
 		"another tenant's peer":   {contracts.Peer{Tenant: mustID[ids.Tenant](t), Provider: f.provider}, f.event(rt, s, 1, frame), contracts.FailureUnauthorized},
 		"another attempt's op":    {f.peer(), rt.Event(s.Attempt.ID, other.Operation.ID, eventStream, 1, frame), contracts.FailureUnauthorized},
 	}
+	// Provisioning already bound each attempt's environment; forged envelopes
+	// must add nothing and change no state.
+	tables := []string{"binding", "stream_cursor"}
+	before := map[string]int{}
+	for _, table := range tables {
+		before[table] = f.count(t, table, "true")
+	}
+	_, stateBefore := f.states(t, s)
 	for name, tc := range cases {
 		_, err := application.Ingest(f.ctx, f.pool, tc.peer, tc.event, f.at)
 		var failure *contracts.Failure
@@ -225,13 +233,13 @@ func TestEventForgedEnvelopesRefusedBeforeMutation(t *testing.T) {
 			t.Errorf("%s: Ingest() = %v, want %s", name, err, tc.code)
 		}
 	}
-	for _, table := range []string{"binding", "stream_cursor"} {
-		if n := f.count(t, table, "true"); n != 0 {
-			t.Fatalf("%s rows after forged envelopes = %d, want 0", table, n)
+	for _, table := range tables {
+		if n := f.count(t, table, "true"); n != before[table] {
+			t.Fatalf("%s rows after forged envelopes = %d, want %d", table, n, before[table])
 		}
 	}
-	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptProvisioning {
-		t.Fatalf("forged envelope changed state: %s/%s", task, attempt)
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != stateBefore {
+		t.Fatalf("forged envelope changed state: %s/%s, want running/%s", task, attempt, stateBefore)
 	}
 	// The other tenant's operation is unknown in that tenant: nothing to
 	// record. The two envelopes naming this tenant's operations leave evidence.
@@ -245,8 +253,13 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	first, rt := f.live(t, "n-1")
 	second, _ := f.live(t, "n-2")
+	_, secondBefore := f.states(t, second)
 	f.ingest(t, f.event(rt, first, 1, simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-1"}),
+	)))
+	// Only the attempt's environment provider may observe its resource.
+	// Provisioning already streamed this operation's first observation.
+	f.ingestEnvironmentNow(t, f.environmentEvent(first, first.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
 		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at}),
 	)))
 	got := f.ingest(t, f.event(rt, second, 1, simulator.RowsFrame(false,
@@ -257,10 +270,10 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 	if got.Refused != 3 || got.Applied != 0 {
 		t.Fatalf("ingestion = %+v, want all three refused", got)
 	}
-	if _, attempt := f.states(t, second); attempt != lifecycle.AttemptProvisioning {
-		t.Fatalf("second attempt = %s, want unchanged", attempt)
+	if _, attempt := f.states(t, second); attempt != secondBefore {
+		t.Fatalf("second attempt = %s, want unchanged %s", attempt, secondBefore)
 	}
-	observation, err := store.GetObservation(f.ctx, f.pool, f.tenant, f.provider, "box-1")
+	observation, err := store.GetObservation(f.ctx, f.pool, f.tenant, f.environmentProvider, "box-1")
 	if err != nil {
 		t.Fatalf("GetObservation() error = %v", err)
 	}

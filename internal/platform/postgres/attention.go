@@ -230,7 +230,7 @@ func GetOperationByAttempt(ctx context.Context, q Querier, tenant ids.TenantID, 
 		where tenant_id = $1 and attempt_id = $2
 		and not exists (select 1 from governed_action g where g.tenant_id=p.tenant_id and g.operation_id=p.operation_id)
 		and not exists (select 1 from artifact_stage_operation s where s.tenant_id=p.tenant_id and s.operation_id=p.operation_id)
-		and exists (select 1 from outbox x where x.tenant_id=p.tenant_id and x.record_id=p.operation_id and x.payload->>'role'='runtime' and x.payload->>'method'='start_turn')
+		and not exists (select 1 from outbox x where x.tenant_id=p.tenant_id and x.record_id=p.operation_id and x.payload->>'role'='environment')
 		and not exists (select 1 from migration_item m where m.tenant_id=p.tenant_id and (p.operation_id in (m.quiesce_operation_id,m.environment_operation_id,m.cleanup_operation_id,m.target_cleanup_operation_id) or (p.operation_id=m.restart_operation_id and m.state not in ('cleaning_up','completed'))))
 		order by created_at desc, version desc limit 1`,
 		tenant.String(), attempt.String(),
