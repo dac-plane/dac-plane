@@ -36,6 +36,30 @@ type reportUsageAfterMigrationProvision struct {
 	done   bool
 }
 
+type dropMigrationCleanupReplies struct {
+	contracts.Port
+	dropped map[contracts.MigrationStage]bool
+}
+
+func (p *dropMigrationCleanupReplies) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	reply, err := p.Port.Send(ctx, request)
+	if err != nil || request.Method != contracts.MethodStop {
+		return reply, err
+	}
+	var migrationRequest contracts.MigrationRequest
+	if err := json.Unmarshal(request.Arguments, &migrationRequest); err != nil {
+		return reply, err
+	}
+	if migrationRequest.Stage != contracts.MigrationTargetEnvironmentCleaned && migrationRequest.Stage != contracts.MigrationSourceCleaned {
+		return reply, nil
+	}
+	if p.dropped[migrationRequest.Stage] {
+		return reply, nil
+	}
+	p.dropped[migrationRequest.Stage] = true
+	return contracts.Reply{}, errors.New("simulated lost cleanup reply")
+}
+
 type reportUsageAfterMigrationQuiesce struct {
 	contracts.Port
 	report func()
@@ -441,7 +465,7 @@ func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +536,7 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,11 +633,7 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,8 +659,7 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 		})
 	}}
 	var workerLog bytes.Buffer
-	droppingTargetStop := &dropFirstMigrationStopReply{Port: provision}
-	droppingSourceStop := &dropFirstMigrationStopReply{Port: sourceEnvironment}
+	droppingCleanupReplies := &dropMigrationCleanupReplies{Port: provision, dropped: make(map[contracts.MigrationStage]bool)}
 	checkedLostCleanupReply := false
 	checkedLostSourceCleanupReply := false
 	for pass := range 10 {
@@ -651,14 +670,14 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 		}
 		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(&workerLog, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("migration-budget-recheck-%d", pass),
 			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: droppingSourceStop, cmd.To: droppingTargetStop})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: droppingCleanupReplies})))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := w.ReapClaims(f.ctx); err != nil {
 			t.Fatal(err)
 		}
-		if droppingTargetStop.dropped && !checkedLostCleanupReply {
+		if droppingCleanupReplies.dropped[contracts.MigrationTargetEnvironmentCleaned] && !checkedLostCleanupReply {
 			checkedLostCleanupReply = true
 			items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
 			if err != nil || len(items) != 1 {
@@ -681,11 +700,11 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 			if err != nil || targetCleanup.State != lifecycle.OperationUncertain {
 				t.Fatalf("target cleanup operation=%s err=%v; want uncertain", targetCleanup.State, err)
 			}
-			if sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 0 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
-				t.Fatalf("cleanup effects before exact replay source=%d target=%d", sourceEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
+			if targetEnvironment.Ledger().Effects(items[0].CleanupOperation) != 0 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
+				t.Fatalf("cleanup effects before exact replay source=%d target=%d", targetEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
 			}
 		}
-		if droppingSourceStop.dropped && !checkedLostSourceCleanupReply {
+		if droppingCleanupReplies.dropped[contracts.MigrationSourceCleaned] && !checkedLostSourceCleanupReply {
 			checkedLostSourceCleanupReply = true
 			items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
 			if err != nil || len(items) != 1 {
@@ -699,8 +718,8 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 			if err != nil || sourceCleanup.State != lifecycle.OperationUncertain {
 				t.Fatalf("source cleanup operation=%s err=%v; want uncertain", sourceCleanup.State, err)
 			}
-			if sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
-				t.Fatalf("cleanup effects before exact source replay source=%d target=%d", sourceEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
+			if targetEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
+				t.Fatalf("cleanup effects before exact source replay source=%d target=%d", targetEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
 			}
 		}
 	}
@@ -718,14 +737,14 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 			t.Fatal("target runtime started after its budget coverage was lost")
 		}
 	}
-	if sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
-		t.Fatalf("budget-abort cleanup effects source=%d target=%d; want one confirmed stop each", sourceEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
+	if targetEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation) != 1 {
+		t.Fatalf("budget-abort cleanup effects source=%d target=%d; want one confirmed stop each", targetEnvironment.Ledger().Effects(items[0].CleanupOperation), targetEnvironment.Ledger().Effects(items[0].TargetCleanupOperation))
 	}
 	if targetEnvironment.Ledger().Deliveries(items[0].TargetCleanupOperation) != 2 {
 		t.Fatalf("target cleanup deliveries=%d; want lost-reply replay under stable operation", targetEnvironment.Ledger().Deliveries(items[0].TargetCleanupOperation))
 	}
-	if sourceEnvironment.Ledger().Deliveries(items[0].CleanupOperation) != 2 {
-		t.Fatalf("source cleanup deliveries=%d; want lost-reply replay under stable operation", sourceEnvironment.Ledger().Deliveries(items[0].CleanupOperation))
+	if targetEnvironment.Ledger().Deliveries(items[0].CleanupOperation) != 2 {
+		t.Fatalf("source cleanup deliveries=%d; want lost-reply replay under stable operation", targetEnvironment.Ledger().Deliveries(items[0].CleanupOperation))
 	}
 	reservationID, err := ids.Parse[ids.Reservation](items[0].TargetAttempt.String())
 	if err != nil {
@@ -824,11 +843,7 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +861,7 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 		}
 		w, err := worker.New(restartedPool, slog.New(slog.NewTextHandler(&workerLog, nil)), nil, worker.DefaultConfig(), "migration-e2e",
 			wiretest.Ports(t, restartedPool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: droppingRuntime, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: sourceEnvironment, cmd.To: corruptingEnvironment})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: corruptingEnvironment})))
 		if err != nil {
 			restartedPool.Close()
 			t.Fatal(err)
@@ -921,8 +936,15 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 	if !hasRuntime || !hasEnvironment {
 		t.Fatalf("target bindings=%+v; want runtime session and environment resource", targetBindings)
 	}
-	if sourceRuntime.Ledger().Effects(items[0].QuiesceOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].EnvironmentOperation) != 1 || targetRuntime.Ledger().Effects(items[0].RestartOperation) != 1 || sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 {
-		t.Fatalf("migration effects source-quiesce=%d target-env=%d target-runtime=%d source-cleanup=%d", sourceRuntime.Ledger().Effects(items[0].QuiesceOperation), targetEnvironment.Ledger().Effects(items[0].EnvironmentOperation), targetRuntime.Ledger().Effects(items[0].RestartOperation), sourceEnvironment.Ledger().Effects(items[0].CleanupOperation))
+	if target.EnvironmentProvider != f.environmentProvider || target.EnvironmentOperation.IsZero() {
+		t.Fatalf("target environment assignment=%s/%s; want the task provider %s", target.EnvironmentProvider, target.EnvironmentOperation, f.environmentProvider)
+	}
+	environmentOperation, err := store.GetOperation(f.ctx, f.pool, f.tenant, target.EnvironmentOperation)
+	if err != nil || environmentOperation.Provider != f.environmentProvider {
+		t.Fatalf("target environment operation provider=%s err=%v; want %s", environmentOperation.Provider, err, f.environmentProvider)
+	}
+	if sourceRuntime.Ledger().Effects(items[0].QuiesceOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].EnvironmentOperation) != 1 || targetRuntime.Ledger().Effects(items[0].RestartOperation) != 1 || targetEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 {
+		t.Fatalf("migration effects source-quiesce=%d target-env=%d target-runtime=%d source-cleanup=%d", sourceRuntime.Ledger().Effects(items[0].QuiesceOperation), targetEnvironment.Ledger().Effects(items[0].EnvironmentOperation), targetRuntime.Ledger().Effects(items[0].RestartOperation), targetEnvironment.Ledger().Effects(items[0].CleanupOperation))
 	}
 	if sourceRuntime.Ledger().Deliveries(items[0].QuiesceOperation) != 2 {
 		t.Fatalf("quiesce deliveries=%d; want lost-reply replay under stable operation identity", sourceRuntime.Ledger().Deliveries(items[0].QuiesceOperation))
@@ -996,11 +1018,7 @@ func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	targetEnvironment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1009,7 +1027,7 @@ func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
 		t.Helper()
 		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), owner,
 			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: source, cmd.To: targetRuntime},
-				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: sourceEnvironment, cmd.To: targetEnvironment})))
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: targetEnvironment})))
 		if err != nil {
 			t.Fatal(err)
 		}

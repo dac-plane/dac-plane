@@ -148,7 +148,11 @@ func (w *Worker) migrationPortsReady(ctx context.Context, tenant ids.TenantID, p
 	if w.port(tenant, pass.To, contracts.RoleRuntime) == nil {
 		return false, nil
 	}
-	if w.port(tenant, pass.To, contracts.RoleEnvironment) == nil {
+	source, err := store.GetAttempt(ctx, w.pool, tenant, item.SourceAttempt)
+	if err != nil {
+		return false, err
+	}
+	if w.port(tenant, migrationEnvironmentProvider(source, pass), contracts.RoleEnvironment) == nil {
 		return false, nil
 	}
 	bindings, err := store.ListAttemptBindings(ctx, w.pool, tenant, item.SourceAttempt)
@@ -168,6 +172,13 @@ func (w *Worker) migrationPortsReady(ctx context.Context, tenant ids.TenantID, p
 		}
 	}
 	return runtimeBound && environmentBound, nil
+}
+
+func migrationEnvironmentProvider(source lifecycle.Attempt, pass lifecycle.MigrationPass) ids.ProviderID {
+	if !source.EnvironmentProvider.IsZero() {
+		return source.EnvironmentProvider
+	}
+	return pass.To
 }
 
 func (w *Worker) finishEmptyMigration(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, migration ids.MigrationID) error {
@@ -592,6 +603,12 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if reservation.State != lifecycle.ReservationHeld || reservation.Amount <= reservation.Consumed || budget.Consumed+budget.Reserved > budget.Ceiling {
 		return errMigrationBudgetExhausted
 	}
+	environmentProvider := migrationEnvironmentProvider(source, pass)
+	envOpID, err := ids.New[ids.Operation]()
+	if err != nil {
+		return err
+	}
+	target.EnvironmentProvider, target.EnvironmentOperation = environmentProvider, envOpID
 	if _, _, err := store.InsertAttempt(ctx, u, target); err != nil {
 		return err
 	}
@@ -618,10 +635,6 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if _, _, _, err := store.ReserveBudget(ctx, u, store.ReservationRequest{Tenant: tenant, Budget: budget.ID, Reservation: targetReservation, Attempt: target.ID, Amount: reservation.Amount - reservation.Consumed}, tr); err != nil {
 		return err
 	}
-	envOpID, err := ids.New[ids.Operation]()
-	if err != nil {
-		return err
-	}
 	runtimeOpID, err := ids.New[ids.Operation]()
 	if err != nil {
 		return err
@@ -630,7 +643,7 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if err != nil {
 		return err
 	}
-	envOp, err := lifecycle.NewProviderOperation(envOpID, tenant, target.ID, pass.To, now.UTC())
+	envOp, err := lifecycle.NewProviderOperation(envOpID, tenant, target.ID, environmentProvider, now.UTC())
 	if err != nil {
 		return err
 	}
@@ -638,7 +651,7 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if err != nil {
 		return err
 	}
-	targetCleanupOp, err := lifecycle.NewProviderOperation(targetCleanupID, tenant, target.ID, pass.To, now.UTC())
+	targetCleanupOp, err := lifecycle.NewProviderOperation(targetCleanupID, tenant, target.ID, environmentProvider, now.UTC())
 	if err != nil {
 		return err
 	}
@@ -673,6 +686,9 @@ func (w *Worker) allocateMigrationTargetTx(ctx context.Context, u *store.UnitOfW
 	if sourceEnvironment == nil {
 		return store.ErrNotFound
 	}
+	if !source.EnvironmentProvider.IsZero() && sourceEnvironment.Provider != source.EnvironmentProvider {
+		return store.ErrPayloadMismatch
+	}
 	if sourceRuntime == nil || sourceRuntime.Provider != pass.From {
 		return store.ErrPayloadMismatch
 	}
@@ -700,7 +716,11 @@ func stepTransition(version uint64, at time.Time) (store.Transition, error) {
 
 func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, pass lifecycle.MigrationPass) error {
 	if item.EnvironmentRef == "" {
-		port := w.port(tenant, pass.To, contracts.RoleEnvironment)
+		envOp, err := store.GetOperation(ctx, w.pool, tenant, item.EnvironmentOperation)
+		if err != nil {
+			return err
+		}
+		port := w.port(tenant, envOp.Provider, contracts.RoleEnvironment)
 		if port == nil {
 			return nil
 		}
@@ -918,7 +938,7 @@ func (w *Worker) settleMigrationEnvironment(ctx context.Context, tenant ids.Tena
 	if err := acceptMigrationOperation(ctx, u, tenant, op, now.UTC()); err != nil {
 		return err
 	}
-	binding := lifecycle.Binding{Tenant: tenant, Attempt: current.TargetAttempt, Provider: pass.To, Operation: current.EnvironmentOperation, Kind: lifecycle.ResourceEnvironmentResource, NativeRef: receipt.EnvironmentRef, BoundAt: now.UTC()}
+	binding := lifecycle.Binding{Tenant: tenant, Attempt: current.TargetAttempt, Provider: op.Provider, Operation: current.EnvironmentOperation, Kind: lifecycle.ResourceEnvironmentResource, NativeRef: receipt.EnvironmentRef, BoundAt: now.UTC()}
 	if err := insertMigrationBinding(ctx, u, tenant, binding); err != nil {
 		return err
 	}
@@ -1013,7 +1033,7 @@ func (w *Worker) driveMigrationAbortCleanup(ctx context.Context, tenant ids.Tena
 			return err
 		}
 		if op.State != lifecycle.OperationAccepted {
-			port := w.port(tenant, pass.To, contracts.RoleEnvironment)
+			port := w.port(tenant, op.Provider, contracts.RoleEnvironment)
 			if port == nil {
 				return nil
 			}
