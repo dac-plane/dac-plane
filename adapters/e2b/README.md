@@ -14,6 +14,8 @@ The adapter persists operation fingerprints and sandbox mappings in bbolt, store
 
 Sandbox creation sets `allow_internet_access=false` and denies outbound IPv4 (`0.0.0.0/0`) through the v2 network policy. The qualification verifies host HTTPS connectivity, then performs an HTTPS request from the sandbox and requires a network-denial result; a bare TCP handshake is not treated as an Internet request. E2B Cloud rejects an IPv6 deny CIDR (`::/0`), so this qualification claims only the IPv4 behavior it probes. E2B API keys are read from `APIKEY_E2B` by the qualification runner and are not persisted or logged. The adapter service itself reads `DAC_E2B_API_KEY_FILE` at runtime.
 
+For task attempts, DAC sends an empty object to `provision` and the stable environment-operation ID is used as E2B metadata. The adapter records the returned opaque `resource_ref` and emits `environment.observed` with the observed running state. A `stop` request names the original provision operation; the adapter resolves its journal mapping, deletes the matching sandbox, and emits an absent observation. If stop reaches the adapter before provision, the journal records cancellation against that provision ID so a later create is refused. Migration-stage requests continue using their separate migration receipt contract.
+
 ## Configuration
 
 | Setting | Purpose |

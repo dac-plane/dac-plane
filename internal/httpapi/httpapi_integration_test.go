@@ -44,17 +44,18 @@ const audience = "https://dac-plane.example/api"
 // unrelated principal and a tenant reader, a live simulated provider, and the
 // Surface API served over HTTP with real access tokens.
 type surface struct {
-	ctx         context.Context
-	pool        *pgxpool.Pool
-	server      *httptest.Server
-	issuer      *oidctest.Issuer
-	key         any
-	tenant      ids.TenantID
-	owner       ids.PrincipalID
-	provider    ids.ProviderID
-	at          time.Time
-	provisioner *provision.Provisioner
-	reader      ids.PrincipalID
+	ctx                 context.Context
+	pool                *pgxpool.Pool
+	server              *httptest.Server
+	issuer              *oidctest.Issuer
+	key                 any
+	tenant              ids.TenantID
+	owner               ids.PrincipalID
+	provider            ids.ProviderID
+	environmentProvider ids.ProviderID
+	at                  time.Time
+	provisioner         *provision.Provisioner
+	reader              ids.PrincipalID
 }
 
 func newSurface(t *testing.T) *surface {
@@ -85,7 +86,7 @@ func newSurfaceWith(t *testing.T, options httpapi.Options) *surface {
 	}
 	t.Cleanup(pool.Close)
 
-	s := &surface{ctx: ctx, pool: pool, provider: mustID[ids.Provider](t), at: time.Now().UTC().Truncate(time.Microsecond)}
+	s := &surface{ctx: ctx, pool: pool, provider: mustID[ids.Provider](t), environmentProvider: mustID[ids.Provider](t), at: time.Now().UTC().Truncate(time.Microsecond)}
 	s.issuer = oidctest.New(t)
 	s.issuer.Audience = audience
 	key := oidctest.NewRSAKey(t)
@@ -126,6 +127,9 @@ func newSurfaceWith(t *testing.T, options httpapi.Options) *surface {
 	}
 	defer func() { _ = uow.Rollback(ctx) }()
 	if _, err := store.UpsertHarness(ctx, uow, lifecycle.HarnessQualification{Tenant: s.tenant, Provider: s.provider, Mode: lifecycle.HarnessLive, Version: 1, UpdatedAt: s.at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutProviderRegistration(ctx, uow, contracts.ProviderRegistration{Tenant: s.tenant, Provider: s.environmentProvider, Role: contracts.RoleEnvironment, UpdatedAt: s.at}); err != nil {
 		t.Fatal(err)
 	}
 	if err := uow.Commit(ctx); err != nil {
@@ -224,7 +228,7 @@ func decodeInto[T any](t *testing.T, r reply, status int) T {
 }
 
 func (s *surface) submitBody() httpapi.SubmitTaskRequest {
-	return httpapi.SubmitTaskRequest{Provider: s.provider, Objective: "Update the integration fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: s.at.Add(time.Hour), Unit: "tokens", Ceiling: 1000, Amount: 100}
+	return httpapi.SubmitTaskRequest{Provider: s.provider, EnvironmentProvider: s.environmentProvider, Objective: "Update the integration fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: s.at.Add(time.Hour), Unit: "tokens", Ceiling: 1000, Amount: 100}
 }
 
 func (s *surface) seed(t *testing.T, apply func(*store.UnitOfWork) error) {
@@ -245,6 +249,7 @@ func (s *surface) seed(t *testing.T, apply func(*store.UnitOfWork) error) {
 // dispatch runs one worker pass with a runtime that accepts the operation.
 func (s *surface) dispatch(t *testing.T, operation ids.OperationID) *simulator.Runtime {
 	t.Helper()
+	s.dispatchPendingEnvironments(t)
 	rt, err := simulator.NewRuntime(simulator.Config{Tenant: s.tenant, Provider: s.provider}, simulator.RuntimeScenario{
 		Operations: map[ids.OperationID]simulator.RuntimeOp{operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}},
 	})
@@ -260,6 +265,44 @@ func (s *surface) dispatch(t *testing.T, operation ids.OperationID) *simulator.R
 		t.Fatal(err)
 	}
 	return rt
+}
+
+func (s *surface) dispatchPendingEnvironments(t *testing.T) {
+	t.Helper()
+	rows, err := store.OutboxReadyDispatch(s.ctx, s.pool, s.tenant, time.Now().UTC().Add(time.Second), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations := map[ids.OperationID]simulator.EnvironmentOp{}
+	for _, row := range rows {
+		body, parseErr := worker.ParseDispatchBody(row.Payload)
+		if parseErr != nil || body.Role != contracts.RoleEnvironment || (body.Method != contracts.MethodProvision && body.Method != contracts.MethodStop) {
+			continue
+		}
+		effect := simulator.EnvironmentProvisioned
+		if body.Method == contracts.MethodStop {
+			effect = simulator.EnvironmentStopped
+		}
+		operations[body.Operation] = simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: effect}
+	}
+	if len(operations) == 0 {
+		return
+	}
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: s.tenant, Provider: s.environmentProvider}, simulator.EnvironmentScenario{Operations: operations})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := wiretest.Ports(t, s.pool, s.tenant, map[ids.ProviderID]contracts.Port{s.environmentProvider: environment})
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "surface-environment-worker", ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Observe(s.ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func row(sequence uint64, kind string, payload any) simulator.Row {
@@ -726,8 +769,12 @@ func TestSurfaceGovernedSubmissionThroughHTTP(t *testing.T) {
 		t.Fatalf("assertion under another task: %d %s", r.status, r.body)
 	}
 	asserted := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: path, as: "owner", key: "assert-1", ifMatch: `"` + strconv.FormatUint(sub.Challenge.Version, 10) + `"`, body: assertion}), http.StatusOK)
-	if asserted.Receipt == nil || asserted.Dispatch == nil {
+	if asserted.Receipt == nil || asserted.Dispatch != nil || asserted.Attempt.State != lifecycle.AttemptProvisioning {
 		t.Fatalf("asserted submission = receipt %v dispatch %v", asserted.Receipt, asserted.Dispatch)
+	}
+	environmentOperation, err := store.GetOperation(s.ctx, s.pool, s.tenant, asserted.Attempt.EnvironmentOperation)
+	if err != nil || environmentOperation.State != lifecycle.OperationDispatched {
+		t.Fatalf("asserted environment operation = %+v, %v; want dispatched before runtime", environmentOperation, err)
 	}
 }
 
@@ -826,6 +873,7 @@ func TestSurfaceStreamNeverRepeatsEventsAcrossHeartbeats(t *testing.T) {
 func TestSurfaceFollowsTheRuntimeStreamOverTheWire(t *testing.T) {
 	s := newSurface(t)
 	sub := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "submit-o", body: s.submitBody()}), http.StatusCreated)
+	s.dispatchPendingEnvironments(t)
 	stream := &simulator.StreamScript{Frames: []contracts.StreamFrame{
 		simulator.ConnectedFrame(time.Now().UTC()),
 		simulator.RowsFrame(false,

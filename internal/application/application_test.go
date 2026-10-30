@@ -28,10 +28,12 @@ func unitActor(t *testing.T) identity.AuthorizationContext {
 func validSubmit(t *testing.T) SubmitTask {
 	t.Helper()
 	provider, _ := ids.New[ids.Provider]()
+	environmentProvider, _ := ids.New[ids.Provider]()
 	return SubmitTask{
-		Command:  Command{Actor: unitActor(t), Nonce: "n-1"},
-		At:       unitNow,
-		Provider: provider,
+		Command:             Command{Actor: unitActor(t), Nonce: "n-1"},
+		At:                  unitNow,
+		Provider:            provider,
+		EnvironmentProvider: environmentProvider,
 		Brief: lifecycle.ExecutionBrief{
 			Objective:          "Update the fixture",
 			AcceptanceCriteria: []string{"The requested file contains the expected content"},
@@ -49,19 +51,20 @@ func TestSubmitValidation(t *testing.T) {
 		t.Fatalf("valid submission: %v", err)
 	}
 	for name, mutate := range map[string]func(c *SubmitTask){
-		"zero actor":          func(c *SubmitTask) { c.Actor = identity.AuthorizationContext{} },
-		"empty nonce":         func(c *SubmitTask) { c.Nonce = "" },
-		"over-long nonce":     func(c *SubmitTask) { c.Nonce = strings.Repeat("n", maxNonceLength+1) },
-		"expected version":    func(c *SubmitTask) { c.ExpectedVersion = 1 },
-		"no deadline":         func(c *SubmitTask) { c.Deadline = time.Time{} },
-		"no command time":     func(c *SubmitTask) { c.At = time.Time{} },
-		"no provider":         func(c *SubmitTask) { c.Provider = ids.ProviderID{} },
-		"no brief":            func(c *SubmitTask) { c.Brief = lifecycle.ExecutionBrief{} },
-		"unknown demand":      func(c *SubmitTask) { c.Demand = "urgent" },
-		"malformed unit":      func(c *SubmitTask) { c.Unit = "Tokens" },
-		"zero amount":         func(c *SubmitTask) { c.Amount = 0 },
-		"zero ceiling":        func(c *SubmitTask) { c.Ceiling = 0 },
-		"amount beyond bound": func(c *SubmitTask) { c.Amount = 1 << 60 },
+		"zero actor":              func(c *SubmitTask) { c.Actor = identity.AuthorizationContext{} },
+		"empty nonce":             func(c *SubmitTask) { c.Nonce = "" },
+		"over-long nonce":         func(c *SubmitTask) { c.Nonce = strings.Repeat("n", maxNonceLength+1) },
+		"expected version":        func(c *SubmitTask) { c.ExpectedVersion = 1 },
+		"no deadline":             func(c *SubmitTask) { c.Deadline = time.Time{} },
+		"no command time":         func(c *SubmitTask) { c.At = time.Time{} },
+		"no provider":             func(c *SubmitTask) { c.Provider = ids.ProviderID{} },
+		"no environment provider": func(c *SubmitTask) { c.EnvironmentProvider = ids.ProviderID{} },
+		"no brief":                func(c *SubmitTask) { c.Brief = lifecycle.ExecutionBrief{} },
+		"unknown demand":          func(c *SubmitTask) { c.Demand = "urgent" },
+		"malformed unit":          func(c *SubmitTask) { c.Unit = "Tokens" },
+		"zero amount":             func(c *SubmitTask) { c.Amount = 0 },
+		"zero ceiling":            func(c *SubmitTask) { c.Ceiling = 0 },
+		"amount beyond bound":     func(c *SubmitTask) { c.Amount = 1 << 60 },
 	} {
 		c := validSubmit(t)
 		mutate(&c)

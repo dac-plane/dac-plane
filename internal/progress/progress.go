@@ -100,6 +100,13 @@ func (s Step) FollowOperation(ctx context.Context, operation lifecycle.ProviderO
 	if err != nil {
 		return err
 	}
+	// A provision reply only acknowledges the request. Readiness is established
+	// by an EnvironmentObserved entry, so keep the Attempt provisioning while
+	// the assigned environment operation is accepted or being reconciled.
+	if attempt.EnvironmentOperation == operation.ID && attempt.State == lifecycle.AttemptProvisioning &&
+		(operation.State == lifecycle.OperationAccepted || operation.State == lifecycle.OperationSucceeded || operation.State == lifecycle.OperationUncertain) {
+		return nil
+	}
 	event, target, ok := lifecycle.AttemptFollowsOperation(operation.State, attempt.State)
 	if !ok {
 		return nil

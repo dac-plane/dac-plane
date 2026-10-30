@@ -345,7 +345,7 @@ func TestReviewSpendGovernedReworkAwaitsExactReceipt(t *testing.T) {
 	g.propose(t, true)
 	r := g.finalize(t)
 	cmd := g.reviewCommand(t, r, "spend-rework", lifecycle.DispositionRequestChanges)
-	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100, Spend: true}
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100, Spend: true}
 	view, err := application.ReviewResult(g.ctx, g.pool, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -364,11 +364,15 @@ func TestReviewSpendGovernedReworkAwaitsExactReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if admitted.Dispatch == nil || admitted.Receipt == nil || admitted.Task.State != lifecycle.TaskRunning {
+	if admitted.Dispatch != nil || admitted.Receipt == nil || admitted.Task.State != lifecycle.TaskRunning {
 		t.Fatalf("assertion failed to dispatch=%+v", admitted)
 	}
+	environmentOperation, err := store.GetOperation(g.ctx, g.pool, g.tenant, admitted.Attempt.EnvironmentOperation)
+	if err != nil || environmentOperation.State != lifecycle.OperationDispatched {
+		t.Fatalf("environment provision = %+v, %v; want dispatched after receipt", environmentOperation, err)
+	}
 	replay, err := application.Assert(g.ctx, g.pool, ac)
-	if err != nil || replay.Operation.ID != admitted.Operation.ID {
+	if err != nil || replay.Operation.ID != admitted.Operation.ID || replay.Attempt.EnvironmentOperation != admitted.Attempt.EnvironmentOperation || replay.Dispatch != nil {
 		t.Fatal("assertion replay changed work", err)
 	}
 	if g.count(t, "attempt", "true") != 2 || g.count(t, "spend_receipt", "true") != 1 {

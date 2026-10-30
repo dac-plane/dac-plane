@@ -171,7 +171,7 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	}
 	output, err := h.composeOutput("run", "--rm", "--no-deps", "old-schema-check")
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
-		t.Fatalf("old image at schema 15 = %v, output %q", err, output)
+		t.Fatalf("old image at schema 16 = %v, output %q", err, output)
 	}
 
 	h.decide(attention)

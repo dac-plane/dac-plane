@@ -134,11 +134,6 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 	if submission.Reservation.State != lifecycle.ReservationHeld {
 		return nil, fmt.Errorf("%w: the submission's reservation is no longer held for this amount", ErrInvalidCommand)
 	}
-	brief, present := submission.Task.Brief()
-	if !present {
-		return nil, fmt.Errorf("%w: legacy task has no execution brief", ErrInvalidCommand)
-	}
-
 	// Assertion time remains evidence, never the authorization clock.
 	u.lastAt = cmd.Assertion.AssertedAt
 	if _, _, _, err := store.AssertSpendChallenge(ctx, u.uow, tenant, submission.Challenge.ID, cmd.Assertion, cmd.ExpectedVersion, tr); err != nil {
@@ -152,10 +147,13 @@ func assertSpend(ctx context.Context, u *unit, cmd AssertSpend) (json.RawMessage
 
 	// Only a recorded operation can create dispatch work. Exact command
 	// replay bypasses this callback and cannot enqueue another row.
+	environmentOperation, err := store.GetOperation(ctx, u.uow, tenant, submission.Attempt.EnvironmentOperation)
+	if err != nil {
+		return nil, err
+	}
 	if err := enqueue(ctx, u, tenant, dispatchSpec{
-		operation: submission.Operation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
-		deadline: submission.Deadline, unit: submission.Unit, amount: submission.Amount,
-		start: contracts.RuntimeStart{Brief: brief},
+		operation: environmentOperation, task: submission.Task.ID, attempt: submission.Attempt.ID, demand: submission.Demand,
+		deadline: submission.Deadline, role: contracts.RoleEnvironment, method: contracts.MethodProvision, arguments: json.RawMessage(`{}`),
 	}); err != nil {
 		return nil, err
 	}

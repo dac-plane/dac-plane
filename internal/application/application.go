@@ -37,6 +37,9 @@ var (
 	// ErrNoHarness reports a provider with no qualified harness: absent, or
 	// qualified off.
 	ErrNoHarness = errors.New("no qualified harness for the selected provider")
+	// ErrNoEnvironment reports that the selected environment provider is not
+	// registered for this tenant.
+	ErrNoEnvironment = errors.New("no registered environment provider for the selected id")
 	// ErrPayloadMismatch reports a nonce reused with a different payload. The
 	// original outcome is untouched.
 	ErrPayloadMismatch = store.ErrPayloadMismatch

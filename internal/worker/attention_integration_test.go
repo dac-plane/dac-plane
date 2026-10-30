@@ -4,6 +4,7 @@ package worker_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -74,6 +75,29 @@ func (f *fixture) arrangeDecidedAttention(t *testing.T, ctx context.Context, at 
 	}
 	if _, replayed, err := store.InsertOperation(ctx, uow, operation); err != nil || replayed {
 		t.Fatalf("InsertOperation() = %v, %v", replayed, err)
+	}
+	// Decision delivery resolves its parent operation from the durable runtime
+	// start outbox. Model that already-dispatched runtime turn and consume its
+	// outbox row here so these tests focus on attention delivery only.
+	runtimeOutboxID := mustID[ids.Any](t)
+	runtimeBody, err := json.Marshal(map[string]any{
+		"operation": operation.ID.String(), "role": contracts.RoleRuntime, "method": contracts.MethodStartTurn,
+		"arguments": json.RawMessage(`{"brief":{"objective":"test","acceptance_criteria":["done"]}}`),
+		"deadline":  at.Add(time.Hour).Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(runtime dispatch) error = %v", err)
+	}
+	runtimeTransition := store.Transition{
+		ExpectedVersion: operation.Version, At: at, Actor: f.actor, AuditID: mustID[ids.Audit](t),
+		Outbox: &store.OutboxPayload{ID: runtimeOutboxID, Attempt: attempt.ID, Demand: contracts.DemandPerson, Body: runtimeBody},
+	}
+	operation, _, err = store.ApplyOperation(ctx, uow, f.tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, runtimeTransition)
+	if err != nil {
+		t.Fatalf("ApplyOperation(dispatch) error = %v", err)
+	}
+	if _, err := uow.Exec(ctx, `update outbox set status='done', claimed_at=$3, claimed_by='fixture', lease_epoch=1, lease_expires_at=$3, updated_at=$3 where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), runtimeOutboxID.String(), at); err != nil {
+		t.Fatalf("consume runtime outbox: %v", err)
 	}
 	request, err := lifecycle.NewAttentionRequest(lifecycle.AttentionRequest{
 		ID: mustID[ids.Attention](t), Tenant: f.tenant, Task: task.ID, Attempt: attempt.ID,

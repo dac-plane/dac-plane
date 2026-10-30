@@ -19,14 +19,14 @@ func TestOperationsSourceAddsOnlyTheRolloutProbe(t *testing.T) {
 			names = append(names, entry.Name())
 		}
 	}
-	if len(names) != 15 || names[13] != "00014_task_execution_brief.sql" || names[14] != "00015_rollout_probe.sql" {
+	if len(names) != 16 || names[14] != "00015_task_environment_assignment.sql" || names[15] != "00016_rollout_probe.sql" {
 		t.Fatalf("operations migrations = %v, want released migrations plus probe 15", names)
 	}
 	if !slices.IsSorted(names) {
 		t.Fatalf("operations migrations are not sorted: %v", names)
 	}
-	if CurrentVersion != 15 || MinServeVersion != 13 {
-		t.Fatalf("operations range = %d..%d, want 13..15", MinServeVersion, CurrentVersion)
+	if CurrentVersion != 16 || MinServeVersion != 13 {
+		t.Fatalf("operations range = %d..%d, want 13..16", MinServeVersion, CurrentVersion)
 	}
 	for _, version := range []int64{13, 14, 15} {
 		if err := CheckServable(version); err != nil {

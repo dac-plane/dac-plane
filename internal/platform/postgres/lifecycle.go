@@ -18,6 +18,13 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
+func nullableID[K any](id ids.ID[K]) any {
+	if id.IsZero() {
+		return nil
+	}
+	return id.String()
+}
+
 // Transition carries the shared arguments of every versioned mutation: the
 // expected version for the compare-and-set, when and by whom the change is
 // made, the audit identity, and the outbox dispatch for applied changes.
@@ -259,12 +266,29 @@ func GetAttempt(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Atte
 	var attempt lifecycle.Attempt
 	var state, idText, tenantText, taskText string
 	var number int32
-	err := q.QueryRow(ctx, `
-		select attempt_id::text, tenant_id::text, task_id::text, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at
-		from attempt where tenant_id = $1 and attempt_id = $2`,
-		tenant.String(), id.String(),
-	).Scan(&idText, &tenantText, &taskText, &number, &state, &attempt.Version,
-		&attempt.RuntimeStopped, &attempt.EnvironmentStopped, &attempt.CreatedAt, &attempt.UpdatedAt)
+	version, err := SchemaVersion(ctx, q)
+	if err != nil {
+		return lifecycle.Attempt{}, err
+	}
+	query := `select attempt_id::text, tenant_id::text, task_id::text, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at from attempt where tenant_id = $1 and attempt_id = $2`
+	if version >= 15 {
+		query = `select attempt_id::text, tenant_id::text, task_id::text, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at, environment_provider_id::text, environment_operation_id::text from attempt where tenant_id = $1 and attempt_id = $2`
+	}
+	row := q.QueryRow(ctx, query, tenant.String(), id.String())
+	if version >= 15 {
+		var provider, operation *string
+		err = row.Scan(&idText, &tenantText, &taskText, &number, &state, &attempt.Version,
+			&attempt.RuntimeStopped, &attempt.EnvironmentStopped, &attempt.CreatedAt, &attempt.UpdatedAt, &provider, &operation)
+		if err == nil && provider != nil {
+			attempt.EnvironmentProvider, err = ids.Parse[ids.Provider](*provider)
+		}
+		if err == nil && operation != nil {
+			attempt.EnvironmentOperation, err = ids.Parse[ids.Operation](*operation)
+		}
+	} else {
+		err = row.Scan(&idText, &tenantText, &taskText, &number, &state, &attempt.Version,
+			&attempt.RuntimeStopped, &attempt.EnvironmentStopped, &attempt.CreatedAt, &attempt.UpdatedAt)
+	}
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.Attempt{}, ErrNotFound
@@ -283,6 +307,21 @@ func GetAttempt(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Atte
 	}
 	attempt.Number = uint32(number)
 	attempt.State = lifecycle.AttemptState(state)
+	if version < 15 {
+		var provider, operation *string
+		err = q.QueryRow(ctx, `select coalesce(result->>'environment_provider_id', result->'scheduling'->>'environment_provider_id'), coalesce(result->>'environment_operation_id', result->'scheduling'->>'environment_operation_id') from command_record where tenant_id=$1 and command in ('submit_task','review_result') and coalesce(result->>'attempt',result->'scheduling'->>'attempt')=$2 order by created_at desc limit 1`, tenant.String(), id.String()).Scan(&provider, &operation)
+		if err != nil && !isNoRows(err) {
+			return lifecycle.Attempt{}, err
+		}
+		if provider != nil && operation != nil {
+			if attempt.EnvironmentProvider, err = ids.Parse[ids.Provider](*provider); err != nil {
+				return lifecycle.Attempt{}, err
+			}
+			if attempt.EnvironmentOperation, err = ids.Parse[ids.Operation](*operation); err != nil {
+				return lifecycle.Attempt{}, err
+			}
+		}
+	}
 	if err := attempt.Validate(); err != nil {
 		return lifecycle.Attempt{}, err
 	}
@@ -294,13 +333,23 @@ func InsertAttempt(ctx context.Context, u *UnitOfWork, attempt lifecycle.Attempt
 	if err := attempt.Validate(); err != nil {
 		return lifecycle.Attempt{}, false, err
 	}
-	inserted, err := insertReturning(ctx, u, `
+	version, err := SchemaVersion(ctx, u)
+	if err != nil {
+		return lifecycle.Attempt{}, false, err
+	}
+	query := `
 		insert into attempt (tenant_id, attempt_id, task_id, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	args := []any{
 		attempt.Tenant.String(), attempt.ID.String(), attempt.Task.String(), int32(attempt.Number),
 		string(attempt.State), int64(attempt.Version),
 		attempt.RuntimeStopped, attempt.EnvironmentStopped, attempt.CreatedAt, attempt.UpdatedAt,
-	)
+	}
+	if version >= 15 {
+		query = `insert into attempt (tenant_id, attempt_id, task_id, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at, environment_provider_id, environment_operation_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
+		args = append(args, nullableID(attempt.EnvironmentProvider), nullableID(attempt.EnvironmentOperation))
+	}
+	inserted, err := insertReturning(ctx, u, query, args...)
 	if err != nil {
 		return lifecycle.Attempt{}, false, err
 	}
@@ -316,7 +365,8 @@ func InsertAttempt(ctx context.Context, u *UnitOfWork, attempt lifecycle.Attempt
 	}
 	if stored.Tenant != attempt.Tenant || stored.Task != attempt.Task || stored.Number != attempt.Number ||
 		stored.State != attempt.State || stored.Version != attempt.Version ||
-		stored.RuntimeStopped != attempt.RuntimeStopped || stored.EnvironmentStopped != attempt.EnvironmentStopped {
+		stored.RuntimeStopped != attempt.RuntimeStopped || stored.EnvironmentStopped != attempt.EnvironmentStopped ||
+		stored.EnvironmentProvider != attempt.EnvironmentProvider || stored.EnvironmentOperation != attempt.EnvironmentOperation {
 		return lifecycle.Attempt{}, false, ErrPayloadMismatch
 	}
 	return stored, true, nil

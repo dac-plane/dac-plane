@@ -9,7 +9,10 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
 )
 
-var runtimeStartContract = schematest.GoContract[RuntimeStart](filepath.Join(schemaDir, "runtime-start.schema.json"))
+var (
+	runtimeStartContract         = schematest.GoContract[RuntimeStart](filepath.Join(schemaDir, "runtime-start.schema.json"))
+	environmentReferenceContract = schematest.GoContract[EnvironmentReference](filepath.Join(schemaDir, "environment-reference.schema.json"))
+)
 
 func TestRuntimeStartSchemaAgreement(t *testing.T) {
 	valid := RuntimeStart{Brief: lifecycle.ExecutionBrief{Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture contains the requested value"}}}
@@ -34,6 +37,25 @@ func TestRuntimeStartSchemaAgreement(t *testing.T) {
 		if schematest.Accepts(t, schematest.Compile(t, runtimeStartContract.Schema), data) == nil {
 			t.Fatalf("schema accepted invalid runtime start %s", data)
 		}
+	}
+}
+
+func TestRuntimeStartCarriesPreparedEnvironment(t *testing.T) {
+	provider, _ := ids.New[ids.Provider]()
+	ref := EnvironmentReference{Provider: provider, ResourceRef: "sandbox:one"}
+	start := RuntimeStart{Brief: lifecycle.ExecutionBrief{Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture contains the requested value"}}, Environment: &ref}
+	document := schematest.Marshal(t, start)
+	if err := runtimeStartContract.GoAccept(document); err != nil {
+		t.Fatalf("Go rejected runtime environment reference: %v", err)
+	}
+	if err := schematest.Accepts(t, schematest.Compile(t, runtimeStartContract.Schema), document); err != nil {
+		t.Fatalf("schema rejected runtime environment reference: %v", err)
+	}
+	if err := environmentReferenceContract.GoAccept(schematest.Marshal(t, ref)); err != nil {
+		t.Fatalf("Go rejected environment reference: %v", err)
+	}
+	if runtimeStartContract.GoAccept([]byte(`{"brief":{"objective":"Update the fixture","acceptance_criteria":["The fixture contains the requested value"]},"environment":{"provider_id":"","resource_ref":"sandbox:one"}}`)) == nil {
+		t.Fatal("Go accepted environment reference without provider")
 	}
 }
 

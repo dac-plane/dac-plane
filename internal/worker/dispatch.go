@@ -259,6 +259,7 @@ type preparedDispatch struct {
 	operation lifecycle.ProviderOperation
 	lease     store.AttemptLease
 	replay    bool
+	role      contracts.Role
 }
 
 // prepareDispatch claims the row and runs the pre-dispatch checklist in one
@@ -359,12 +360,14 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	if row.Record == lifecycle.RecordOperation && operation.State == lifecycle.OperationDispatched && (claim.Row.LastError != "" || row.Status == "processing") {
 		// A committed send marker survived its owner. No reply is not proof
 		// that the provider did nothing; takeover must inspect, not resend.
-		h, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
-		if err != nil {
-			return nil, err
-		}
-		if !h.Mode.Authoritative() {
-			return release(claim)
+		if body.Role == contracts.RoleRuntime {
+			h, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
+			if err != nil {
+				return nil, err
+			}
+			if !h.Mode.Authoritative() {
+				return release(claim)
+			}
 		}
 		port := w.port(tenant, operation.Provider, body.Role)
 		if _, ok := port.(contracts.StableOperationReplayer); ok {
@@ -422,7 +425,8 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		}
 		return nil, err
 	}
-	if attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptTerminated {
+	if (attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptTerminated) &&
+		!(attempt.State == lifecycle.AttemptCancellationRequested && body.Role == contracts.RoleEnvironment && body.Method == contracts.MethodStop) {
 		// Cancellation supersedes every outstanding start delivery. In
 		// particular, a transport-failed start must not become eligible again
 		// after the only interrupt has already been acknowledged.
@@ -434,31 +438,42 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 	if now.After(body.Deadline) {
 		return exhaust(claim, reasonDeadlineExceeded)
 	}
-	harness, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return exhaust(claim, reasonNoHarness)
-		}
-		return nil, err
-	}
-	if !harness.Mode.Authoritative() {
-		if harness.Mode == lifecycle.HarnessShadow {
-			if err := w.recordShadow(ctx, uow, tenant, operation, row, now); err != nil {
-				return nil, err
+	if body.Role == contracts.RoleRuntime || body.Role == contracts.RoleEnforcement {
+		harness, err := store.GetHarnessForUpdate(ctx, uow, tenant, operation.Provider)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return exhaust(claim, reasonNoHarness)
 			}
-			return ack(claim)
+			return nil, err
 		}
-		return exhaust(claim, reasonHarnessNotLive)
+		if !harness.Mode.Authoritative() {
+			if harness.Mode == lifecycle.HarnessShadow {
+				if err := w.recordShadow(ctx, uow, tenant, operation, row, now); err != nil {
+					return nil, err
+				}
+				return ack(claim)
+			}
+			return exhaust(claim, reasonHarnessNotLive)
+		}
+	} else if body.Role == contracts.RoleEnvironment {
+		if _, err := store.GetProviderRegistration(ctx, uow, tenant, operation.Provider, contracts.RoleEnvironment); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return exhaust(claim, reasonNoHarness)
+			}
+			return nil, err
+		}
 	}
-	if err := w.checkBudget(ctx, uow, tenant, operation, body, now); err != nil {
-		if errors.Is(err, store.ErrStaleVersion) {
-			return release(claim)
+	if body.Role == contracts.RoleRuntime {
+		if err := w.checkBudget(ctx, uow, tenant, operation, body, now); err != nil {
+			if errors.Is(err, store.ErrStaleVersion) {
+				return release(claim)
+			}
+			var exhausted *exhaustedError
+			if errors.As(err, &exhausted) {
+				return exhaust(claim, exhausted.reason)
+			}
+			return nil, err
 		}
-		var exhausted *exhaustedError
-		if errors.As(err, &exhausted) {
-			return exhaust(claim, exhausted.reason)
-		}
-		return nil, err
 	}
 	lease, err := store.ClaimAttemptLease(ctx, uow, tenant, operation.Attempt, w.owner, w.cfg.ClaimTTL, now)
 	if err != nil {
@@ -514,7 +529,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return nil, err
 	}
 	w.stats.Claims.Add(1)
-	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay}, nil
+	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay, role: body.Role}, nil
 }
 
 // budgetSpent reports whether the row already burned its retry budget, and
@@ -662,12 +677,14 @@ func (w *Worker) resolveSend(ctx context.Context, tenant ids.TenantID, row store
 			return err
 		}
 		now = time.Now().UTC()
-		h, err := store.GetHarnessForUpdate(ctx, uow, tenant, prepared.operation.Provider)
-		if err != nil {
-			return err
-		}
-		if !h.Mode.Authoritative() {
-			return nil
+		if prepared.role == contracts.RoleRuntime {
+			h, err := store.GetHarnessForUpdate(ctx, uow, tenant, prepared.operation.Provider)
+			if err != nil {
+				return err
+			}
+			if !h.Mode.Authoritative() {
+				return nil
+			}
 		}
 		if err := store.CheckAttemptLease(ctx, uow, tenant, prepared.operation.Attempt, prepared.lease); err != nil {
 			if errors.Is(err, store.ErrStaleVersion) {

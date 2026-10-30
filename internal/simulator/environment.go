@@ -64,6 +64,9 @@ type Environment struct {
 	deliveries *deliveries
 	mu         sync.Mutex
 	observed   map[ids.OperationID]int
+	resources  map[ids.OperationID]string
+	events     map[ids.OperationID][]contracts.StreamFrame
+	sequences  map[string]uint64
 }
 
 // NewEnvironment validates the config and the scenario and returns the
@@ -92,6 +95,7 @@ func NewEnvironment(config Config, scenario EnvironmentScenario) (*Environment, 
 		ledger:     newLedger(),
 		deliveries: newDeliveries(),
 		observed:   map[ids.OperationID]int{},
+		resources:  map[ids.OperationID]string{}, events: map[ids.OperationID][]contracts.StreamFrame{}, sequences: map[string]uint64{},
 	}, nil
 }
 
@@ -185,6 +189,9 @@ func (e *Environment) Send(ctx context.Context, request contracts.Request) (cont
 			Role: contracts.RoleEnvironment, Operation: request.Operation, Method: request.Method, Kind: step.Effect,
 		})
 		e.deliveries.finish(request.Operation, request.Method, reply)
+		if !e.scenario.MigrationReceipts {
+			e.recordTaskObservation(request)
+		}
 		if err := e.config.Control.reach(ctx, request.Operation, AfterEffect); err != nil {
 			return contracts.Reply{}, err
 		}
@@ -193,6 +200,42 @@ func (e *Environment) Send(ctx context.Context, request contracts.Request) (cont
 		return contracts.Reply{}, step.SendError
 	}
 	return reply, nil
+}
+
+func (e *Environment) recordTaskObservation(request contracts.Request) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	resource := e.resources[request.Operation]
+	state := lifecycle.RunUnknown
+	switch request.Method {
+	case contracts.MethodProvision:
+		resource = "environment:" + request.Attempt.String()
+		e.resources[request.Operation] = resource
+		state = lifecycle.RunRunning
+	case contracts.MethodStop:
+		var input struct {
+			ProvisionOperation ids.OperationID `json:"provision_operation_id"`
+		}
+		if json.Unmarshal(request.Arguments, &input) == nil {
+			resource = e.resources[input.ProvisionOperation]
+		}
+		if resource == "" {
+			resource = "environment:" + request.Attempt.String()
+			e.sequences[resource] = 1
+		}
+		state = lifecycle.RunAbsent
+	}
+	if resource == "" {
+		return
+	}
+	e.sequences[resource]++
+	observation := contracts.EnvironmentObserved{ResourceRef: resource, State: state, Sequence: e.sequences[resource], ObservedAt: time.Now().UTC()}
+	data, err := json.Marshal(observation)
+	if err != nil {
+		return
+	}
+	entry := Row{Sequence: uint64(len(e.events[request.Operation]) + 1), Updated: uint64(len(e.events[request.Operation]) + 1), Kind: string(contracts.EntryEnvironmentObserved), Payload: string(data)}
+	e.events[request.Operation] = append(e.events[request.Operation], RowsFrame(false, entry))
 }
 
 // observe answers one observe delivery with the next scripted observation,
@@ -254,5 +297,18 @@ func (e *Environment) Subscribe(ctx context.Context, cursor contracts.Cursor) (c
 		return nil, err
 	}
 	_, scripted := e.scenario.Operations[cursor.Operation]
-	return subscribeInert(e.config, e.ledger, scripted, cursor)
+	if !scripted {
+		return nil, fmt.Errorf("%w: %s", ErrUnscripted, cursor.Operation)
+	}
+	if err := cursor.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrMalformedRequest, err)
+	}
+	if cursor.Tenant != e.config.Tenant {
+		return nil, fmt.Errorf("%w: %s", ErrForeignRequest, cursor.Operation)
+	}
+	e.ledger.recordSubscription(cursor)
+	e.mu.Lock()
+	frames := append([]contracts.StreamFrame(nil), e.events[cursor.Operation]...)
+	e.mu.Unlock()
+	return &scriptStream{control: e.config.Control, operation: cursor.Operation, frames: frames}, nil
 }

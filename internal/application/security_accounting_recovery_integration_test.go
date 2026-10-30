@@ -25,9 +25,13 @@ func TestSecurityLateUsageRechecksQueuedReworkCoverage(t *testing.T) {
 			g.propose(t, true)
 			revision := g.finalize(t)
 			cmd := g.reviewCommand(t, revision, "queued-rework", lifecycle.DispositionRequestChanges)
-			cmd.Rework = &application.ReworkTerms{Provider: g.provider, Unit: "tokens", Amount: 100, Deadline: time.Now().Add(time.Hour)}
-			if _, err := application.ReviewResult(g.ctx, g.pool, cmd); err != nil {
+			cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Unit: "tokens", Amount: 100, Deadline: time.Now().Add(time.Hour)}
+			view, err := application.ReviewResult(g.ctx, g.pool, cmd)
+			if err != nil {
 				t.Fatal(err)
+			}
+			if view.Rework == nil {
+				t.Fatal("review did not record a rework attempt")
 			}
 			g.ingestNow(t, g.event(g.rt, g.s, 1, simulator.RowsFrame(false,
 				row(4, contracts.EntryUsageReported, contracts.UsageReported{Unit: "tokens", Cumulative: usage}))))
@@ -35,7 +39,10 @@ func TestSecurityLateUsageRechecksQueuedReworkCoverage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			op, err := store.GetOperationByAttempt(g.ctx, g.pool, g.tenant, attempt.ID)
+			if attempt.ID != view.Rework.Attempt.ID {
+				t.Fatalf("current attempt=%s, want rework assignment %s", attempt.ID, view.Rework.Attempt.ID)
+			}
+			op, err := store.GetOperation(g.ctx, g.pool, g.tenant, view.Rework.Operation.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

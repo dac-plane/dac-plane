@@ -33,6 +33,9 @@ type SubmitTask struct {
 	// Provider selects the harness: it must have a qualification that is not
 	// off. No production provider is chosen here.
 	Provider ids.ProviderID
+	// EnvironmentProvider is the trusted provider registration that prepares
+	// the Attempt's execution environment.
+	EnvironmentProvider ids.ProviderID
 	// Brief is the product-owned requested outcome delivered to every runtime
 	// attempt. It contains no provider or environment configuration.
 	Brief lifecycle.ExecutionBrief
@@ -54,34 +57,37 @@ type SubmitTask struct {
 // submitPayload is the fingerprinted part of a submission: everything but
 // the nonce and the command time.
 type submitPayload struct {
-	Provider           string   `json:"provider"`
-	Objective          string   `json:"objective"`
-	AcceptanceCriteria []string `json:"acceptance_criteria"`
-	Demand             string   `json:"demand"`
-	Deadline           string   `json:"deadline"`
-	Unit               string   `json:"unit"`
-	Ceiling            uint64   `json:"ceiling"`
-	Amount             uint64   `json:"amount"`
-	Spend              bool     `json:"spend"`
+	Provider            string   `json:"provider"`
+	EnvironmentProvider string   `json:"environment_provider_id"`
+	Objective           string   `json:"objective"`
+	AcceptanceCriteria  []string `json:"acceptance_criteria"`
+	Demand              string   `json:"demand"`
+	Deadline            string   `json:"deadline"`
+	Unit                string   `json:"unit"`
+	Ceiling             uint64   `json:"ceiling"`
+	Amount              uint64   `json:"amount"`
+	Spend               bool     `json:"spend"`
 }
 
 // submission is the outcome a submit_task record stores: the identities the
 // submission created, which later session, turn and environment bindings
 // reference, and the selection it bound.
 type submission struct {
-	Task               string   `json:"task"`
-	Attempt            string   `json:"attempt"`
-	Operation          string   `json:"operation"`
-	Budget             string   `json:"budget"`
-	Provider           string   `json:"provider"`
-	Objective          string   `json:"objective,omitempty"`
-	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
-	Mode               string   `json:"mode"`
-	Demand             string   `json:"demand"`
-	Deadline           string   `json:"deadline"`
-	Unit               string   `json:"unit"`
-	Amount             uint64   `json:"amount"`
-	Spend              string   `json:"spend,omitempty"`
+	Task                 string   `json:"task"`
+	Attempt              string   `json:"attempt"`
+	Operation            string   `json:"operation"`
+	Budget               string   `json:"budget"`
+	Provider             string   `json:"provider"`
+	EnvironmentProvider  string   `json:"environment_provider_id"`
+	EnvironmentOperation string   `json:"environment_operation_id"`
+	Objective            string   `json:"objective,omitempty"`
+	AcceptanceCriteria   []string `json:"acceptance_criteria,omitempty"`
+	Mode                 string   `json:"mode"`
+	Demand               string   `json:"demand"`
+	Deadline             string   `json:"deadline"`
+	Unit                 string   `json:"unit"`
+	Amount               uint64   `json:"amount"`
+	Spend                string   `json:"spend,omitempty"`
 }
 
 // Submission is a submitted task as it stands now: the records the
@@ -95,14 +101,15 @@ type Submission struct {
 	Budget      lifecycle.Budget
 	Reservation lifecycle.Reservation
 	// Challenge is set for spend-governed submissions; Receipt once asserted.
-	Challenge *lifecycle.SpendChallenge
-	Receipt   *lifecycle.SpendReceipt
-	Provider  ids.ProviderID
-	Mode      lifecycle.HarnessMode
-	Demand    contracts.Demand
-	Deadline  time.Time
-	Unit      lifecycle.Unit
-	Amount    uint64
+	Challenge           *lifecycle.SpendChallenge
+	Receipt             *lifecycle.SpendReceipt
+	Provider            ids.ProviderID
+	EnvironmentProvider ids.ProviderID
+	Mode                lifecycle.HarnessMode
+	Demand              contracts.Demand
+	Deadline            time.Time
+	Unit                lifecycle.Unit
+	Amount              uint64
 	// Dispatch is the operation's durable dispatch, nil until enqueued.
 	Dispatch *Dispatch
 }
@@ -140,6 +147,8 @@ func (c SubmitTask) validate() error {
 		return fmt.Errorf("%w: a command time and a deadline are required", ErrInvalidCommand)
 	case c.Provider.IsZero():
 		return fmt.Errorf("%w: a provider is required", ErrInvalidCommand)
+	case c.EnvironmentProvider.IsZero():
+		return fmt.Errorf("%w: an environment provider is required", ErrInvalidCommand)
 	case c.Brief.Validate() != nil:
 		return fmt.Errorf("%w: a valid execution brief is required", ErrInvalidCommand)
 	case !slices.Contains(contracts.Demands(), c.Demand):
@@ -164,21 +173,35 @@ type dispatchSpec struct {
 	unit      lifecycle.Unit
 	amount    uint64
 	start     contracts.RuntimeStart
+	role      contracts.Role
+	method    contracts.Method
+	arguments json.RawMessage
 }
 
 // body is the worker's dispatch envelope for the start_turn.
 func (d dispatchSpec) body() ([]byte, error) {
-	arguments, err := json.Marshal(d.start)
-	if err != nil {
-		return nil, err
+	role, method := d.role, d.method
+	if role == "" {
+		role, method = contracts.RoleRuntime, contracts.MethodStartTurn
 	}
-	if err := d.start.Validate(); err != nil {
-		return nil, err
+	arguments := d.arguments
+	if d.start.Brief.Objective != "" {
+		var err error
+		arguments, err = json.Marshal(d.start)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.start.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	if len(arguments) == 0 {
+		arguments = json.RawMessage(`{}`)
 	}
 	return json.Marshal(map[string]any{
 		"operation": d.operation.ID.String(),
-		"role":      contracts.RoleRuntime,
-		"method":    contracts.MethodStartTurn,
+		"role":      role,
+		"method":    method,
 		"arguments": json.RawMessage(arguments),
 		"deadline":  d.deadline.Format(time.RFC3339Nano),
 		"unit":      d.unit,
@@ -201,7 +224,7 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, cmd SubmitTask) (Submission
 		return Submission{}, err
 	}
 	digest, err := fingerprint(commandSubmitTask, submitPayload{
-		Provider: cmd.Provider.String(), Objective: cmd.Brief.Objective, AcceptanceCriteria: cmd.Brief.AcceptanceCriteria,
+		Provider: cmd.Provider.String(), EnvironmentProvider: cmd.EnvironmentProvider.String(), Objective: cmd.Brief.Objective, AcceptanceCriteria: cmd.Brief.AcceptanceCriteria,
 		Demand: string(cmd.Demand), Deadline: cmd.Deadline.Format(time.RFC3339Nano),
 		Unit: string(cmd.Unit), Ceiling: cmd.Ceiling, Amount: cmd.Amount, Spend: cmd.Spend,
 	})
@@ -240,6 +263,11 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
+	if _, err := store.GetProviderRegistration(ctx, u.uow, tenant, cmd.EnvironmentProvider, contracts.RoleEnvironment); errors.Is(err, store.ErrNotFound) {
+		return nil, ErrNoEnvironment
+	} else if err != nil {
+		return nil, err
+	}
 
 	taskID, err := ids.New[ids.Task]()
 	if err != nil {
@@ -268,6 +296,11 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
+	environmentOperationID, err := ids.New[ids.Operation]()
+	if err != nil {
+		return nil, err
+	}
+	attempt.EnvironmentProvider, attempt.EnvironmentOperation = cmd.EnvironmentProvider, environmentOperationID
 	if _, _, err := store.InsertAttempt(ctx, u.uow, attempt); err != nil {
 		return nil, err
 	}
@@ -313,6 +346,13 @@ func scheduleAttempt(ctx context.Context, u *unit, task lifecycle.Task, attempt 
 		return submission{}, err
 	}
 
+	environmentOperation, err := lifecycle.NewProviderOperation(attempt.EnvironmentOperation, tenant, attempt.ID, cmd.EnvironmentProvider, cmd.At)
+	if err != nil {
+		return submission{}, err
+	}
+	if _, _, err := store.InsertOperation(ctx, u.uow, environmentOperation); err != nil {
+		return submission{}, err
+	}
 	operationID, err := ids.New[ids.Operation]()
 	if err != nil {
 		return submission{}, err
@@ -327,7 +367,8 @@ func scheduleAttempt(ctx context.Context, u *unit, task lifecycle.Task, attempt 
 
 	result := submission{
 		Task: task.ID.String(), Attempt: attempt.ID.String(), Operation: operation.ID.String(),
-		Budget: budget.ID.String(), Provider: cmd.Provider.String(), Mode: string(harness.Mode),
+		Budget: budget.ID.String(), Provider: cmd.Provider.String(), EnvironmentProvider: cmd.EnvironmentProvider.String(),
+		EnvironmentOperation: environmentOperation.ID.String(), Mode: string(harness.Mode),
 		Objective: cmd.Brief.Objective, AcceptanceCriteria: slices.Clone(cmd.Brief.AcceptanceCriteria),
 		Demand: string(cmd.Demand), Deadline: cmd.Deadline.Format(time.RFC3339Nano),
 		Unit: string(cmd.Unit), Amount: cmd.Amount,
@@ -352,8 +393,8 @@ func scheduleAttempt(ctx context.Context, u *unit, task lifecycle.Task, attempt 
 		}
 		result.Spend = spendID.String()
 	} else if err := enqueue(ctx, u, tenant, dispatchSpec{
-		operation: operation, task: task.ID, attempt: attempt.ID, demand: cmd.Demand,
-		deadline: cmd.Deadline, unit: cmd.Unit, amount: cmd.Amount, start: contracts.RuntimeStart{Brief: cmd.Brief},
+		operation: environmentOperation, task: task.ID, attempt: attempt.ID, demand: cmd.Demand,
+		deadline: cmd.Deadline, role: contracts.RoleEnvironment, method: contracts.MethodProvision, arguments: json.RawMessage(`{}`),
 	}); err != nil {
 		return submission{}, err
 	}
@@ -378,9 +419,12 @@ func enqueue(ctx context.Context, u *unit, tenant ids.TenantID, d dispatchSpec) 
 	if _, _, err = store.ApplyOperation(ctx, u.uow, tenant, d.operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr); err != nil {
 		return err
 	}
-	// Once a dispatch may be sent, execution may be live: the Task runs and
-	// the Attempt leaves allocated, so a cancel waits for stop observations
-	// instead of completing at once.
+	// Environment preparation is the first dispatch and moves the Attempt to
+	// provisioning. Runtime dispatch follows only after a ready observation.
+	if d.role == contracts.RoleRuntime {
+		_, _, _, err = (progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}).Attempt(ctx, d.attempt, lifecycle.AttemptStart, "")
+		return err
+	}
 	step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
 	if _, err := step.Task(ctx, d.task, lifecycle.TaskDispatch); err != nil {
 		return err
@@ -435,6 +479,11 @@ func loadSubmission(ctx context.Context, q store.Querier, tenant ids.TenantID, n
 	}
 	if s.Provider, err = ids.Parse[ids.Provider](facts.Provider); err != nil {
 		return Submission{}, err
+	}
+	if facts.EnvironmentProvider != "" {
+		if s.EnvironmentProvider, err = ids.Parse[ids.Provider](facts.EnvironmentProvider); err != nil {
+			return Submission{}, err
+		}
 	}
 	reservationID, err := ids.Parse[ids.Reservation](facts.Attempt)
 	if err != nil {

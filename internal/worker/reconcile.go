@@ -55,11 +55,16 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 }
 
 func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, action *store.GovernedAction) error {
-	// A governed action is executed and observed by the enforcement role;
-	// every other reconciled operation is a runtime dispatch.
+	// A governed action is executed and observed by the enforcement role.
 	role := contracts.RoleRuntime
 	if action != nil {
 		role = contracts.RoleEnforcement
+	} else if row, err := store.GetOutboxRow(ctx, w.pool, tenant, operation.ID.Untyped()); err == nil {
+		if body, parseErr := ParseDispatchBody(row.Payload); parseErr == nil && body.Role != "" {
+			role = body.Role
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	port := w.port(tenant, operation.Provider, role)
 	if port == nil {

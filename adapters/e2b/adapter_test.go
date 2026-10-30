@@ -162,6 +162,73 @@ func TestProvisionReplayReturnsRecordedSandbox(t *testing.T) {
 	}
 }
 
+func TestTaskEnvironmentProvisionAndStopPublishObservations(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}}
+	a, _ := newTestAdapter(t, fake)
+	provision, _ := json.Marshal(struct{}{})
+	request := wire.Request{Operation: "task-environment-create", Delivery: "delivery-create", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: provision}
+	created, err := a.Send(context.Background(), request)
+	if err != nil || created.Outcome != wire.OutcomeOK {
+		t.Fatalf("provision = %+v, %v", created, err)
+	}
+	var result taskProvisionResult
+	if err := json.Unmarshal(created.Result, &result); err != nil || result.ResourceRef != "sandbox:sbx-1" {
+		t.Fatalf("provision result %+v, %v", result, err)
+	}
+	stream, err := a.Subscribe(context.Background(), wire.Cursor{Tenant: request.Tenant, Attempt: request.Attempt, Operation: request.Operation, Stream: "events", Generation: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := stream.Next(context.Background())
+	if err == nil && frame.Kind == wire.StreamConnected {
+		frame, err = stream.Next(context.Background())
+	}
+	if err != nil || frame.Rows == nil || len(frame.Rows.Entries) != 1 {
+		t.Fatalf("provision observation frame = %+v, %v", frame, err)
+	}
+	var ready observation
+	if err := json.Unmarshal(frame.Rows.Entries[0].Payload, &ready); err != nil || ready.State != "running" || ready.ResourceRef != result.ResourceRef {
+		t.Fatalf("ready observation %+v, %v", ready, err)
+	}
+	stopArgs, _ := json.Marshal(map[string]string{"provision_operation_id": request.Operation})
+	stop := wire.Request{Operation: "task-environment-stop", Delivery: "delivery-stop", Tenant: request.Tenant, Attempt: request.Attempt, Role: wire.RoleEnvironment, Method: "stop", Arguments: stopArgs}
+	stopped, err := a.Send(context.Background(), stop)
+	if err != nil || stopped.Outcome != wire.OutcomeOK {
+		t.Fatalf("stop = %+v, %v", stopped, err)
+	}
+	stream, err = a.Subscribe(context.Background(), wire.Cursor{Tenant: stop.Tenant, Attempt: stop.Attempt, Operation: stop.Operation, Stream: "events", Generation: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err = stream.Next(context.Background())
+	if err == nil && frame.Kind == wire.StreamConnected {
+		frame, err = stream.Next(context.Background())
+	}
+	if err != nil || frame.Rows == nil || len(frame.Rows.Entries) != 1 {
+		t.Fatalf("stop observation frame = %+v, %v", frame, err)
+	}
+	var absent observation
+	if err := json.Unmarshal(frame.Rows.Entries[0].Payload, &absent); err != nil || absent.State != "absent" || absent.Sequence != ready.Sequence+1 {
+		t.Fatalf("stop observation %+v, %v", absent, err)
+	}
+}
+
+func TestTaskEnvironmentStopBeforeProvisionFencesCreate(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}}
+	a, _ := newTestAdapter(t, fake)
+	stopArgs, _ := json.Marshal(map[string]string{"provision_operation_id": "provision-before-stop"})
+	stop := wire.Request{Operation: "stop-before-create", Delivery: "delivery-stop", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "stop", Arguments: stopArgs}
+	reply, err := a.Send(context.Background(), stop)
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("stop = %+v, %v", reply, err)
+	}
+	provision := wire.Request{Operation: "provision-before-stop", Delivery: "delivery-create", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: json.RawMessage(`{}`)}
+	reply, err = a.Send(context.Background(), provision)
+	if err != nil || reply.Durability != wire.DurabilityRejected || reply.Failure.Code != wire.FailureCancelled || fake.created != 0 {
+		t.Fatalf("provision after stop = %+v, %v; creates=%d", reply, err, fake.created)
+	}
+}
+
 func TestLostCreateReplyReconcilesBeforeRedelivery(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{}, dropFirstCreateReply: true}
 	a, _ := newTestAdapter(t, fake)

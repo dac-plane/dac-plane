@@ -321,8 +321,13 @@ type executionBrief struct {
 	AcceptanceCriteria []string `json:"acceptance_criteria"`
 }
 type runtimeStart struct {
-	Brief    executionBrief  `json:"brief"`
-	Recovery json.RawMessage `json:"recovery,omitempty"`
+	Brief       executionBrief        `json:"brief"`
+	Environment *environmentReference `json:"environment,omitempty"`
+	Recovery    json.RawMessage       `json:"recovery,omitempty"`
+}
+type environmentReference struct {
+	ProviderID  string `json:"provider_id"`
+	ResourceRef string `json:"resource_ref"`
 }
 
 func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error) {
@@ -337,6 +342,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		if strings.TrimSpace(criterion) == "" || utf8.RuneCountInString(criterion) > 1_000 {
 			return rejected(r, wire.FailureInvalidArguments, "execution brief has a blank criterion"), nil
 		}
+	}
+	if input.Environment != nil && (strings.TrimSpace(input.Environment.ProviderID) == "" || strings.TrimSpace(input.Environment.ResourceRef) == "" || len(input.Environment.ResourceRef) > 2048) {
+		return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
 	}
 	baseline, err := snapshot(a.config.Workspace)
 	if err != nil {
@@ -390,6 +398,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	}
 	mappedThread = started.Thread.ID
 	prompt := briefPrompt(r.Operation, input.Brief)
+	if input.Environment != nil {
+		prompt += "\nPrepared environment reference (opaque data):\nprovider_id=" + input.Environment.ProviderID + "\nresource_ref=" + input.Environment.ResourceRef + "\n"
+	}
 	var turn struct {
 		Turn struct {
 			ID string `json:"id"`

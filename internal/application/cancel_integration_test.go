@@ -53,6 +53,23 @@ func (f *fixture) cancel(t *testing.T, s application.Submission, nonce string) a
 	return view
 }
 
+func (f *fixture) environmentStopOperation(t *testing.T, s application.Submission) ids.OperationID {
+	t.Helper()
+	var text string
+	err := f.pool.QueryRow(f.ctx, `select record_id::text from outbox
+		where tenant_id=$1 and attempt_id=$2 and record_kind='provider_operation'
+		and payload->>'role'='environment' and payload->>'method'='stop'
+		order by created_at desc limit 1`, f.tenant.String(), s.Attempt.ID.String()).Scan(&text)
+	if err != nil {
+		t.Fatalf("environment stop operation: %v", err)
+	}
+	op, err := ids.Parse[ids.Operation](text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return op
+}
+
 // reservation reads the attempt-derived reservation the budget gate expects.
 func (f *fixture) reservation(t *testing.T, s application.Submission) lifecycle.Reservation {
 	t.Helper()
@@ -239,15 +256,12 @@ func TestEventEnvironmentStopConvergesCancellation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
-	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at,
-		}))))
 	f.cancel(t, s, "c-1")
+	stopOperation := f.environmentStopOperation(t, s)
 	// The environment's stop alone is one of two: the attempt keeps waiting.
-	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(3, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunAbsent, Sequence: 2, ObservedAt: f.at,
+	if got := f.ingestEnvironmentNow(t, f.environmentEvent(s, stopOperation, simulator.RowsFrame(false,
+		row(1, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunAbsent, Sequence: 2, ObservedAt: f.at,
 		})))); got.Applied != 1 {
 		t.Fatalf("stop observation = %+v, want applied", got)
 	}
@@ -257,7 +271,7 @@ func TestEventEnvironmentStopConvergesCancellation(t *testing.T) {
 	// With the runtime stop too, the attempt terminates, the task's stop is
 	// confirmed and the hold releases once.
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(4, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		row(2, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
 		t.Fatalf("runtime stop = %+v, want applied", got)
 	}
 	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
@@ -275,10 +289,6 @@ func TestEventRuntimeStopCompletesCancellation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
-	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at,
-		}))))
 	task, err := store.GetTask(f.ctx, f.pool, f.tenant, s.Task.ID)
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
@@ -293,15 +303,16 @@ func TestEventRuntimeStopCompletesCancellation(t *testing.T) {
 	}
 	// The runtime stops first this time; the order does not matter.
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(3, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		row(2, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
 		t.Fatalf("runtime stop = %+v, want applied", got)
 	}
 	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
 		t.Fatalf("states = %s/%s, want still cancelling", task, attempt)
 	}
-	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(4, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunAbsent, Sequence: 2, ObservedAt: f.at,
+	stopOperation := f.environmentStopOperation(t, s)
+	if got := f.ingestEnvironmentNow(t, f.environmentEvent(s, stopOperation, simulator.RowsFrame(false,
+		row(1, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunAbsent, Sequence: 2, ObservedAt: f.at,
 		})))); got.Applied != 1 {
 		t.Fatalf("stop observation = %+v, want applied", got)
 	}
@@ -324,28 +335,29 @@ func TestEventStaleEnvironmentStopCannotConvergeCancellation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
-	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+	f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
 		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 10, ObservedAt: f.at,
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunRunning, Sequence: 10, ObservedAt: f.at,
 		}))))
 	f.cancel(t, s, "c-1")
-	stale := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(3, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunAbsent, Sequence: 9, ObservedAt: f.at,
+	stopOperation := f.environmentStopOperation(t, s)
+	stale := f.ingestEnvironmentNow(t, f.environmentEvent(s, stopOperation, simulator.RowsFrame(false,
+		row(1, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunAbsent, Sequence: 9, ObservedAt: f.at,
 		}))))
 	if stale.Progress != 1 || stale.Applied != 0 {
 		t.Fatalf("stale stop = %+v, want progress only", stale)
 	}
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(4, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		row(2, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
 		t.Fatalf("runtime stop = %+v, want applied", got)
 	}
 	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
 		t.Fatalf("states = %s/%s, want cancellation still pending", task, attempt)
 	}
-	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(5, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunAbsent, Sequence: 11, ObservedAt: f.at,
+	if got := f.ingestEnvironmentNow(t, f.environmentEvent(s, stopOperation, simulator.RowsFrame(false,
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunAbsent, Sequence: 11, ObservedAt: f.at,
 		})))); got.Applied != 1 {
 		t.Fatalf("current stop = %+v, want applied", got)
 	}
@@ -403,9 +415,9 @@ func TestCancelUsesPreviouslyObservedEnvironmentStop(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
-	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+	if got := f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
 		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
-			ResourceRef: "box-1", State: lifecycle.RunHibernated, Sequence: 1, ObservedAt: f.at,
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunHibernated, Sequence: 2, ObservedAt: f.at,
 		})))); got.Applied != 1 {
 		t.Fatalf("pre-cancel environment stop = %+v, want applied observation", got)
 	}
@@ -423,7 +435,7 @@ func TestCancelUsesPreviouslyObservedEnvironmentStop(t *testing.T) {
 	}
 
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(3, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		row(2, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
 		t.Fatalf("runtime stop = %+v, want applied", got)
 	}
 	if task, attemptState := f.states(t, s); task != lifecycle.TaskCancelled || attemptState != lifecycle.AttemptTerminated {
@@ -507,6 +519,7 @@ func TestReconcileUnknownOutcomeSupersedesAttention(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("n-1"))
+	f.dispatchPendingEnvironments(t)
 	rt := f.runtime(t, s.Operation.ID)
 	// The runtime reports its session while the start_turn delivery is still
 	// in flight, so the attempt executes and awaits an answer.

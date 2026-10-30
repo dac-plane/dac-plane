@@ -192,30 +192,32 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 	// Work may be live: record the intent on the attempt before anything is
 	// told. The attempt was read with the task, so its CAS is exact; a
 	// concurrent writer moving it first is this command's refusal.
-	operation, err := store.GetOperationByAttempt(ctx, u.uow, tenant, attempt.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			// The live path exists only after a dispatch created an
-			// operation, so a task without one is a producer error.
-			return nil, fmt.Errorf("%w: the attempt has no dispatch to interrupt", ErrInvalidCommand)
+	operation, operationErr := store.GetOperationByAttempt(ctx, u.uow, tenant, attempt.ID)
+	runtimeMayHaveStarted := false
+	if operationErr == nil {
+		row, rowErr := store.GetOutboxRow(ctx, u.uow, tenant, operation.ID.Untyped())
+		if rowErr == nil {
+			runtimeMayHaveStarted = row.Attempts > 0 || row.Status == "processing" || row.LastError == "send_started"
+		} else if !errors.Is(rowErr, store.ErrNotFound) {
+			return nil, rowErr
 		}
-		return nil, err
+	} else if !errors.Is(operationErr, store.ErrNotFound) {
+		return nil, operationErr
+	} else if attempt.EnvironmentProvider.IsZero() {
+		return nil, fmt.Errorf("%w: the attempt has no dispatch to interrupt", ErrInvalidCommand)
 	}
-	body, err := json.Marshal(map[string]any{
-		"operation":     operation.ID.String(),
-		"role":          string(contracts.RoleRuntime),
-		"method":        string(contracts.MethodInterrupt),
-		"deadline":      u.at.Add(interruptHorizon).Format(time.RFC3339Nano),
-		"cancel_reason": cancelReason,
-	})
-	if err != nil {
-		return nil, err
+	var cancellationOutbox *store.OutboxPayload
+	if runtimeMayHaveStarted {
+		body, err := json.Marshal(map[string]any{
+			"operation": operation.ID.String(), "role": string(contracts.RoleRuntime), "method": string(contracts.MethodInterrupt),
+			"deadline": u.at.Add(interruptHorizon).Format(time.RFC3339Nano), "cancel_reason": cancelReason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		cancellationOutbox = &store.OutboxPayload{ID: attempt.ID.Untyped(), Attempt: attempt.ID, Demand: contracts.DemandPerson, Body: body}
 	}
-	tr, err = u.transition(attempt.Version, &store.OutboxPayload{
-		// One cancellation intent per attempt: a retried cancel reuses the
-		// row, so at most one interrupt hangs over the attempt.
-		ID: attempt.ID.Untyped(), Attempt: attempt.ID, Demand: contracts.DemandPerson, Body: body,
-	})
+	tr, err = u.transition(attempt.Version, cancellationOutbox)
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +227,22 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 			return nil, staleRefusal(tenant, lifecycle.RecordAttempt, attempt.ID.Untyped(), string(lifecycle.AttemptRequestCancel), string(attempt.State), tr.ExpectedVersion)
 		}
 		return nil, err
+	}
+	if !runtimeMayHaveStarted {
+		step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
+		next, applied, refusal, err := step.Attempt(ctx, attempt.ID, lifecycle.AttemptRuntimeStopped, "")
+		if err != nil {
+			return nil, err
+		}
+		if !applied && refusal != nil {
+			return nil, refusal
+		}
+		requested = next
+	}
+	if !attempt.EnvironmentProvider.IsZero() {
+		if err := enqueueEnvironmentStop(ctx, u, tenant, attempt); err != nil {
+			return nil, err
+		}
 	}
 	// A latest stored absent or hibernated observation remains valid stop
 	// evidence even when it arrived before the cancellation command. Record
@@ -255,6 +273,37 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 		return nil, err
 	}
 	return json.Marshal(view)
+}
+
+func enqueueEnvironmentStop(ctx context.Context, u *unit, tenant ids.TenantID, attempt lifecycle.Attempt) error {
+	operationID, err := ids.New[ids.Operation]()
+	if err != nil {
+		return err
+	}
+	operation, err := lifecycle.NewProviderOperation(operationID, tenant, attempt.ID, attempt.EnvironmentProvider, u.at)
+	if err != nil {
+		return err
+	}
+	if _, _, err := store.InsertOperation(ctx, u.uow, operation); err != nil {
+		return err
+	}
+	arguments, err := json.Marshal(map[string]string{"provision_operation_id": attempt.EnvironmentOperation.String()})
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{
+		"operation": operation.ID.String(), "role": contracts.RoleEnvironment, "method": contracts.MethodStop,
+		"arguments": json.RawMessage(arguments), "deadline": u.at.Add(interruptHorizon).Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	tr, err := u.transition(operation.Version, &store.OutboxPayload{ID: operation.ID.Untyped(), Attempt: attempt.ID, Demand: contracts.DemandPerson, Body: body})
+	if err != nil {
+		return err
+	}
+	_, _, err = store.ApplyOperation(ctx, u.uow, tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
+	return err
 }
 
 // cancelOpenAttention cancels every still-open native wait of the attempt in

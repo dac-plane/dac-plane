@@ -22,6 +22,7 @@ func TestRecoveryStaleSendSettlementWritesNothing(t *testing.T) {
 		t.Run(fence, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
 			s := f.submit(t, f.submitCommand("stale"))
+			f.dispatchPendingEnvironments(t)
 			rt := f.runtime(t, s.Operation.ID)
 			var taken map[string]string
 			p := &recoveryPort{Port: rt, send: func(ctx context.Context, r contracts.Request) (contracts.Reply, error) {
@@ -131,6 +132,7 @@ func TestRecoveryPendingAndMalformedRepliesRemainUncertain(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
 			s := f.submit(t, f.submitCommand("reply"))
+			f.dispatchPendingEnvironments(t)
 			rt := f.runtime(t, s.Operation.ID)
 			p := &recoveryPort{Port: rt, send: func(ctx context.Context, r contracts.Request) (contracts.Reply, error) {
 				reply, err := rt.Send(ctx, r)
@@ -165,6 +167,7 @@ func TestRecoveryCrashBoundariesPreserveUncertainty(t *testing.T) {
 		t.Run(boundary, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
 			s := f.submit(t, f.submitCommand("crash"))
+			f.dispatchPendingEnvironments(t)
 			rt := f.runtime(t, s.Operation.ID)
 			if boundary == "marked_before_effect" {
 				if _, err := f.pool.Exec(f.ctx, `update outbox set status='processing',last_error='send_started',lease_epoch=lease_epoch+1,claimed_by='dead',lease_expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1 and record_id=$2`, f.tenant.String(), s.Operation.ID.String()); err != nil {

@@ -254,7 +254,7 @@ func FollowedOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]
 		select o.operation_id::text from provider_operation o
 		join attempt a on a.tenant_id = o.tenant_id and a.attempt_id = o.attempt_id
 		where o.tenant_id = $1 and o.state = 'accepted' and a.state not in ('completed', 'failed', 'terminated')
-		and exists (select 1 from outbox x where x.tenant_id = o.tenant_id and x.record_id = o.operation_id and x.payload->>'role' = 'runtime' and x.payload->>'method' = 'start_turn')
+		and exists (select 1 from outbox x where x.tenant_id = o.tenant_id and x.record_id = o.operation_id and ((x.payload->>'role' = 'runtime' and x.payload->>'method' = 'start_turn') or (x.payload->>'role' = 'environment' and x.payload->>'method' in ('provision','stop'))))
 		and not exists (select 1 from migration_item m where m.tenant_id = o.tenant_id and o.operation_id in (m.quiesce_operation_id, m.environment_operation_id, m.restart_operation_id, m.cleanup_operation_id, m.target_cleanup_operation_id))
 		order by o.updated_at`,
 		tenant.String(),

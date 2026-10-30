@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "provider_id",
+    "environment_provider_id",
     "objective",
     "acceptance_criteria",
     "deadline",
@@ -15,6 +16,9 @@
   "additionalProperties": false,
   "properties": {
     "provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "environment_provider_id": {
       "$ref": "../identity/common.schema.json#/$defs/uuidv7"
     },
     "objective": {

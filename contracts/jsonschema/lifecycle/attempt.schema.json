@@ -11,6 +11,8 @@
     "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "environment_provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "environment_operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "number": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
     "state": {
       "enum": [
@@ -23,6 +25,10 @@
     "environment_stopped": { "type": "boolean" },
     "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
     "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "dependentRequired": {
+    "environment_provider_id": ["environment_operation_id"],
+    "environment_operation_id": ["environment_provider_id"]
   },
   "if": {
     "anyOf": [

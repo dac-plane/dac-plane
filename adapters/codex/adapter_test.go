@@ -155,7 +155,7 @@ func startRequest(arguments string) wire.Request {
 	return wire.Request{Operation: testOperation, Delivery: testDelivery, Tenant: testTenant, Attempt: testAttempt, Role: wire.RoleRuntime, Method: "start_turn", Arguments: json.RawMessage(arguments), Demand: "person", Deadline: time.Now().Add(time.Minute)}
 }
 
-const validStart = `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]}}`
+const validStart = `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"environment":{"provider_id":"01a18301-0000-7000-8000-000000000022","resource_ref":"sandbox:fixture"}}`
 
 func TestStartCarriesBriefAndReplaysMapping(t *testing.T) {
 	f := setup(t)
@@ -168,7 +168,7 @@ func TestStartCarriesBriefAndReplaysMapping(t *testing.T) {
 		t.Fatalf("native calls=%+v", f.native.calls)
 	}
 	turn := string(f.native.last("turn/start"))
-	for _, want := range []string{testOperation, "Change the fixture exactly once.", "result.txt contains qualified", "untrusted task data"} {
+	for _, want := range []string{testOperation, "Change the fixture exactly once.", "result.txt contains qualified", "untrusted task data", "sandbox:fixture"} {
 		if !strings.Contains(turn, want) {
 			t.Fatalf("turn input misses %q: %s", want, turn)
 		}

@@ -20,15 +20,16 @@ import (
 
 // SubmitTaskRequest is the body of POST /tasks.
 type SubmitTaskRequest struct {
-	Provider           ids.ProviderID   `json:"provider_id"`
-	Objective          string           `json:"objective"`
-	AcceptanceCriteria []string         `json:"acceptance_criteria"`
-	Demand             contracts.Demand `json:"demand,omitempty"`
-	Deadline           time.Time        `json:"deadline"`
-	Unit               lifecycle.Unit   `json:"unit"`
-	Ceiling            uint64           `json:"ceiling"`
-	Amount             uint64           `json:"amount"`
-	Spend              bool             `json:"spend,omitempty"`
+	Provider            ids.ProviderID   `json:"provider_id"`
+	EnvironmentProvider ids.ProviderID   `json:"environment_provider_id"`
+	Objective           string           `json:"objective"`
+	AcceptanceCriteria  []string         `json:"acceptance_criteria"`
+	Demand              contracts.Demand `json:"demand,omitempty"`
+	Deadline            time.Time        `json:"deadline"`
+	Unit                lifecycle.Unit   `json:"unit"`
+	Ceiling             uint64           `json:"ceiling"`
+	Amount              uint64           `json:"amount"`
+	Spend               bool             `json:"spend,omitempty"`
 }
 
 // Validate reports whether the body is well formed.
@@ -37,6 +38,8 @@ func (r SubmitTaskRequest) Validate() error {
 	switch {
 	case r.Provider.IsZero():
 		return fmt.Errorf("%w: provider_id is required", application.ErrInvalidCommand)
+	case r.EnvironmentProvider.IsZero():
+		return fmt.Errorf("%w: environment_provider_id is required", application.ErrInvalidCommand)
 	case brief.Validate() != nil:
 		return fmt.Errorf("%w: a valid objective and acceptance criteria are required", application.ErrInvalidCommand)
 	case r.Demand != "" && !slices.Contains(contracts.Demands(), r.Demand):
@@ -143,20 +146,21 @@ func (r ReviewRequest) Validate() error {
 
 // SubmissionBody is a submitted task as it stands now.
 type SubmissionBody struct {
-	Task        lifecycle.Task              `json:"task"`
-	Attempt     lifecycle.Attempt           `json:"attempt"`
-	Operation   lifecycle.ProviderOperation `json:"operation"`
-	Budget      lifecycle.Budget            `json:"budget"`
-	Reservation lifecycle.Reservation       `json:"reservation"`
-	Challenge   *lifecycle.SpendChallenge   `json:"spend_challenge,omitempty"`
-	Receipt     *lifecycle.SpendReceipt     `json:"spend_receipt,omitempty"`
-	Provider    ids.ProviderID              `json:"provider_id"`
-	Mode        lifecycle.HarnessMode       `json:"harness_mode"`
-	Demand      contracts.Demand            `json:"demand"`
-	Deadline    time.Time                   `json:"deadline"`
-	Unit        lifecycle.Unit              `json:"unit"`
-	Amount      uint64                      `json:"amount"`
-	Dispatch    *DispatchBody               `json:"dispatch,omitempty"`
+	Task                lifecycle.Task              `json:"task"`
+	Attempt             lifecycle.Attempt           `json:"attempt"`
+	Operation           lifecycle.ProviderOperation `json:"operation"`
+	Budget              lifecycle.Budget            `json:"budget"`
+	Reservation         lifecycle.Reservation       `json:"reservation"`
+	Challenge           *lifecycle.SpendChallenge   `json:"spend_challenge,omitempty"`
+	Receipt             *lifecycle.SpendReceipt     `json:"spend_receipt,omitempty"`
+	Provider            ids.ProviderID              `json:"provider_id"`
+	EnvironmentProvider *ids.ProviderID             `json:"environment_provider_id,omitempty"`
+	Mode                lifecycle.HarnessMode       `json:"harness_mode"`
+	Demand              contracts.Demand            `json:"demand"`
+	Deadline            time.Time                   `json:"deadline"`
+	Unit                lifecycle.Unit              `json:"unit"`
+	Amount              uint64                      `json:"amount"`
+	Dispatch            *DispatchBody               `json:"dispatch,omitempty"`
 }
 
 // DispatchBody is the state of the operation's durable dispatch. Provider
@@ -167,9 +171,13 @@ type DispatchBody struct {
 }
 
 func submissionBody(s application.Submission) SubmissionBody {
+	var environmentProvider *ids.ProviderID
+	if !s.EnvironmentProvider.IsZero() {
+		environmentProvider = &s.EnvironmentProvider
+	}
 	body := SubmissionBody{
 		Task: s.Task, Attempt: s.Attempt, Operation: s.Operation, Budget: s.Budget, Reservation: s.Reservation,
-		Challenge: s.Challenge, Receipt: s.Receipt, Provider: s.Provider, Mode: s.Mode, Demand: s.Demand,
+		Challenge: s.Challenge, Receipt: s.Receipt, Provider: s.Provider, EnvironmentProvider: environmentProvider, Mode: s.Mode, Demand: s.Demand,
 		Deadline: s.Deadline.UTC(), Unit: s.Unit, Amount: s.Amount,
 	}
 	if s.Dispatch != nil {

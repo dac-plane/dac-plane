@@ -293,6 +293,8 @@ func problemFor(err error) Problem {
 		return newProblem(http.StatusUnprocessableEntity, "idempotency-key-reused", "Idempotency-Key is already used", "The key was used with a different request.")
 	case errors.Is(err, application.ErrNoHarness):
 		return newProblem(http.StatusUnprocessableEntity, "no-harness", "No qualified harness for the provider", "")
+	case errors.Is(err, application.ErrNoEnvironment):
+		return newProblem(http.StatusUnprocessableEntity, "no-environment-provider", "No registered environment provider", "")
 	case errors.Is(err, application.ErrInvalidCommand), errors.Is(err, lifecycle.ErrInvalid), errors.Is(err, identity.ErrInvalid):
 		return newProblem(http.StatusUnprocessableEntity, "invalid-command", "Invalid command", "")
 	}
