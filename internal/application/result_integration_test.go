@@ -125,6 +125,32 @@ func (g *resultFixture) reviewCommand(t *testing.T, r lifecycle.ResultRevision, 
 	return application.ReviewResultCommand{Command: application.Command{Actor: g.actor, Nonce: nonce, ExpectedVersion: task.Version}, Task: task.ID, Revision: r.ID, Disposition: d, At: time.Now()}
 }
 
+// A completed Attempt's outputs are admitted before its environment stops, and
+// the stop leaves the result reviewable (ADR-0014).
+func TestCompletedAttemptStopsEnvironmentAndKeepsResult(t *testing.T) {
+	t.Parallel()
+	g := newResultFixture(t)
+	g.propose(t, true)
+	r := g.finalize(t)
+	if task, attempt := g.states(t, g.s); task != lifecycle.TaskReadyForReview || attempt != lifecycle.AttemptCompleted {
+		t.Fatalf("after admission: %s/%s", task, attempt)
+	}
+	stop := g.environmentStopOperation(t, g.s)
+	g.dispatchPendingEnvironments(t)
+	if op, err := store.GetOperation(g.ctx, g.pool, g.tenant, stop); err != nil || op.State != lifecycle.OperationAccepted {
+		t.Fatalf("stop operation=%s err=%v; want accepted", op.State, err)
+	}
+	if stopped, err := store.EnvironmentStopped(g.ctx, g.pool, g.tenant, g.s.Attempt.ID); err != nil || !stopped {
+		t.Fatalf("environment stopped=%v err=%v; want the stop observed on the completed attempt", stopped, err)
+	}
+	if task, attempt := g.states(t, g.s); task != lifecycle.TaskReadyForReview || attempt != lifecycle.AttemptCompleted {
+		t.Fatalf("after stop: %s/%s", task, attempt)
+	}
+	if _, err := application.ReviewResult(g.ctx, g.pool, g.reviewCommand(t, r, "accept-after-stop", lifecycle.DispositionAccept)); err != nil {
+		t.Fatalf("review after the environment stopped: %v", err)
+	}
+}
+
 func TestResultArtifactAdmissionBothObservationOrders(t *testing.T) {
 	t.Parallel()
 	for _, first := range []bool{true, false} {
@@ -201,6 +227,7 @@ func TestResultArtifactMismatchNeverCreatesRevision(t *testing.T) {
 			if task, attempt := g.states(t, g.s); task != lifecycle.TaskFailed || attempt != lifecycle.AttemptFailed {
 				t.Fatalf("exhaustion=%s/%s", task, attempt)
 			}
+			g.environmentStopOperation(t, g.s)
 		})
 	}
 }

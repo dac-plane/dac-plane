@@ -401,6 +401,9 @@ func (w *Worker) finishArtifact(ctx context.Context, p artifactClaim, receipt *c
 				if _, _, _, e = step.Attempt(ctx, p.work.Manifest.Attempt, lifecycle.AttemptComplete, ""); e != nil {
 					return e
 				}
+				if e = step.StopEndedEnvironment(ctx, p.work.Manifest.Attempt); e != nil {
+					return e
+				}
 				if _, e = step.Task(ctx, p.work.Manifest.Task, lifecycle.TaskVerificationPassed); e != nil {
 					return e
 				}
@@ -421,6 +424,9 @@ func (w *Worker) finishArtifact(ctx context.Context, p artifactClaim, receipt *c
 	delay, exhaust := w.cfg.Policy.Classify(p.claim.Row.Attempts+1, code)
 	if exhaust {
 		if _, _, _, err = step.Attempt(ctx, p.work.Manifest.Attempt, lifecycle.AttemptFail, ""); err != nil {
+			return err
+		}
+		if err = step.StopEndedEnvironment(ctx, p.work.Manifest.Attempt); err != nil {
 			return err
 		}
 		err = store.ExhaustOutboxRow(ctx, u, tenant, p.claim.Row.ID, p.claim.Epoch, string(code), now)

@@ -458,7 +458,7 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 	if err := a.step.SupersedeOpenAttention(ctx, a.event.Attempt); err != nil {
 		return 0, err
 	}
-	if err := a.step.StopFailedEnvironment(ctx, a.event.Attempt); err != nil {
+	if err := a.step.StopEndedEnvironment(ctx, a.event.Attempt); err != nil {
 		return 0, err
 	}
 	return entryApplied, nil
@@ -476,7 +476,7 @@ func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.E
 	}
 	if !attempt.EnvironmentProvider.IsZero() {
 		validOperation := attempt.EnvironmentOperation == a.event.Operation
-		awaitsStop := attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptFailed
+		awaitsStop := attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptCompleted || attempt.State == lifecycle.AttemptFailed
 		if !validOperation && awaitsStop && payload.State != lifecycle.RunRunning {
 			row, rowErr := store.GetOutboxRow(ctx, a.uow, a.event.Tenant, a.event.Operation.Untyped())
 			if rowErr == nil {

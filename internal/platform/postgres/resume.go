@@ -248,14 +248,14 @@ func OpenClaims(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycl
 // FollowedOperations lists the accepted runtime turns whose event streams the
 // product follows: an operation dispatched as a runtime start_turn whose
 // Attempt is still live, and not a migration step, which has its own
-// observation path. A failed Attempt's environment stop stays followed until
+// observation path. An ended Attempt's environment stop stays followed until
 // the stop is observed: no live Attempt waits on it, so nothing else would.
 func FollowedOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {
 	rows, err := q.Query(ctx, `
 		select o.operation_id::text from provider_operation o
 		join attempt a on a.tenant_id = o.tenant_id and a.attempt_id = o.attempt_id
 		where o.tenant_id = $1 and o.state = 'accepted'
-		and (a.state not in ('completed', 'failed', 'terminated') or (a.state = 'failed'
+		and (a.state not in ('completed', 'failed', 'terminated') or (a.state in ('completed', 'failed')
 			and exists (select 1 from outbox x where x.tenant_id = o.tenant_id and x.record_id = o.operation_id and x.payload->>'role' = 'environment' and x.payload->>'method' = 'stop')
 			and not exists (select 1 from environment_observation e where e.tenant_id = o.tenant_id and e.attempt_id = o.attempt_id and e.state in ('absent', 'hibernated'))))
 		and exists (select 1 from outbox x where x.tenant_id = o.tenant_id and x.record_id = o.operation_id and ((x.payload->>'role' = 'runtime' and x.payload->>'method' = 'start_turn') or (x.payload->>'role' = 'environment' and x.payload->>'method' in ('provision','stop'))))

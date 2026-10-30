@@ -132,19 +132,20 @@ func (s Step) FollowOperation(ctx context.Context, operation lifecycle.ProviderO
 	if err != nil || !applied {
 		return err
 	}
-	return s.StopFailedEnvironment(ctx, next.ID)
+	return s.StopEndedEnvironment(ctx, next.ID)
 }
 
-// StopFailedEnvironment stops the resource a failed Attempt leaves behind:
-// failing releases the Attempt's budget, and nothing else would stop it. An
-// unbound provision has no resource to stop, and a resource already observed
-// stopped needs no second stop.
-func (s Step) StopFailedEnvironment(ctx context.Context, id ids.AttemptID) error {
+// StopEndedEnvironment stops the resource a completed or failed Attempt leaves
+// behind (ADR-0014): its outputs are already admitted, a rework provisions its
+// own environment, and nothing else would stop this one. An unbound provision
+// has no resource to stop, and a resource already observed stopped needs no
+// second stop. Migration settles its own cleanup operations instead.
+func (s Step) StopEndedEnvironment(ctx context.Context, id ids.AttemptID) error {
 	attempt, err := store.GetAttempt(ctx, s.UOW, s.Tenant, id)
 	if err != nil {
 		return err
 	}
-	if attempt.State != lifecycle.AttemptFailed || attempt.EnvironmentOperation.IsZero() {
+	if (attempt.State != lifecycle.AttemptCompleted && attempt.State != lifecycle.AttemptFailed) || attempt.EnvironmentOperation.IsZero() {
 		return nil
 	}
 	bound, err := store.HasEnvironmentBinding(ctx, s.UOW, s.Tenant, attempt.ID)
