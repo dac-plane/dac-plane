@@ -190,15 +190,22 @@ func (w *Wire) Token(t testing.TB, subject string, lifetime time.Duration) strin
 
 // TokenFor signs an access token for subject with another audience.
 func (w *Wire) TokenFor(t testing.TB, subject, audience string, lifetime time.Duration) string {
+	token, _ := w.tokenFor(t, subject, audience, lifetime)
+	return token
+}
+
+func (w *Wire) tokenFor(t testing.TB, subject, audience string, lifetime time.Duration) (string, time.Time) {
 	t.Helper()
 	now := time.Now()
 	issuedAt := now.Add(-time.Second)
 	if lifetime < 0 {
 		issuedAt = now.Add(lifetime - time.Minute)
 	}
-	return w.issuer.Token(t, oidctest.Spec{Key: w.key, Claims: map[string]any{
-		"sub": subject, "aud": audience, "iat": issuedAt.Unix(), "exp": now.Add(lifetime).Unix(),
+	expiry := time.Unix(now.Add(lifetime).Unix(), 0)
+	token := w.issuer.Token(t, oidctest.Spec{Key: w.key, Claims: map[string]any{
+		"sub": subject, "aud": audience, "iat": issuedAt.Unix(), "exp": expiry.Unix(),
 	}})
+	return token, expiry
 }
 
 // Bind registers provider in role and binds a fresh adapter identity to it,
@@ -307,7 +314,8 @@ func (w *Wire) connect(t testing.TB, subject string, provider ids.ProviderID, po
 	config := adapterkit.Config{
 		URL: w.URL(), Provider: provider.String(), Role: wire.Role(port.Role()), Handler: simulator.Handler(port),
 		Token: func(context.Context) (adapterkit.Token, error) {
-			return adapterkit.Token{Value: w.Token(t, subject, lifetime), Expiry: time.Now().Add(lifetime)}, nil
+			value, expiry := w.tokenFor(t, subject, Audience, lifetime)
+			return adapterkit.Token{Value: value, Expiry: expiry}, nil
 		},
 		TLS: w.TLS(), BackoffBase: 20 * time.Millisecond, BackoffMax: 200 * time.Millisecond,
 	}
