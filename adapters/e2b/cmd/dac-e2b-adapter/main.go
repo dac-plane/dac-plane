@@ -69,9 +69,15 @@ func run() error {
 		return err
 	}
 	defer journal.Close()
+	var sandboxTimeout time.Duration
+	if value := strings.TrimSpace(os.Getenv("DAC_E2B_SANDBOX_TIMEOUT")); value != "" {
+		if sandboxTimeout, err = time.ParseDuration(value); err != nil {
+			return errors.New("DAC_E2B_SANDBOX_TIMEOUT must be a duration such as 1h")
+		}
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	client := &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}}
-	handler, err := e2b.New(e2b.Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, HTTPClient: client, Journal: journal})
+	handler, err := e2b.New(e2b.Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, HTTPClient: client, Journal: journal, SandboxTimeout: sandboxTimeout})
 	if err != nil {
 		return err
 	}

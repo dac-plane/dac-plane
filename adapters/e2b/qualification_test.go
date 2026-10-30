@@ -40,7 +40,8 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 	}
 	storeClosed := false
 	t.Cleanup(func() { _ = store.Close() })
-	adapter, err := New(Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, Journal: store})
+	const sandboxTimeout = 10 * time.Minute
+	adapter, err := New(Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, Journal: store, SandboxTimeout: sandboxTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +103,9 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 		}
 		if providerInfo.EnvdVersion == "" {
 			t.Fatalf("provider metadata omitted runtime version for sandbox %d", i+1)
+		}
+		if lifetime := providerInfo.EndAt.Sub(providerInfo.StartedAt); lifetime < sandboxTimeout-5*time.Second || lifetime > sandboxTimeout+5*time.Second {
+			t.Fatalf("sandbox %d lifetime = %s, want about %s", i+1, lifetime, sandboxTimeout)
 		}
 		t.Logf("provider service metadata: envd_version=%s template=%s internet_access=%t deny_out=%v", providerInfo.EnvdVersion, providerInfo.Template, providerInfo.AllowInternetAccess != nil && *providerInfo.AllowInternetAccess, providerInfo.Network.DenyOut)
 	}

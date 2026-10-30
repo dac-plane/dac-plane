@@ -20,6 +20,7 @@ type fakeE2B struct {
 	created              int
 	deleted              int
 	sandboxes            map[string]sandbox
+	timeouts             []int
 	dropFirstCreateReply bool
 	rejectCreateStatus   int
 	hideList             bool
@@ -42,9 +43,11 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var input struct {
-			Template string `json:"templateID"`
-			Allow    *bool  `json:"allow_internet_access"`
-			Network  struct {
+			Template  string `json:"templateID"`
+			Allow     *bool  `json:"allow_internet_access"`
+			Timeout   int    `json:"timeout"`
+			AutoPause *bool  `json:"autoPause"`
+			Network   struct {
 				DenyOut []string `json:"denyOut"`
 			} `json:"network"`
 			Metadata map[string]string `json:"metadata"`
@@ -53,11 +56,12 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad request", 400)
 			return
 		}
-		if input.Template != "base" || input.Allow == nil || *input.Allow || len(input.Network.DenyOut) != 1 || input.Network.DenyOut[0] != "0.0.0.0/0" || input.Metadata[metadataOperation] == "" {
+		if input.Template != "base" || input.Allow == nil || *input.Allow || len(input.Network.DenyOut) != 1 || input.Network.DenyOut[0] != "0.0.0.0/0" || input.Metadata[metadataOperation] == "" || input.Timeout <= 0 || input.AutoPause == nil || *input.AutoPause {
 			http.Error(w, "invalid create request", 400)
 			return
 		}
 		f.created++
+		f.timeouts = append(f.timeouts, input.Timeout)
 		id := fmt.Sprintf("sbx-%d", f.created)
 		sbx := sandbox{SandboxID: id, Template: input.Template, State: "running", Metadata: input.Metadata}
 		f.sandboxes[id] = sbx
@@ -451,6 +455,80 @@ func TestCancelBeforeProvisionPreventsSandboxCreation(t *testing.T) {
 	}
 	if fake.created != 0 {
 		t.Fatalf("pre-cancelled operation created %d sandboxes", fake.created)
+	}
+}
+
+func taskProvisionRequest(op, delivery string) wire.Request {
+	return wire.Request{Operation: op, Delivery: delivery, Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: []byte(`{}`)}
+}
+
+func TestEveryCreateCarriesTheSandboxLifetime(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}}
+	adapter, _ := newTestAdapter(t, fake)
+	for _, request := range []wire.Request{taskProvisionRequest("task-lifetime", "delivery-1"), provisionRequest("migration-lifetime", "delivery-2")} {
+		if reply, err := adapter.Send(context.Background(), request); err != nil || reply.Outcome != wire.OutcomeOK {
+			t.Fatalf("provision %s = %+v, %v", request.Operation, reply, err)
+		}
+	}
+	if want := int(defaultSandboxTimeout / time.Second); len(fake.timeouts) != 2 || fake.timeouts[0] != want || fake.timeouts[1] != want {
+		t.Fatalf("create timeouts = %v, want two of %d", fake.timeouts, want)
+	}
+}
+
+func TestSandboxTimeoutConfiguration(t *testing.T) {
+	store, err := journal.Open(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	config := Config{BaseURL: "https://api.e2b.app", APIKey: "key", TemplateID: "base", ProviderID: "e2b", Journal: store}
+	for _, timeout := range []time.Duration{-time.Minute, time.Millisecond} {
+		config.SandboxTimeout = timeout
+		if _, err := New(config); err == nil {
+			t.Fatalf("New accepted sandbox timeout %s", timeout)
+		}
+	}
+	config.SandboxTimeout = 6 * time.Hour
+	adapter, err := New(config)
+	if err != nil || adapter.cfg.SandboxTimeout != 6*time.Hour {
+		t.Fatalf("configured timeout = %+v, %v", adapter, err)
+	}
+}
+
+func TestRejectedTaskCreateCanRetry(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, rejectCreateStatus: http.StatusBadRequest}
+	adapter, store := newTestAdapter(t, fake)
+	request := taskProvisionRequest("retry-rejected-task-create", "delivery-1")
+	if _, err := adapter.Send(context.Background(), request); err == nil {
+		t.Fatal("expected explicit provider rejection")
+	}
+	operation, err := store.Operation(request.Operation)
+	if err != nil || operation.State != "prepared" {
+		t.Fatalf("operation after explicit rejection=%+v err=%v", operation, err)
+	}
+	request.Delivery = "delivery-2"
+	reply, err := adapter.Send(context.Background(), request)
+	if err != nil || reply.Outcome != wire.OutcomeOK || fake.created != 1 {
+		t.Fatalf("retry reply outcome=%q err=%v creates=%d", reply.Outcome, err, fake.created)
+	}
+}
+
+func TestCancelAfterRejectedTaskProvisionPreventsRetry(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, rejectCreateStatus: http.StatusBadRequest}
+	adapter, _ := newTestAdapter(t, fake)
+	request := taskProvisionRequest("cancel-rejected-task-create", "delivery-1")
+	if _, err := adapter.Send(context.Background(), request); err == nil {
+		t.Fatal("first create should be rejected")
+	}
+	if err := adapter.Cancel(context.Background(), wire.Cancel{Operation: request.Operation, Delivery: "cancel-1"}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := adapter.Send(context.Background(), taskProvisionRequest(request.Operation, "delivery-2"))
+	if err != nil || reply.Outcome != wire.OutcomeFailed || reply.Failure == nil || reply.Failure.Code != wire.FailureCancelled {
+		t.Fatalf("provision retry=%+v err=%v, want cancelled", reply, err)
+	}
+	if fake.created != 0 {
+		t.Fatalf("creates=%d, want none", fake.created)
 	}
 }
 

@@ -26,6 +26,10 @@ const (
 	metadataOperation = "dac_operation_id"
 	metadataTenant    = "dac_tenant_id"
 	metadataAttempt   = "dac_attempt_id"
+
+	// defaultSandboxTimeout fits every E2B plan; the Hobby plan caps a sandbox at
+	// one hour, and E2B itself would kill an unset sandbox after five minutes.
+	defaultSandboxTimeout = time.Hour
 )
 
 type Config struct {
@@ -33,6 +37,9 @@ type Config struct {
 	HTTPClient                              *http.Client
 	Journal                                 *journal.Store
 	Now                                     func() time.Time
+	// SandboxTimeout is how long a sandbox may run before E2B kills it. It bounds
+	// a sandbox whose stop never lands, so it should exceed the longest Attempt.
+	SandboxTimeout time.Duration
 }
 
 type Adapter struct {
@@ -62,6 +69,8 @@ type sandbox struct {
 	Template    string            `json:"templateID"`
 	State       string            `json:"state"`
 	EnvdVersion string            `json:"envdVersion"`
+	StartedAt   time.Time         `json:"startedAt"`
+	EndAt       time.Time         `json:"endAt"`
 	Metadata    map[string]string `json:"metadata"`
 	Network     struct {
 		DenyOut []string `json:"denyOut"`
@@ -95,6 +104,12 @@ func New(cfg Config) (*Adapter, error) {
 	}
 	if cfg.APIKey == "" || cfg.TemplateID == "" || cfg.ProviderID == "" || cfg.Journal == nil {
 		return nil, errors.New("E2B adapter configuration is incomplete")
+	}
+	if cfg.SandboxTimeout == 0 {
+		cfg.SandboxTimeout = defaultSandboxTimeout
+	}
+	if cfg.SandboxTimeout < time.Second {
+		return nil, errors.New("E2B sandbox timeout must be at least one second")
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: 45 * time.Second}
@@ -232,35 +247,16 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
 		return wire.Reply{}, err
 	}
-	allowInternet := false
-	body := map[string]any{
-		"templateID":            a.cfg.TemplateID,
-		"allow_internet_access": allowInternet,
-		"network": map[string]any{
-			"denyOut": []string{"0.0.0.0/0"},
-		},
-		"metadata": map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt},
-	}
-	var createdSandbox sandbox
-	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &createdSandbox); err != nil {
-		var status apiError
-		if errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusRequestTimeout && status.status != http.StatusConflict && status.status != http.StatusTooManyRequests {
-			if resetErr := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
-				return wire.Reply{}, resetErr
-			}
-			return wire.Reply{}, fmt.Errorf("E2B rejected sandbox create: %w", err)
+	createdSandbox, err := a.createSandbox(ctx, req)
+	if err != nil {
+		if createRejected(err) {
+			return wire.Reply{}, a.releaseRejectedCreate(req.Operation, err)
 		}
 		found, lookupErr := a.findOperation(ctx, req.Operation)
 		if lookupErr == nil && found != nil {
 			return a.finishProvision(req, m, *found)
 		}
 		return wire.Reply{}, fmt.Errorf("E2B create reply is uncertain: %w", err)
-	}
-	if createdSandbox.SandboxID == "" {
-		createdSandbox.SandboxID = createdSandbox.SandboxId
-	}
-	if createdSandbox.SandboxID == "" {
-		return wire.Reply{}, errors.New("E2B create response omitted sandbox identity")
 	}
 	return a.finishProvision(req, m, createdSandbox)
 }
@@ -287,6 +283,9 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 	if err != nil {
 		return rejected(req, wire.FailureInvalidArguments, "operation identity or payload mismatch"), nil
 	}
+	if op.State == "cancelled" {
+		return rejected(req, wire.FailureCancelled, "provision was cancelled before it started"), nil
+	}
 	if op.ResourceRef != "" && op.State == "provisioned" {
 		// A crash after saving the mapping left its readiness unrecorded.
 		return a.recordTaskReadiness(req, op.ResourceRef)
@@ -310,6 +309,9 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 	}
 	createdSandbox, err := a.createSandbox(ctx, req)
 	if err != nil {
+		if createRejected(err) {
+			return wire.Reply{}, a.releaseRejectedCreate(req.Operation, err)
+		}
 		found, lookupErr := a.findOperation(ctx, req.Operation)
 		if lookupErr == nil && found != nil {
 			return a.finishTaskProvision(req, *found)
@@ -319,10 +321,14 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 	return a.finishTaskProvision(req, createdSandbox)
 }
 
+// createSandbox never asks E2B to pause on timeout: a paused sandbox has no
+// lifetime of its own, so one whose stop was lost would be kept indefinitely.
 func (a *Adapter) createSandbox(ctx context.Context, req wire.Request) (sandbox, error) {
 	body := map[string]any{"templateID": a.cfg.TemplateID, "allow_internet_access": false,
-		"network":  map[string]any{"denyOut": []string{"0.0.0.0/0"}},
-		"metadata": map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt}}
+		"timeout":   int64(a.cfg.SandboxTimeout / time.Second),
+		"autoPause": false,
+		"network":   map[string]any{"denyOut": []string{"0.0.0.0/0"}},
+		"metadata":  map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt}}
 	var created sandbox
 	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &created); err != nil {
 		return sandbox{}, err
@@ -334,6 +340,20 @@ func (a *Adapter) createSandbox(ctx context.Context, req wire.Request) (sandbox,
 		return sandbox{}, errors.New("E2B create response omitted sandbox identity")
 	}
 	return created, nil
+}
+
+// createRejected reports a create the provider definitely refused, which
+// leaves no sandbox to reconcile.
+func createRejected(err error) bool {
+	var status apiError
+	return errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusRequestTimeout && status.status != http.StatusConflict && status.status != http.StatusTooManyRequests
+}
+
+func (a *Adapter) releaseRejectedCreate(operation string, err error) error {
+	if resetErr := a.cfg.Journal.Update(operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
+		return resetErr
+	}
+	return fmt.Errorf("E2B rejected sandbox create: %w", err)
 }
 
 func (a *Adapter) finishTaskProvision(req wire.Request, sbx sandbox) (wire.Reply, error) {

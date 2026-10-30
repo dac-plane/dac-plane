@@ -16,6 +16,14 @@ Sandbox creation sets `allow_internet_access=false` and denies outbound IPv4 (`0
 
 For task attempts, DAC sends an empty object to `provision` and the stable environment-operation ID is used as E2B metadata. The adapter records the returned opaque `resource_ref` and emits `environment.observed` with the observed running state. A `stop` request names the original provision operation; the adapter resolves its journal mapping, deletes the matching sandbox, and emits an absent observation. If stop reaches the adapter before provision, the journal records cancellation against that provision ID so a later create is refused. Migration-stage requests continue using their separate migration receipt contract.
 
+## Sandbox lifetime
+
+E2B kills a sandbox created through control API v2 after 300 seconds unless the request says otherwise, and running commands or file operations do not extend that. The adapter therefore sets `timeout` on every create, from `DAC_E2B_SANDBOX_TIMEOUT`. The default of one hour is the longest lifetime the Hobby plan accepts; the Pro plan accepts up to 24 hours. A value above the plan's limit is a definite create rejection, which fails the provision and leaves it safe to retry after the setting is corrected.
+
+The timeout is a fixed backstop, not a keep-alive. DAC stops the sandbox when its Attempt ends (ADR-0014); the timeout bounds the cost of a stop that never lands. Set it longer than the longest expected Attempt, because the adapter does not renew it and an Attempt outliving it loses its sandbox. `observe` stays read-only and never extends the lifetime.
+
+Creates set `autoPause=false`, so an expired sandbox is killed. A paused sandbox has no lifetime of its own, and stop semantics do not retain workspaces, so pausing would turn a lost stop into storage kept indefinitely.
+
 ## Configuration
 
 | Setting | Purpose |
@@ -27,6 +35,7 @@ For task attempts, DAC sends an empty object to `provision` and the stable envir
 | `DAC_E2B_API_KEY_FILE` | file-mounted E2B Cloud team key for the adapter process |
 | `DAC_E2B_TEMPLATE_ID` | E2B Cloud template ID; qualification defaults to `base` |
 | `DAC_E2B_STATE` | persistent bbolt state path |
+| `DAC_E2B_SANDBOX_TIMEOUT` | sandbox lifetime as a Go duration such as `1h`; defaults to `1h` |
 
 ## Verification
 
