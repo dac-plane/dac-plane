@@ -553,6 +553,49 @@ func TestReconcileUnknownOutcomeSupersedesAttention(t *testing.T) {
 	}
 }
 
+// A failed Attempt releases its budget, so the prepared environment gets its
+// own stop rather than outliving the work it was prepared for.
+func TestFailedRuntimeStopsPreparedEnvironment(t *testing.T) {
+	t.Parallel()
+	turnFailed := func(t *testing.T, f *fixture) application.Submission {
+		t.Helper()
+		s, rt := f.executing(t, "failed-runtime")
+		f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false, row(2, contracts.EntryTurnFinished, failedTurn("s-1", "t-1", f.at)))))
+		return s
+	}
+	startRejected := func(t *testing.T, f *fixture) application.Submission {
+		t.Helper()
+		s := f.submit(t, f.submitCommand("failed-runtime"))
+		runtime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{Operations: map[ids.OperationID]simulator.RuntimeOp{
+			s.Operation.ID: {Reply: simulator.Rejected(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "scripted rejection"})},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.tick(t, runtime)
+		return s
+	}
+	for name, fail := range map[string]func(*testing.T, *fixture) application.Submission{"start rejected": startRejected, "turn failed": turnFailed} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, lifecycle.HarnessLive)
+			s := fail(t, f)
+			after := f.reload(t, s.Nonce)
+			if after.Attempt.State != lifecycle.AttemptFailed || after.Reservation.State != lifecycle.ReservationReleased {
+				t.Fatalf("attempt=%s reservation=%s; want failed and released", after.Attempt.State, after.Reservation.State)
+			}
+			stop := f.environmentStopOperation(t, s)
+			f.dispatchPendingEnvironments(t)
+			if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, stop); err != nil || op.State != lifecycle.OperationAccepted {
+				t.Fatalf("stop operation=%s err=%v; want accepted", op.State, err)
+			}
+			if stopped, err := store.EnvironmentStopped(f.ctx, f.pool, f.tenant, s.Attempt.ID); err != nil || !stopped {
+				t.Fatalf("environment stopped=%v err=%v; want the stop observed on the failed attempt", stopped, err)
+			}
+		})
+	}
+}
+
 // An environment stop that expires unsent proves nothing: the provision it
 // would stop reached the provider, so the environment may be live even though
 // no resource observation has arrived yet.

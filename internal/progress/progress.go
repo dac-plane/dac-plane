@@ -7,14 +7,19 @@ package progress
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
+	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 )
+
+// environmentStopHorizon bounds the stop call of an environment.
+const environmentStopHorizon = 24 * time.Hour
 
 // Step is one actor's transitions inside one unit of work.
 type Step struct {
@@ -123,7 +128,67 @@ func (s Step) FollowOperation(ctx context.Context, operation lifecycle.ProviderO
 			target = lifecycle.AttemptFinalizing
 		}
 	}
-	_, _, _, err = s.Attempt(ctx, attempt.ID, event, target)
+	next, applied, _, err := s.Attempt(ctx, attempt.ID, event, target)
+	if err != nil || !applied {
+		return err
+	}
+	return s.StopFailedEnvironment(ctx, next.ID)
+}
+
+// StopFailedEnvironment stops the resource a failed Attempt leaves behind:
+// failing releases the Attempt's budget, and nothing else would stop it. An
+// unbound provision has no resource to stop, and a resource already observed
+// stopped needs no second stop.
+func (s Step) StopFailedEnvironment(ctx context.Context, id ids.AttemptID) error {
+	attempt, err := store.GetAttempt(ctx, s.UOW, s.Tenant, id)
+	if err != nil {
+		return err
+	}
+	if attempt.State != lifecycle.AttemptFailed || attempt.EnvironmentOperation.IsZero() {
+		return nil
+	}
+	bound, err := store.HasEnvironmentBinding(ctx, s.UOW, s.Tenant, attempt.ID)
+	if err != nil || !bound {
+		return err
+	}
+	stopped, err := store.EnvironmentStopped(ctx, s.UOW, s.Tenant, attempt.ID)
+	if err != nil || stopped {
+		return err
+	}
+	return s.StopEnvironment(ctx, attempt)
+}
+
+// StopEnvironment records and queues a stop of the Attempt's assigned
+// environment.
+func (s Step) StopEnvironment(ctx context.Context, attempt lifecycle.Attempt) error {
+	operationID, err := ids.New[ids.Operation]()
+	if err != nil {
+		return err
+	}
+	operation, err := lifecycle.NewProviderOperation(operationID, s.Tenant, attempt.ID, attempt.EnvironmentProvider, s.At)
+	if err != nil {
+		return err
+	}
+	if _, _, err := store.InsertOperation(ctx, s.UOW, operation); err != nil {
+		return err
+	}
+	arguments, err := json.Marshal(map[string]string{"provision_operation_id": attempt.EnvironmentOperation.String()})
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{
+		"operation": operation.ID.String(), "role": contracts.RoleEnvironment, "method": contracts.MethodStop,
+		"arguments": json.RawMessage(arguments), "deadline": s.At.Add(environmentStopHorizon).Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	tr, err := s.transition(operation.Version)
+	if err != nil {
+		return err
+	}
+	tr.Outbox = &store.OutboxPayload{ID: operation.ID.Untyped(), Attempt: attempt.ID, Demand: contracts.DemandPerson, Body: body}
+	_, _, err = store.ApplyOperation(ctx, s.UOW, s.Tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
 	return err
 }
 

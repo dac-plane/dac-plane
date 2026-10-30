@@ -240,7 +240,8 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 		requested = next
 	}
 	if !attempt.EnvironmentProvider.IsZero() {
-		if err := enqueueEnvironmentStop(ctx, u, tenant, attempt); err != nil {
+		step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
+		if err := step.StopEnvironment(ctx, attempt); err != nil {
 			return nil, err
 		}
 	}
@@ -273,37 +274,6 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 		return nil, err
 	}
 	return json.Marshal(view)
-}
-
-func enqueueEnvironmentStop(ctx context.Context, u *unit, tenant ids.TenantID, attempt lifecycle.Attempt) error {
-	operationID, err := ids.New[ids.Operation]()
-	if err != nil {
-		return err
-	}
-	operation, err := lifecycle.NewProviderOperation(operationID, tenant, attempt.ID, attempt.EnvironmentProvider, u.at)
-	if err != nil {
-		return err
-	}
-	if _, _, err := store.InsertOperation(ctx, u.uow, operation); err != nil {
-		return err
-	}
-	arguments, err := json.Marshal(map[string]string{"provision_operation_id": attempt.EnvironmentOperation.String()})
-	if err != nil {
-		return err
-	}
-	body, err := json.Marshal(map[string]any{
-		"operation": operation.ID.String(), "role": contracts.RoleEnvironment, "method": contracts.MethodStop,
-		"arguments": json.RawMessage(arguments), "deadline": u.at.Add(interruptHorizon).Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		return err
-	}
-	tr, err := u.transition(operation.Version, &store.OutboxPayload{ID: operation.ID.Untyped(), Attempt: attempt.ID, Demand: contracts.DemandPerson, Body: body})
-	if err != nil {
-		return err
-	}
-	_, _, err = store.ApplyOperation(ctx, u.uow, tenant, operation.ID, lifecycle.OperationDispatch, lifecycle.OperationDispatched, tr)
-	return err
 }
 
 // cancelOpenAttention cancels every still-open native wait of the attempt in
