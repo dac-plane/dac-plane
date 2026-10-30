@@ -85,11 +85,25 @@ services:
       provision-runtime-binding:
         condition: service_completed_successfully
 
+  provision-environment:
+    <<: *provision
+    command: ["provision", "register-provider", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-role", "environment", "-id", "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"]
+    depends_on:
+      provision-artifact-binding:
+        condition: service_completed_successfully
+
+  provision-environment-binding:
+    <<: *provision
+    command: ["provision", "bind-adapter", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-provider", "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12", "-role", "environment", "-issuer", "https://issuer:8443/default", "-subject", "environment-adapter"]
+    depends_on:
+      provision-environment:
+        condition: service_completed_successfully
+
   provision-qualify:
     <<: *provision
     command: ["provision", "qualify-harness", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-provider", "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10", "-mode", "live"]
     depends_on:
-      provision-artifact-binding:
+      provision-environment-binding:
         condition: service_completed_successfully
 
   dac-plane:
@@ -120,6 +134,8 @@ services:
       DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/runtime_client_secret
       DAC_ARTIFACT_STORE_CLIENT_ID: artifact-adapter
       DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_ENVIRONMENT_CLIENT_ID: environment-adapter
+      DAC_ENVIRONMENT_CLIENT_SECRET_FILE: /run/secrets/environment_client_secret
     configs:
       - source: dev_ca
         target: /run/config/ca.crt
@@ -128,6 +144,7 @@ services:
     secrets:
       - runtime_client_secret
       - artifact_client_secret
+      - environment_client_secret
     depends_on:
       dac-plane:
         condition: service_healthy
@@ -156,3 +173,5 @@ secrets:
     file: ${DAC_RUNTIME_CLIENT_SECRET_FILE:?set DAC_RUNTIME_CLIENT_SECRET_FILE}
   artifact_client_secret:
     file: ${DAC_ARTIFACT_CLIENT_SECRET_FILE:?set DAC_ARTIFACT_CLIENT_SECRET_FILE}
+  environment_client_secret:
+    file: ${DAC_ENVIRONMENT_CLIENT_SECRET_FILE:?set DAC_ENVIRONMENT_CLIENT_SECRET_FILE}

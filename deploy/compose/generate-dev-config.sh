@@ -21,6 +21,7 @@ write_secret "$secrets/postgres-serve-password"
 write_secret "$secrets/surface-client-secret"
 write_secret "$secrets/runtime-client-secret"
 write_secret "$secrets/artifact-client-secret"
+write_secret "$secrets/environment-client-secret"
 
 if [ ! -s "$output/ca.crt" ] || [ ! -s "$output/ca.key" ]; then
   openssl req -x509 -newkey rsa:3072 -nodes -days 30 \
@@ -83,6 +84,7 @@ DAC_MIGRATE_DATABASE_URL_FILE=$secrets/migrate-database-url
 DAC_SERVE_DATABASE_URL_FILE=$secrets/serve-database-url
 DAC_RUNTIME_CLIENT_SECRET_FILE=$secrets/runtime-client-secret
 DAC_ARTIFACT_CLIENT_SECRET_FILE=$secrets/artifact-client-secret
+DAC_ENVIRONMENT_CLIENT_SECRET_FILE=$secrets/environment-client-secret
 DAC_STACK_SURFACE_CLIENT_SECRET_FILE=$secrets/surface-client-secret
 EOF
 
@@ -101,4 +103,5 @@ chmod 0444 \
   "$secrets/out-of-range-database-url" \
   "$secrets/surface-client-secret" \
   "$secrets/runtime-client-secret" \
-  "$secrets/artifact-client-secret"
+  "$secrets/artifact-client-secret" \
+  "$secrets/environment-client-secret"

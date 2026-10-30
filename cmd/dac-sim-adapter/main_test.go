@@ -7,9 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
 	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
 	"github.com/AssahBismarkabah/dac-plane/internal/identity"
 	"github.com/AssahBismarkabah/dac-plane/internal/ids"
@@ -203,5 +207,33 @@ func TestRuntimeScenarioDefaultsServeAnyOperation(t *testing.T) {
 	}
 	if after := scenario.Default.AfterDecision.Frames[0].Rows.Entries[0]; after.Sequence != 2 {
 		t.Fatalf("continuation starts at %d, want 2", after.Sequence)
+	}
+}
+
+func TestScenarioEnvironmentServesItsOwnRegistration(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DAC_ADAPTER_TOKEN_FILE", tokenFile)
+	var s scenarioFile
+	if err := json.Unmarshal([]byte(`{"tenant_id":"01a167fd-51d9-76ba-b563-496e2bd89646","provider_id":"01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10","role":"runtime",
+		"environment":{"provider_id":"01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"}}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.adapters(nil, false); err == nil || !strings.Contains(err.Error(), "DAC_ENVIRONMENT_TOKEN_FILE") {
+		t.Fatalf("adapters() without an environment token error = %v, want the missing setting named", err)
+	}
+	t.Setenv("DAC_ENVIRONMENT_TOKEN_FILE", tokenFile)
+	set, err := s.adapters(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.adapters) != 2 || set.adapters[1].role != wire.RoleEnvironment || set.adapters[1].provider != s.Environment.Provider || len(set.adapters[1].offered) != 0 {
+		t.Fatalf("adapters = %+v, want the runtime and an environment without replay", set.adapters)
+	}
+	if set.adapters[1].port.Role() != contracts.RoleEnvironment {
+		t.Fatalf("environment port role = %s", set.adapters[1].port.Role())
 	}
 }

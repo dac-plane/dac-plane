@@ -81,6 +81,56 @@ func TestEnvironmentProvisionAppliesOneEffect(t *testing.T) {
 	})
 }
 
+func TestEnvironmentDefaultAppliesEachMethodsEffect(t *testing.T) {
+	config := testConfig(t)
+	sim, err := simulator.NewEnvironment(config, simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned},
+	})
+	if err != nil {
+		t.Fatalf("NewEnvironment() error = %v", err)
+	}
+	provision, stop := mustID[ids.Operation](t), mustID[ids.Operation](t)
+	for _, step := range []struct {
+		operation ids.OperationID
+		method    contracts.Method
+		want      simulator.EffectKind
+	}{
+		{provision, contracts.MethodProvision, simulator.EnvironmentProvisioned},
+		{stop, contracts.MethodStop, simulator.EnvironmentStopped},
+	} {
+		request := newRoleRequest(t, config, step.operation, contracts.RoleEnvironment, step.method, nil)
+		for range 2 {
+			request.Delivery = mustID[ids.Delivery](t)
+			if reply, err := sim.Send(context.Background(), request); err != nil || reply.Outcome != contracts.OutcomeOK {
+				t.Fatalf("%s Send() = %+v, %v; want an acceptance", step.method, reply, err)
+			}
+		}
+		if got := sim.Ledger().Effects(step.operation); got != 1 {
+			t.Errorf("%s effects = %d, want 1", step.method, got)
+		}
+	}
+	applied := sim.Ledger().Applied()
+	if len(applied) != 2 || applied[0].Kind != simulator.EnvironmentProvisioned || applied[1].Kind != simulator.EnvironmentStopped {
+		t.Fatalf("Applied() = %+v, want a provision then a stop", applied)
+	}
+	// The control plane follows a defaulted provision for its observation.
+	stream, err := sim.Subscribe(context.Background(), contracts.Cursor{
+		Tenant: config.Tenant, Attempt: mustID[ids.Attempt](t), Operation: provision, Stream: "events", Generation: 1,
+	})
+	if err != nil {
+		t.Fatalf("Subscribe() of a defaulted operation error = %v", err)
+	}
+	if frame, err := stream.Next(context.Background()); err != nil || frame.Rows == nil || len(frame.Rows.Entries) != 1 || frame.Rows.Entries[0].Kind != string(contracts.EntryEnvironmentObserved) {
+		t.Fatalf("defaulted provision stream = %+v, %v; want its observation", frame, err)
+	}
+
+	if _, err := simulator.NewEnvironment(testConfig(t), simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted},
+	}); !errors.Is(err, simulator.ErrInvalidScenario) {
+		t.Fatalf("NewEnvironment() with a runtime default effect error = %v, want ErrInvalidScenario", err)
+	}
+}
+
 func TestEnvironmentObservationsAdvanceAndConfirmStop(t *testing.T) {
 	config := testConfig(t)
 	operation := mustID[ids.Operation](t)

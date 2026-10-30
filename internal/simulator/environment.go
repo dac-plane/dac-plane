@@ -40,6 +40,11 @@ type EnvironmentScenario struct {
 	Operations map[ids.OperationID]EnvironmentOp
 	// MigrationReceipts enables explicit fenced environment stage receipts.
 	MigrationReceipts bool
+	// Default scripts every operation Operations does not name, for an
+	// environment whose operation identities are only known once work is
+	// submitted, as in a deployed stack. Its reply answers each method, and a
+	// set Effect applies the delivered method's own effect.
+	Default *EnvironmentOp
 }
 
 // EnvironmentOp is one operation's script. Reply answers provision and stop.
@@ -75,6 +80,9 @@ func NewEnvironment(config Config, scenario EnvironmentScenario) (*Environment, 
 	config = config.withDefaults()
 	if err := config.validate(); err != nil {
 		return nil, err
+	}
+	if scenario.Default != nil && scenario.Default.Effect != "" && !validEnvironmentEffect(scenario.Default.Effect) {
+		return nil, fmt.Errorf("%w: %s is not an environment effect", ErrInvalidScenario, scenario.Default.Effect)
 	}
 	for operation, step := range scenario.Operations {
 		if step.Effect != "" && !validEnvironmentEffect(step.Effect) {
@@ -133,7 +141,7 @@ func (e *Environment) Send(ctx context.Context, request contracts.Request) (cont
 		return contracts.Reply{}, err
 	}
 	e.ledger.recordRequest(request)
-	step, ok := e.scenario.Operations[request.Operation]
+	step, ok := e.operation(request.Operation, request.Method)
 	if e.scenario.MigrationReceipts {
 		var migration contracts.MigrationRequest
 		if json.Unmarshal(request.Arguments, &migration) == nil && migration.Validate() == nil && migration.Operation == request.Operation {
@@ -200,6 +208,22 @@ func (e *Environment) Send(ctx context.Context, request contracts.Request) (cont
 		return contracts.Reply{}, step.SendError
 	}
 	return reply, nil
+}
+
+// operation returns the script for one operation: its own entry, or the
+// default with the delivered method's effect.
+func (e *Environment) operation(id ids.OperationID, method contracts.Method) (EnvironmentOp, bool) {
+	if step, ok := e.scenario.Operations[id]; ok {
+		return step, true
+	}
+	if e.scenario.Default == nil {
+		return EnvironmentOp{}, false
+	}
+	step := *e.scenario.Default
+	if step.Effect != "" {
+		step.Effect = environmentEffect[method]
+	}
+	return step, true
 }
 
 func (e *Environment) recordTaskObservation(request contracts.Request) {
@@ -296,8 +320,7 @@ func (e *Environment) Subscribe(ctx context.Context, cursor contracts.Cursor) (c
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	_, scripted := e.scenario.Operations[cursor.Operation]
-	if !scripted {
+	if _, scripted := e.operation(cursor.Operation, ""); !scripted {
 		return nil, fmt.Errorf("%w: %s", ErrUnscripted, cursor.Operation)
 	}
 	if err := cursor.Validate(); err != nil {

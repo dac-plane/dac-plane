@@ -37,6 +37,9 @@
       }
     ]
   },
+  "environment": {
+    "provider_id": "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"
+  },
   "artifact_store": {
     "provider_id": "01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11",
     "fixtures": {

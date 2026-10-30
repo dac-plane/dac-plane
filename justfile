@@ -277,6 +277,9 @@ stack-down:
 [group('test')]
 test-stack: stack-certs
     #!/usr/bin/env bash
+    # Shebang recipes do not inherit `set shell`; without strict mode a failed
+    # step is masked by the exit status of the last command.
+    set -euo pipefail
     compose=(docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml --profile dev)
     cleanup() { code=$?; if (( code != 0 )); then "${compose[@]}" logs --no-color --tail=200; fi; "${compose[@]}" down -v --remove-orphans; exit "$code"; }
     trap cleanup EXIT
@@ -300,6 +303,7 @@ test-stack: stack-certs
 [private]
 operations-images:
     #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p .work/operations
     old_src=$(mktemp -d "$PWD/.work/operations/old-src.XXXXXX")
     cleanup() { rm -rf -- "$old_src"; }
@@ -317,6 +321,7 @@ test-operations-fixture:
 [private]
 _test-operations filter: stack-certs operations-images test-operations-fixture
     #!/usr/bin/env bash
+    set -euo pipefail
     set -a
     source .work/stack/compose.env
     set +a

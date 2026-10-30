@@ -28,8 +28,10 @@ import (
 const (
 	tenantID   = "01a167fd-51d9-76ba-b563-496e2bd89646"
 	providerID = "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10"
-	apiRoot    = "https://dac-plane:8443/v1/tenants/" + tenantID
-	tokenURL   = "https://issuer:8443/default/token"
+	// environmentProviderID is the development stack's simulated environment.
+	environmentProviderID = "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"
+	apiRoot               = "https://dac-plane:8443/v1/tenants/" + tenantID
+	tokenURL              = "https://issuer:8443/default/token"
 )
 
 func TestDevelopmentStackLifecycle(t *testing.T) {
@@ -42,14 +44,15 @@ func TestDevelopmentStackLifecycle(t *testing.T) {
 	submitted := request[httpapi.SubmissionBody](t, ctx, client, token, http.MethodPost, "/tasks", map[string]string{
 		"Idempotency-Key": "stack-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}, httpapi.SubmitTaskRequest{
-		Objective:          "Complete the deployed stack fixture",
-		AcceptanceCriteria: []string{"The task reaches ready_for_review"},
-		Provider:           mustProviderID(t),
-		Demand:             contracts.DemandPerson,
-		Deadline:           time.Now().UTC().Add(time.Hour),
-		Unit:               "tokens",
-		Ceiling:            1000,
-		Amount:             100,
+		Objective:           "Complete the deployed stack fixture",
+		AcceptanceCriteria:  []string{"The task reaches ready_for_review"},
+		Provider:            mustProviderID(t, providerID),
+		EnvironmentProvider: mustProviderID(t, environmentProviderID),
+		Demand:              contracts.DemandPerson,
+		Deadline:            time.Now().UTC().Add(time.Hour),
+		Unit:                "tokens",
+		Ceiling:             1000,
+		Amount:              100,
 	}, http.StatusCreated)
 
 	attention := poll(t, ctx, "attention request", func() (lifecycle.AttentionRequest, bool) {
@@ -224,9 +227,9 @@ func stackClient(t *testing.T) *http.Client {
 	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
 }
 
-func mustProviderID(t *testing.T) ids.ProviderID {
+func mustProviderID(t *testing.T, text string) ids.ProviderID {
 	t.Helper()
-	id, err := ids.Parse[ids.Provider](providerID)
+	id, err := ids.Parse[ids.Provider](text)
 	if err != nil {
 		t.Fatal(err)
 	}

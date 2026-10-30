@@ -21,6 +21,8 @@ services:
       DAC_ADAPTER_SCOPE: dac-plane-adapters
       DAC_ARTIFACT_STORE_CLIENT_ID: artifact-adapter
       DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_ENVIRONMENT_CLIENT_ID: environment-adapter
+      DAC_ENVIRONMENT_CLIENT_SECRET_FILE: /run/secrets/environment_client_secret
       DAC_SIM_ARTIFACT_ONLY: "true"
       DAC_SIM_ARTIFACT_ADDR: :8082
       DAC_SIM_ARTIFACT_PUBLIC_URL: https://artifact-adapter:8082
@@ -35,6 +37,7 @@ services:
         target: /run/config/scenario.json
     secrets:
       - artifact_client_secret
+      - environment_client_secret
       - source: tls_key
         target: tls.key
     depends_on:
