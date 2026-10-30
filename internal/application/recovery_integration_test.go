@@ -344,6 +344,61 @@ func TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent(t *testing.T) {
 	}
 }
 
+// forgedUsageEnvironment answers every subscription with a usage entry, which
+// only a runtime may report.
+type forgedUsageEnvironment struct {
+	*simulator.Environment
+	frame contracts.StreamFrame
+}
+
+func (e *forgedUsageEnvironment) Subscribe(context.Context, contracts.Cursor) (contracts.Stream, error) {
+	return &oneFrameStream{frame: e.frame}, nil
+}
+
+type oneFrameStream struct {
+	frame contracts.StreamFrame
+	sent  bool
+}
+
+func (s *oneFrameStream) Next(context.Context) (contracts.StreamFrame, error) {
+	if s.sent {
+		return contracts.StreamFrame{}, io.EOF
+	}
+	s.sent = true
+	return s.frame, nil
+}
+
+func (s *oneFrameStream) Close() error { return nil }
+
+// Reconciliation lets an environment settle its own uncertain operation, not
+// charge the Attempt's budget.
+func TestRecoveryEnvironmentCannotReportUsage(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("forged-usage"))
+	inner, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned, SendError: io.ErrUnexpectedEOF},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := &forgedUsageEnvironment{Environment: inner, frame: simulator.RowsFrame(false, row(1, contracts.EntryUsageReported, contracts.UsageReported{Unit: s.Unit, Cumulative: 1200}))}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "forged-usage",
+		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: environment}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.reservation(t, s); got.Consumed != 0 {
+		t.Fatalf("reservation consumed=%d after an environment's usage entry; want 0", got.Consumed)
+	}
+}
+
 // An environment reports its operations through its resource, never an
 // operation outcome. A lost provision or stop reply settles from that
 // observation, and the observe loop then applies it through ingestion.
