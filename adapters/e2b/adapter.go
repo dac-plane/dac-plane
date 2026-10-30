@@ -287,6 +287,10 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 	if err != nil {
 		return rejected(req, wire.FailureInvalidArguments, "operation identity or payload mismatch"), nil
 	}
+	if op.ResourceRef != "" && op.State == "provisioned" {
+		// A crash after saving the mapping left its readiness unrecorded.
+		return a.recordTaskReadiness(req, op.ResourceRef)
+	}
 	if op.ResourceRef != "" && op.State != "create_sent" {
 		raw, _ := json.Marshal(taskProvisionResult{ResourceRef: op.ResourceRef})
 		return accepted(req, raw), nil
@@ -337,6 +341,13 @@ func (a *Adapter) finishTaskProvision(req wire.Request, sbx sandbox) (wire.Reply
 	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.ResourceRef, o.State = ref, "provisioned"; return nil }); err != nil {
 		return wire.Reply{}, err
 	}
+	return a.recordTaskReadiness(req, ref)
+}
+
+// recordTaskReadiness records the provisioned sandbox's running observation
+// and accepts the provision. The journal records it once, so a redelivery
+// after a crash between the mapping and this write repairs it.
+func (a *Adapter) recordTaskReadiness(req wire.Request, ref string) (wire.Reply, error) {
 	_, _, err := a.cfg.Journal.RecordObservation(req.Operation, ref, func(seq uint64) (json.RawMessage, error) {
 		return json.Marshal(observation{ResourceRef: ref, State: "running", Sequence: seq, ObservedAt: a.cfg.Now()})
 	})

@@ -261,34 +261,25 @@ func GetTaskForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, i
 	return GetTask(ctx, u, tenant, id)
 }
 
-// GetAttempt loads an attempt by tenant and id.
+// GetAttempt loads an attempt by tenant and id. The environment assignment
+// columns are read through the row's JSON form, so one statement serves both
+// the current schema and the schemas 13 and 14 an upgraded binary still
+// serves during a rollout (ADR-0011). Only on those, where the columns do not
+// exist, is the assignment read from the submitting command record.
 func GetAttempt(ctx context.Context, q Querier, tenant ids.TenantID, id ids.AttemptID) (lifecycle.Attempt, error) {
 	var attempt lifecycle.Attempt
 	var state, idText, tenantText, taskText string
 	var number int32
-	version, err := SchemaVersion(ctx, q)
-	if err != nil {
-		return lifecycle.Attempt{}, err
-	}
-	query := `select attempt_id::text, tenant_id::text, task_id::text, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at from attempt where tenant_id = $1 and attempt_id = $2`
-	if version >= 15 {
-		query = `select attempt_id::text, tenant_id::text, task_id::text, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at, environment_provider_id::text, environment_operation_id::text from attempt where tenant_id = $1 and attempt_id = $2`
-	}
-	row := q.QueryRow(ctx, query, tenant.String(), id.String())
-	if version >= 15 {
-		var provider, operation *string
-		err = row.Scan(&idText, &tenantText, &taskText, &number, &state, &attempt.Version,
-			&attempt.RuntimeStopped, &attempt.EnvironmentStopped, &attempt.CreatedAt, &attempt.UpdatedAt, &provider, &operation)
-		if err == nil && provider != nil {
-			attempt.EnvironmentProvider, err = ids.Parse[ids.Provider](*provider)
-		}
-		if err == nil && operation != nil {
-			attempt.EnvironmentOperation, err = ids.Parse[ids.Operation](*operation)
-		}
-	} else {
-		err = row.Scan(&idText, &tenantText, &taskText, &number, &state, &attempt.Version,
-			&attempt.RuntimeStopped, &attempt.EnvironmentStopped, &attempt.CreatedAt, &attempt.UpdatedAt)
-	}
+	var assigned bool
+	var provider, operation *string
+	err := q.QueryRow(ctx, `
+		select attempt_id::text, tenant_id::text, task_id::text, number, state, version, runtime_stopped, environment_stopped, created_at, updated_at,
+			to_jsonb(a) ? 'environment_provider_id', to_jsonb(a)->>'environment_provider_id', to_jsonb(a)->>'environment_operation_id'
+		from attempt a where tenant_id = $1 and attempt_id = $2`,
+		tenant.String(), id.String(),
+	).Scan(&idText, &tenantText, &taskText, &number, &state, &attempt.Version,
+		&attempt.RuntimeStopped, &attempt.EnvironmentStopped, &attempt.CreatedAt, &attempt.UpdatedAt,
+		&assigned, &provider, &operation)
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.Attempt{}, ErrNotFound
@@ -307,19 +298,18 @@ func GetAttempt(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Atte
 	}
 	attempt.Number = uint32(number)
 	attempt.State = lifecycle.AttemptState(state)
-	if version < 15 {
-		var provider, operation *string
+	if !assigned {
 		err = q.QueryRow(ctx, `select coalesce(result->>'environment_provider_id', result->'scheduling'->>'environment_provider_id'), coalesce(result->>'environment_operation_id', result->'scheduling'->>'environment_operation_id') from command_record where tenant_id=$1 and command in ('submit_task','review_result') and coalesce(result->>'attempt',result->'scheduling'->>'attempt')=$2 order by created_at desc limit 1`, tenant.String(), id.String()).Scan(&provider, &operation)
 		if err != nil && !isNoRows(err) {
 			return lifecycle.Attempt{}, err
 		}
-		if provider != nil && operation != nil {
-			if attempt.EnvironmentProvider, err = ids.Parse[ids.Provider](*provider); err != nil {
-				return lifecycle.Attempt{}, err
-			}
-			if attempt.EnvironmentOperation, err = ids.Parse[ids.Operation](*operation); err != nil {
-				return lifecycle.Attempt{}, err
-			}
+	}
+	if provider != nil && operation != nil {
+		if attempt.EnvironmentProvider, err = ids.Parse[ids.Provider](*provider); err != nil {
+			return lifecycle.Attempt{}, err
+		}
+		if attempt.EnvironmentOperation, err = ids.Parse[ids.Operation](*operation); err != nil {
+			return lifecycle.Attempt{}, err
 		}
 	}
 	if err := attempt.Validate(); err != nil {

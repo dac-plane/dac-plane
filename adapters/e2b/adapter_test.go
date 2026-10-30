@@ -213,6 +213,44 @@ func TestTaskEnvironmentProvisionAndStopPublishObservations(t *testing.T) {
 	}
 }
 
+// A crash after the sandbox mapping is saved but before its readiness is
+// recorded must not leave the runtime waiting forever: redelivery repairs it,
+// exactly once.
+func TestTaskProvisionRedeliveryRepairsMissingReadiness(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{"sbx-1": {SandboxID: "sbx-1"}}}
+	a, store := newTestAdapter(t, fake)
+	provision, _ := json.Marshal(struct{}{})
+	request := wire.Request{Operation: "task-environment-create", Delivery: "delivery-1", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: provision}
+	if _, _, err := store.Begin(journal.Operation{ID: request.Operation, Hash: digest(request.Arguments), Tenant: request.Tenant, Attempt: request.Attempt, Method: request.Method}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(request.Operation, func(o *journal.Operation) error { o.ResourceRef, o.State = "sandbox:sbx-1", "provisioned"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, delivery := range []string{"delivery-2", "delivery-3"} {
+		request.Delivery = delivery
+		reply, err := a.Send(context.Background(), request)
+		if err != nil || reply.Outcome != wire.OutcomeOK {
+			t.Fatalf("redelivered provision = %+v, %v", reply, err)
+		}
+		var result taskProvisionResult
+		if err := json.Unmarshal(reply.Result, &result); err != nil || result.ResourceRef != "sandbox:sbx-1" {
+			t.Fatalf("provision result %+v, %v", result, err)
+		}
+	}
+	events, err := store.EventsAfter(request.Operation, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("readiness events = %+v, %v; want exactly one", events, err)
+	}
+	var ready observation
+	if err := json.Unmarshal(events[0].Payload, &ready); err != nil || ready.State != "running" || ready.ResourceRef != "sandbox:sbx-1" {
+		t.Fatalf("ready observation %+v, %v", ready, err)
+	}
+	if fake.created != 0 {
+		t.Fatalf("sandbox creates = %d, want the recorded sandbox reused", fake.created)
+	}
+}
+
 func TestTaskEnvironmentStopBeforeProvisionFencesCreate(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{}}
 	a, _ := newTestAdapter(t, fake)
