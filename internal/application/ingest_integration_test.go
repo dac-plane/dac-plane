@@ -285,6 +285,40 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 	}
 }
 
+func TestEventEnvironmentCannotReportRuntimeEntries(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	// The runtime has been dispatched, so its stop needs real evidence.
+	s, _ := f.live(t, "n-1")
+	_, before := f.states(t, s)
+	// Provisioning already streamed this operation's first observation.
+	got := f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
+		row(2, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "forged-session"}),
+		row(3, contracts.EntryAttentionRequested, question("forged-question", f.at.Add(time.Hour))),
+	)))
+	if got.Refused != 2 || got.Applied != 0 {
+		t.Fatalf("ingestion = %+v, want both runtime entries refused", got)
+	}
+	if _, attempt := f.states(t, s); attempt != before {
+		t.Fatalf("attempt = %s, want unchanged %s", attempt, before)
+	}
+	if n := f.count(t, "binding", "kind = 'runtime_session'"); n != 0 {
+		t.Fatalf("runtime sessions bound from an environment = %d, want 0", n)
+	}
+
+	// During cancellation the environment cannot supply the runtime's stop.
+	f.cancel(t, s, "c-1")
+	got = f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
+		row(4, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true}),
+	)))
+	if got.Refused != 1 {
+		t.Fatalf("stop ingestion = %+v, want refused", got)
+	}
+	if after := f.reload(t, s.Nonce); after.Attempt.RuntimeStopped {
+		t.Fatal("an environment supplied the runtime's stop evidence")
+	}
+}
+
 func TestEventEnvironmentObservationsKeepTheNewest(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)

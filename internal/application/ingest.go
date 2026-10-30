@@ -154,7 +154,7 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 		Replay: ingested.Replay, Stale: ingested.Stale, Rehydrate: ingested.Rehydrate,
 	}
 	applier := entryApplier{
-		uow: uow, event: event, operation: operation,
+		uow: uow, event: event, operation: operation, role: role,
 		step: progress.Step{
 			UOW: uow, Tenant: event.Tenant, At: at,
 			Actor: lifecycle.Actor{Kind: lifecycle.ActorProvider, Provider: peer.Provider},
@@ -222,7 +222,10 @@ type entryApplier struct {
 	uow       *store.UnitOfWork
 	event     contracts.Event
 	operation lifecycle.ProviderOperation
-	step      progress.Step
+	// role is the role the operation was dispatched to. An environment may
+	// report only its resource and its own operation's outcome.
+	role contracts.Role
+	step progress.Step
 }
 
 func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOutcome, error) {
@@ -232,6 +235,9 @@ func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOu
 	case contracts.EntryRefuse:
 		// An observation cannot grant permission or change state by naming
 		// itself; it is recorded and never applied.
+		return a.refuse(ctx, entry, lifecycle.RejectUnauthorizedActor)
+	}
+	if a.role == contracts.RoleEnvironment && entry.Kind != contracts.EntryEnvironmentObserved && entry.Kind != contracts.EntryOperationOutcome {
 		return a.refuse(ctx, entry, lifecycle.RejectUnauthorizedActor)
 	}
 	var err error

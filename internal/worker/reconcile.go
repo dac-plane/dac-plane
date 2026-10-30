@@ -96,7 +96,7 @@ func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.Tenant
 		if err != nil {
 			return nil
 		} // The next pass resumes from durable progress.
-		ingested, settled, err := w.reconcileFrame(sctx, operation, cursor, frame, replayWatermark, action)
+		ingested, settled, err := w.reconcileFrame(sctx, operation, role, cursor, frame, replayWatermark, action)
 		if err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.Tenant
 // reconcileFrame validates and applies one observation under the durable
 // scope/cursor locks. Outcomes come only from accepted entries, never the raw
 // frame. Cursor and lifecycle movement share one transaction.
-func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.ProviderOperation, cursor contracts.Cursor, frame contracts.StreamFrame, replayWatermark *contracts.Cursor, action *store.GovernedAction) (contracts.Ingestion, bool, error) {
+func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.ProviderOperation, role contracts.Role, cursor contracts.Cursor, frame contracts.StreamFrame, replayWatermark *contracts.Cursor, action *store.GovernedAction) (contracts.Ingestion, bool, error) {
 	event := contracts.Event{Tenant: operation.Tenant, Attempt: operation.Attempt, Provider: operation.Provider, Operation: operation.ID, Stream: cursor.Stream, Generation: cursor.Generation, Body: frame}
 	bound, failure := contracts.BindEvent(contracts.Peer{Tenant: operation.Tenant, Provider: operation.Provider}, event, operation)
 	if failure != nil {
@@ -148,7 +148,18 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 	if _, _, err = store.LockResultScope(ctx, u, operation.Tenant, operation.Attempt); err != nil {
 		return contracts.Ingestion{}, false, err
 	}
-	authoritative, err := store.ObserveHarness(ctx, u, bound, time.Now().UTC())
+	// An environment has no harness: its registration authorizes it, as in
+	// ingestion.
+	var authoritative bool
+	if role == contracts.RoleEnvironment {
+		_, err = store.GetProviderRegistration(ctx, u, operation.Tenant, operation.Provider, contracts.RoleEnvironment)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return contracts.Ingestion{}, false, err
+		}
+		authoritative, err = err == nil, nil
+	} else {
+		authoritative, err = store.ObserveHarness(ctx, u, bound, time.Now().UTC())
+	}
 	if err != nil {
 		return contracts.Ingestion{}, false, err
 	}
@@ -213,7 +224,7 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 		if settled || current.State != lifecycle.OperationUncertain {
 			continue
 		}
-		settled, err = w.applyReconciledEntry(ctx, u, current, entry, action)
+		settled, err = w.applyReconciledEntry(ctx, u, current, role, entry, action)
 		if err != nil {
 			return contracts.Ingestion{}, false, err
 		}

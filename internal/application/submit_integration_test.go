@@ -708,6 +708,35 @@ func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
 	}
 }
 
+// A governed submission from before environment assignment has none; its
+// approval keeps the previous release's direct runtime dispatch.
+func TestSubmitSpendLegacyAssertionDispatchesRuntime(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.governed(t, "n-legacy")
+	// Migration 15 leaves an attempt whose submission named no environment unassigned.
+	if _, err := f.pool.Exec(f.ctx, `update attempt set environment_provider_id = null, environment_operation_id = null where tenant_id = $1 and attempt_id = $2`, f.tenant.String(), s.Attempt.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := application.Assert(f.ctx, f.pool, f.assertCommand("a-1", s, assertion))
+	if err != nil {
+		t.Fatalf("Assert() error = %v", err)
+	}
+	if done.Receipt == nil || done.Dispatch == nil || done.Dispatch.Status != "pending" || done.Dispatch.Demand != contracts.DemandPerson {
+		t.Fatalf("legacy approval receipt=%+v dispatch=%+v, want a pending runtime dispatch", done.Receipt, done.Dispatch)
+	}
+	if done.Task.State != lifecycle.TaskRunning || done.Attempt.State != lifecycle.AttemptProvisioning {
+		t.Fatalf("after receipt = %s/%s, want running/provisioning", done.Task.State, done.Attempt.State)
+	}
+	if n := f.count(t, "outbox", "attempt_id = $2 and payload->>'role' = 'environment'", s.Attempt.ID.String()); n != 0 {
+		t.Fatalf("legacy approval enqueued %d environment rows, want none", n)
+	}
+}
+
 func TestSubmitSpendGovernedRejectsMismatchedAssertion(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)

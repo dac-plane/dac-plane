@@ -893,16 +893,21 @@ func (w *Worker) abandonOperation(ctx context.Context, uow *store.UnitOfWork, te
 		}
 		return nil
 	}
-	return w.stopNeverSentCancellation(ctx, step, tenant, operation.Attempt)
+	return w.stopNeverSentCancellation(ctx, step, tenant, resolved)
 }
 
 // stopNeverSentCancellation reconciles the stops of an Attempt awaiting them
-// when its operation was never delivered: no request reached the provider, so
-// the runtime stop is definite, and with no environment ever bound the
-// environment stop is too. The Attempt terminates without inventing a
-// provider, releasing its reservation in the same commit.
-func (w *Worker) stopNeverSentCancellation(ctx context.Context, step progress.Step, tenant ids.TenantID, attemptID ids.AttemptID) error {
-	attempt, err := store.GetAttempt(ctx, step.UOW, tenant, attemptID)
+// when one of its operations was never delivered. A never-sent operation
+// proves only that its own work never began: an unsent runtime start proves
+// the runtime stop, an unsent environment provision proves the environment
+// stop, and an unsent environment stop proves neither. Each side is otherwise
+// proved only while its own creating operation was never sent; a dispatched
+// or uncertain provision may be live even before its resource is bound.
+// Attempts without an environment assignment keep the binding rule. The
+// Attempt terminates without inventing a provider, releasing its reservation
+// in the same commit.
+func (w *Worker) stopNeverSentCancellation(ctx context.Context, step progress.Step, tenant ids.TenantID, operation lifecycle.ProviderOperation) error {
+	attempt, err := store.GetAttempt(ctx, step.UOW, tenant, operation.Attempt)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil
@@ -912,22 +917,64 @@ func (w *Worker) stopNeverSentCancellation(ctx context.Context, step progress.St
 	if attempt.State != lifecycle.AttemptCancellationRequested {
 		return nil
 	}
-	if !attempt.RuntimeStopped {
-		if _, applied, _, err := step.Attempt(ctx, attemptID, lifecycle.AttemptRuntimeStopped, ""); err != nil {
+	role := contracts.RoleRuntime
+	if row, err := store.GetOutboxRow(ctx, step.UOW, tenant, operation.ID.Untyped()); err == nil {
+		if body, parseErr := ParseDispatchBody(row.Payload); parseErr == nil && body.Role != "" {
+			role = body.Role
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	provision := !attempt.EnvironmentOperation.IsZero() && operation.ID == attempt.EnvironmentOperation
+	if role == contracts.RoleEnvironment && !provision {
+		return nil
+	}
+	runtimeProved := role == contracts.RoleRuntime
+	if provision {
+		runtimeOperation, err := store.GetOperationByAttempt(ctx, step.UOW, tenant, attempt.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			runtimeProved = true
+		case err != nil:
+			return err
+		default:
+			runtimeProved = neverSent(runtimeOperation.State)
+		}
+	}
+	var environmentProved bool
+	switch {
+	case provision:
+		environmentProved = true
+	case attempt.EnvironmentOperation.IsZero():
+		bound, err := store.HasEnvironmentBinding(ctx, step.UOW, tenant, attempt.ID)
+		if err != nil {
+			return err
+		}
+		environmentProved = !bound
+	default:
+		provisionOperation, err := store.GetOperation(ctx, step.UOW, tenant, attempt.EnvironmentOperation)
+		if err != nil {
+			return err
+		}
+		environmentProved = neverSent(provisionOperation.State)
+	}
+	if runtimeProved && !attempt.RuntimeStopped {
+		if _, applied, _, err := step.Attempt(ctx, attempt.ID, lifecycle.AttemptRuntimeStopped, ""); err != nil {
 			return err
 		} else if !applied {
 			return nil
 		}
 	}
-	binding, err := store.HasEnvironmentBinding(ctx, step.UOW, tenant, attemptID)
-	if err != nil {
-		return err
+	if environmentProved && !attempt.EnvironmentStopped {
+		_, _, _, err = step.Attempt(ctx, attempt.ID, lifecycle.AttemptEnvironmentStopped, "")
 	}
-	if binding {
-		return nil
-	}
-	_, _, _, err = step.Attempt(ctx, attemptID, lifecycle.AttemptEnvironmentStopped, "")
 	return err
+}
+
+// neverSent reports an operation state that proves no request reached the
+// provider.
+func neverSent(state lifecycle.OperationState) bool {
+	return state == lifecycle.OperationRecorded || state == lifecycle.OperationRejected
 }
 
 // ackClaim acknowledges a row whose claim is still held (cancel path).

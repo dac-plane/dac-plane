@@ -4,6 +4,8 @@ package application_test
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
 	"github.com/AssahBismarkabah/dac-plane/internal/progress"
 	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
+	"github.com/AssahBismarkabah/dac-plane/internal/worker"
 )
 
 // seedSendPolicy makes the approval's action askable, so an approval's grant
@@ -546,5 +550,56 @@ func TestReconcileUnknownOutcomeSupersedesAttention(t *testing.T) {
 	}
 	if task, attempt := f.states(t, s); task != lifecycle.TaskWaitingInput || attempt != lifecycle.AttemptReconciling {
 		t.Fatalf("states = %s/%s, want waiting_input/reconciling", task, attempt)
+	}
+}
+
+// An environment stop that expires unsent proves nothing: the provision it
+// would stop reached the provider, so the environment may be live even though
+// no resource observation has arrived yet.
+func TestCancelUnsentEnvironmentStopDoesNotProveStop(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("n-1"))
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Operations: map[ids.OperationID]simulator.EnvironmentOp{
+			s.Attempt.EnvironmentOperation: {Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned, SendError: io.ErrUnexpectedEOF},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tick := func(cfg worker.Config) {
+		t.Helper()
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, cfg, "test-environment-worker",
+			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: environment}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Tick(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tick(worker.DefaultConfig())
+	if environment.Ledger().Effects(s.Attempt.EnvironmentOperation) != 1 {
+		t.Fatal("provision did not reach the environment")
+	}
+	f.cancel(t, s, "c-1")
+	stop := f.environmentStopOperation(t, s)
+	// Spend the stop's only send without claiming it, so it exhausts unsent.
+	if _, err := f.pool.Exec(f.ctx, `update outbox set attempts = 1 where tenant_id = $1 and record_id = $2`, f.tenant.String(), stop.String()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := worker.DefaultConfig()
+	cfg.Policy.MaxAttempts = 1
+	tick(cfg)
+	if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, stop); err != nil || op.State != lifecycle.OperationRejected {
+		t.Fatalf("stop operation = %s, %v; want rejected as never sent", op.State, err)
+	}
+	after := f.reload(t, s.Nonce)
+	if after.Attempt.EnvironmentStopped || after.Attempt.State != lifecycle.AttemptCancellationRequested {
+		t.Fatalf("attempt = %s environment_stopped=%v; want still awaiting the environment stop", after.Attempt.State, after.Attempt.EnvironmentStopped)
+	}
+	if after.Reservation.State != lifecycle.ReservationHeld {
+		t.Fatalf("reservation = %s, want held while the environment may be live", after.Reservation.State)
 	}
 }

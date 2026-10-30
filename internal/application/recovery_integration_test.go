@@ -343,3 +343,57 @@ func TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent(t *testing.T) {
 		t.Fatal("shadow comparison changed primary state")
 	}
 }
+
+// An environment reports its operations through its resource, never an
+// operation outcome. A lost provision or stop reply settles from that
+// observation, and the observe loop then applies it through ingestion.
+func TestRecoveryLostEnvironmentRepliesSettleFromObservations(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("lost-environment"))
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned, SendError: io.ErrUnexpectedEOF},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "lost-environment",
+		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: environment}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settle := func(operation ids.OperationID) {
+		t.Helper()
+		if err := w.Tick(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, operation); err != nil || op.State != lifecycle.OperationUncertain {
+			t.Fatalf("operation after lost reply = %s, %v; want uncertain", op.State, err)
+		}
+		for range 2 {
+			if err := w.Reconcile(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Observe(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, operation); err != nil || op.State != lifecycle.OperationAccepted {
+			t.Fatalf("operation after reconciliation = %s, %v; want accepted", op.State, err)
+		}
+	}
+
+	settle(s.Attempt.EnvironmentOperation)
+	if _, attempt := f.states(t, s); attempt != lifecycle.AttemptStarting {
+		t.Fatalf("attempt after recovered provision = %s, want starting", attempt)
+	}
+	if n := f.count(t, "outbox", "attempt_id = $2 and payload->>'role' = 'runtime' and payload->>'method' = 'start_turn'", s.Attempt.ID.String()); n != 1 {
+		t.Fatalf("runtime starts after recovered provision = %d, want 1", n)
+	}
+
+	f.cancel(t, s, "lost-environment-cancel")
+	settle(f.environmentStopOperation(t, s))
+	if after := f.reload(t, s.Nonce); !after.Attempt.EnvironmentStopped {
+		t.Fatalf("attempt after recovered stop = %+v, want the environment stop recorded", after.Attempt)
+	}
+}
