@@ -25,6 +25,7 @@ type fakeE2B struct {
 	rejectCreateStatus   int
 	hideList             bool
 	malformedList        bool
+	failDeletes          int
 }
 
 func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +99,11 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		http.NotFound(w, r)
 	case r.Method == http.MethodDelete:
+		if f.failDeletes > 0 {
+			f.failDeletes--
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		id := r.URL.Path[len("/sandboxes/"):]
 		if _, ok := f.sandboxes[id]; !ok {
 			http.NotFound(w, r)
@@ -214,6 +220,149 @@ func TestTaskEnvironmentProvisionAndStopPublishObservations(t *testing.T) {
 	var absent observation
 	if err := json.Unmarshal(frame.Rows.Entries[0].Payload, &absent); err != nil || absent.State != "absent" || absent.Sequence != ready.Sequence+1 {
 		t.Fatalf("stop observation %+v, %v", absent, err)
+	}
+}
+
+func taskStopRequest(provision, stop string) wire.Request {
+	args, _ := json.Marshal(map[string]string{"provision_operation_id": provision})
+	return wire.Request{Operation: stop, Delivery: "delivery-" + stop, Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "stop", Arguments: args}
+}
+
+func provisionTaskEnvironment(t *testing.T, a *Adapter, operation string) {
+	t.Helper()
+	raw, _ := json.Marshal(struct{}{})
+	reply, err := a.Send(context.Background(), wire.Request{Operation: operation, Delivery: "delivery-" + operation, Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: raw})
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("provision = %+v, %v", reply, err)
+	}
+}
+
+func stopObservations(t *testing.T, store *journal.Store, operation string) []observation {
+	t.Helper()
+	entries, err := store.EventsAfter(operation, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []observation
+	for _, entry := range entries {
+		var o observation
+		if err := json.Unmarshal(entry.Payload, &o); err != nil {
+			t.Fatal(err)
+		}
+		observed = append(observed, o)
+	}
+	return observed
+}
+
+// The control plane never sends a stop twice, so an unconfirmed DELETE must
+// complete from the adapter and publish the observation that settles it.
+func TestFailedTaskStopRetriesUntilObserved(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, failDeletes: 2}
+	a, store := newTestAdapter(t, fake)
+	provisionTaskEnvironment(t, a, "create")
+	if reply, err := a.Send(context.Background(), taskStopRequest("create", "stop")); err == nil {
+		t.Fatalf("failed stop = %+v, want an unknown outcome", reply)
+	}
+	if got := stopObservations(t, store, "stop"); len(got) != 0 {
+		t.Fatalf("observations = %+v, want none before the sandbox is gone", got)
+	}
+	a.retryPendingStops(context.Background())
+	if got := stopObservations(t, store, "stop"); len(got) != 0 {
+		t.Fatalf("observations = %+v, want none while DELETE fails", got)
+	}
+	a.retryPendingStops(context.Background())
+	got := stopObservations(t, store, "stop")
+	if len(got) != 1 || got[0].State != "absent" || got[0].ResourceRef != "sandbox:sbx-1" {
+		t.Fatalf("observations = %+v, want one absent", got)
+	}
+	if fake.deleted != 1 || len(fake.sandboxes) != 0 {
+		t.Fatalf("deleted = %d, sandboxes = %v", fake.deleted, fake.sandboxes)
+	}
+	a.retryPendingStops(context.Background())
+	if pending, err := store.PendingStops(); err != nil || len(pending) != 0 {
+		t.Fatalf("pending = %+v, %v", pending, err)
+	}
+	if got := stopObservations(t, store, "stop"); len(got) != 1 {
+		t.Fatalf("observations = %+v, want no duplicate", got)
+	}
+}
+
+// A stop interrupted by a restart is finished by the next process.
+func TestPendingTaskStopSurvivesRestart(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, failDeletes: 1}
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	path := t.TempDir() + "/state.db"
+	store, err := journal.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{BaseURL: server.URL, APIKey: "e2b-test-secret", TemplateID: "base", ProviderID: "e2b-test", Journal: store}
+	a, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisionTaskEnvironment(t, a, "create")
+	if reply, err := a.Send(context.Background(), taskStopRequest("create", "stop")); err == nil {
+		t.Fatalf("failed stop = %+v, want an unknown outcome", reply)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := journal.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	config.Journal = reopened
+	restarted, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.retryPendingStops(context.Background())
+	if got := stopObservations(t, reopened, "stop"); len(got) != 1 || got[0].State != "absent" {
+		t.Fatalf("observations = %+v, want one absent", got)
+	}
+}
+
+// An unknown create stays unresolved until the sandbox lifetime proves it gone.
+func TestStopOfUnknownCreateWaitsOutTheSandboxLifetime(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, hideList: true, rejectCreateStatus: http.StatusBadGateway}
+	a, store := newTestAdapter(t, fake)
+	raw, _ := json.Marshal(struct{}{})
+	if reply, err := a.Send(context.Background(), wire.Request{Operation: "create", Delivery: "d", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: raw}); err == nil {
+		t.Fatalf("provision = %+v, want an unknown outcome", reply)
+	}
+	op, err := store.Operation("create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := a.Send(context.Background(), taskStopRequest("create", "stop")); err == nil {
+		t.Fatalf("stop = %+v, want an unknown outcome", reply)
+	}
+	a.cfg.Now = func() time.Time { return op.CreatedAt.Add(a.cfg.SandboxTimeout + createOutcomeMargin + time.Second) }
+	a.retryPendingStops(context.Background())
+	if got := stopObservations(t, store, "stop"); len(got) != 1 || got[0].State != "absent" || got[0].ResourceRef != "operation:create" {
+		t.Fatalf("observations = %+v, want the operation observed absent", got)
+	}
+}
+
+// A repeated stop of a provision that was fenced before it started stays clean.
+func TestStopAfterCancelledProvisionStaysAbsent(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, rejectCreateStatus: http.StatusBadRequest}
+	a, store := newTestAdapter(t, fake)
+	raw, _ := json.Marshal(struct{}{})
+	if _, err := a.Send(context.Background(), wire.Request{Operation: "create", Delivery: "d", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: raw}); err == nil {
+		t.Fatal("rejected create was accepted")
+	}
+	if err := a.Cancel(context.Background(), wire.Cancel{Operation: "create", Delivery: "cancel"}); err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := a.Send(context.Background(), taskStopRequest("create", "stop")); err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("stop = %+v, %v", reply, err)
+	}
+	if got := stopObservations(t, store, "stop"); len(got) != 1 || got[0].ResourceRef != "operation:create" {
+		t.Fatalf("observations = %+v", got)
 	}
 }
 

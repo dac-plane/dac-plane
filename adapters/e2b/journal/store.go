@@ -24,9 +24,12 @@ var cancellations = []byte("pre_start_cancellations")
 
 type Operation struct {
 	ID, Hash, Tenant, Attempt, Method, ResourceRef, State string
-	Sequence                                              uint64
-	Receipt                                               json.RawMessage
-	CreatedAt                                             time.Time
+	// StopOf names the provision a task stop ends. It makes the stop intent
+	// durable before the provider is called, so a restart can finish it.
+	StopOf    string
+	Sequence  uint64
+	Receipt   json.RawMessage
+	CreatedAt time.Time
 }
 
 type Store struct {
@@ -245,4 +248,19 @@ func (s *Store) Operations() ([]Operation, error) {
 		})
 	})
 	return result, err
+}
+
+// PendingStops returns the task stops that have not recorded their observation.
+func (s *Store) PendingStops() ([]Operation, error) {
+	all, err := s.Operations()
+	if err != nil {
+		return nil, err
+	}
+	var pending []Operation
+	for _, op := range all {
+		if op.StopOf != "" && op.State != "observed" {
+			pending = append(pending, op)
+		}
+	}
+	return pending, nil
 }

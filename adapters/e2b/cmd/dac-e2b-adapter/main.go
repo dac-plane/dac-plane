@@ -90,6 +90,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	go handler.RetryStops(ctx)
 	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleEnvironment, Handler: handler, TLS: tlsConfig, Logger: logger})
 }
 
