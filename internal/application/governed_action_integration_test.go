@@ -201,7 +201,7 @@ func TestGovernedActionLostPostHookReplyRecoversWithoutRepeatingAction(t *testin
 	if _, err := store.GetHookStageEvidence(g.ctx, g.pool, g.tenant, g.cmd.Request.Operation, contracts.HookPostAction); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("evidence before recovery=%v", err)
 	}
-	if _, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=clock_timestamp() where tenant_id=$1 and payload->>'method'='post_action'`, g.tenant.String()); err != nil {
+	if _, err := g.pool.Exec(g.ctx, `update outbox set next_attempt_at=$2 where tenant_id=$1 and payload->>'method'='post_action'`, g.tenant.String(), time.Now().UTC().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	g.tick(t, e)
