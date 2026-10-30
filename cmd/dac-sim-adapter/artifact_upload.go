@@ -58,7 +58,13 @@ func configureArtifactOnly(set *simulatorSet, getenv func(string) string) (*arti
 		return nil, errors.New("artifact-only mode found no artifact adapter")
 	}
 	artifact.port = h
-	set.adapters = []adapter{artifact}
+	kept := []adapter{artifact}
+	for _, candidate := range set.adapters {
+		if candidate.role == wire.RoleEnvironment {
+			kept = append(kept, candidate)
+		}
+	}
+	set.adapters = kept
 	set.runtime = nil
 	return h, nil
 }

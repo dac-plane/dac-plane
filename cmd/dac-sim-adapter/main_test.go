@@ -167,6 +167,35 @@ func mustNewID[T any](t *testing.T, create func() (T, error)) T {
 	return id
 }
 
+func TestArtifactOnlyKeepsTheEnvironmentAdapter(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DAC_ADAPTER_TOKEN_FILE", tokenFile)
+	t.Setenv("DAC_ENVIRONMENT_TOKEN_FILE", tokenFile)
+	t.Setenv("DAC_ARTIFACT_STORE_TOKEN_FILE", tokenFile)
+	var s scenarioFile
+	if err := json.Unmarshal([]byte(`{"tenant_id":"01a167fd-51d9-76ba-b563-496e2bd89646","provider_id":"01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10","role":"runtime",
+		"environment":{"provider_id":"01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"},
+		"artifact_store":{"provider_id":"01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11"}}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	set, err := s.adapters(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"DAC_SIM_ARTIFACT_ADDR": ":8082", "DAC_SIM_ARTIFACT_PUBLIC_URL": "https://artifact-adapter:8082",
+		"DAC_SIM_ARTIFACT_CERT_FILE": "tls.crt", "DAC_SIM_ARTIFACT_KEY_FILE": "tls.key"}
+	if _, err := configureArtifactOnly(set, func(key string) string { return env[key] }); err != nil {
+		t.Fatal(err)
+	}
+	if len(set.adapters) != 2 || set.adapters[0].role != wire.RoleArtifactStore || set.adapters[1].role != wire.RoleEnvironment {
+		t.Fatalf("adapters = %+v, want the artifact store and the environment", set.adapters)
+	}
+}
+
 func TestScriptRowsNumberRowsAndFillFixtureDigests(t *testing.T) {
 	rows, err := scriptRows([]scriptRow{
 		{Kind: contracts.EntryRuntimeStarted, Payload: json.RawMessage("{\n  \"native_ref\": \"s-1\"\n}")},
