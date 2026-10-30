@@ -358,6 +358,98 @@ func TestLostThreadStartDoesNotCreateSecondNativeTurn(t *testing.T) {
 	}
 }
 
+func entryKinds(t *testing.T, f *fixture) []string {
+	t.Helper()
+	entries, err := f.store.EventsAfter(testOperation, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		kinds = append(kinds, entry.Kind)
+	}
+	return kinds
+}
+
+// The product can only settle a start whose reply it lost from this stream.
+func TestStartPublishesItsOutcomeOnce(t *testing.T) {
+	f := setup(t)
+	request := startRequest(validStart)
+	for range 2 {
+		if reply, err := f.adapter.Send(context.Background(), request); err != nil || reply.Outcome != wire.OutcomeOK {
+			t.Fatalf("start=%+v err=%v", reply, err)
+		}
+	}
+	if got := strings.Join(entryKinds(t, f), ","); got != "runtime.started,turn.started,operation_outcome" {
+		t.Fatalf("entries=%s", got)
+	}
+}
+
+func TestCancelBeforeStartFencesTheOperation(t *testing.T) {
+	f := setup(t)
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(entryKinds(t, f), ","); got != "operation_outcome" {
+		t.Fatalf("entries=%s", got)
+	}
+	reply, err := f.adapter.Send(context.Background(), startRequest(validStart))
+	if err != nil || reply.Durability != wire.DurabilityRejected || reply.Failure == nil || reply.Failure.Code != wire.FailureCancelled {
+		t.Fatalf("start=%+v err=%v", reply, err)
+	}
+	if got := f.native.count("thread/start"); got != 0 {
+		t.Fatalf("thread/start calls=%d", got)
+	}
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(entryKinds(t, f)); got != 1 {
+		t.Fatalf("entries=%d, want one rejection", got)
+	}
+}
+
+// A start that left no turn behind is settled by the interrupt that finds it.
+func TestCancelAfterLostStartRejectsIt(t *testing.T) {
+	f := setup(t)
+	f.native.failThreadStart = true
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err == nil {
+		t.Fatal("lost reply was accepted")
+	}
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(entryKinds(t, f), ","); got != "operation_outcome" {
+		t.Fatalf("entries=%s", got)
+	}
+}
+
+// An interrupt during turn/start must not fence a turn about to be mapped.
+func TestCancelDuringStartWaitsForTheTurn(t *testing.T) {
+	f := setup(t)
+	f.native.blockTurnStart = true
+	f.native.turnStartEntered = make(chan struct{})
+	f.native.releaseTurnStart = make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.adapter.Send(context.Background(), startRequest(validStart))
+		done <- err
+	}()
+	<-f.native.turnStartEntered
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	close(f.native.releaseTurnStart)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.native.count("turn/interrupt"); got != 1 {
+		t.Fatalf("turn/interrupt calls=%d, want the repeat to find the mapped turn", got)
+	}
+}
+
 func TestRestartResumesAndReadsMappedThread(t *testing.T) {
 	root := t.TempDir()
 	store, err := journal.Open(filepath.Join(root, "state.db"))

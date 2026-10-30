@@ -546,6 +546,30 @@ func TestAwaitingInputTurnIsNoRuntimeStop(t *testing.T) {
 	}
 }
 
+// A runtime that rejected a start it may have received ran nothing, so the
+// rejection is the only stop evidence that will ever arrive.
+func TestRejectedUncertainStartProvesRuntimeStop(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.lost(t, "n-1")
+	f.cancel(t, s, "c-1")
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(1, contracts.EntryOperationOutcome, contracts.OperationOutcome{State: lifecycle.OperationRejected})))); got.Applied != 1 {
+		t.Fatalf("outcome = %+v, want applied", got)
+	}
+	attempt, err := store.GetAttempt(f.ctx, f.pool, f.tenant, s.Attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !attempt.RuntimeStopped || attempt.State != lifecycle.AttemptCancellationRequested {
+		t.Fatalf("attempt = %+v, want the runtime stopped and the environment pending", attempt)
+	}
+	f.observeEnvironmentStop(t, s, 2)
+	if task, state := f.states(t, s); task != lifecycle.TaskCancelled || state != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, state)
+	}
+}
+
 // A result the runtime finished before its stop was observed stays unadmitted.
 func TestResultDuringCancellationStaysInactive(t *testing.T) {
 	t.Parallel()

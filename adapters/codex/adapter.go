@@ -55,6 +55,7 @@ type Adapter struct {
 	flushing      map[string]bool
 	readyThreads  map[string]bool
 	pendingStart  int
+	starting      map[string]bool
 	deferredCount int
 	fatal         chan error
 }
@@ -88,7 +89,7 @@ func New(config Config) (*Adapter, error) {
 	if _, err := rand.Read(sessionBytes); err != nil {
 		return nil, fmt.Errorf("create native session identity: %w", err)
 	}
-	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, fatal: make(chan error, 1)}
+	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, starting: map[string]bool{}, fatal: make(chan error, 1)}
 	if err := a.reconstruct(); err != nil {
 		return nil, err
 	}
@@ -170,14 +171,51 @@ func (a *Adapter) Send(ctx context.Context, request wire.Request) (wire.Reply, e
 }
 func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
 	op, err := a.config.Journal.Operation(cancel.Operation)
+	if errors.Is(err, os.ErrNotExist) {
+		return a.fence(cancel.Operation)
+	}
 	if err != nil {
 		return err
 	}
-	if op.ThreadID == "" || op.TurnID == "" {
+	if op.State == journal.StateCancelled {
 		return nil
 	}
-	var result any
-	return a.config.Native.Call(ctx, "turn/interrupt", map[string]any{"threadId": op.ThreadID, "turnId": op.TurnID}, &result)
+	if op.ThreadID != "" && op.TurnID != "" {
+		var result any
+		return a.config.Native.Call(ctx, "turn/interrupt", map[string]any{"threadId": op.ThreadID, "turnId": op.TurnID}, &result)
+	}
+	if a.isStarting(cancel.Operation) {
+		// The turn is still being mapped; the repeated interrupt will find it.
+		return nil
+	}
+	// A start that ended without a turn is never redelivered as a new one.
+	return a.fence(cancel.Operation)
+}
+
+// fence refuses a start that produced no turn and reports the rejection, which
+// settles an uncertain start and proves its runtime never ran.
+func (a *Adapter) fence(operation string) error {
+	if err := a.config.Journal.Fence(operation); err != nil {
+		return err
+	}
+	_, err := a.config.Journal.AppendEvent(operation, "outcome:rejected", "operation_outcome", map[string]string{"state": "rejected"})
+	return err
+}
+
+func (a *Adapter) setStarting(operation string, starting bool) {
+	a.deferredMu.Lock()
+	defer a.deferredMu.Unlock()
+	if starting {
+		a.starting[operation] = true
+	} else {
+		delete(a.starting, operation)
+	}
+}
+
+func (a *Adapter) isStarting(operation string) bool {
+	a.deferredMu.Lock()
+	defer a.deferredMu.Unlock()
+	return a.starting[operation]
 }
 func (a *Adapter) Subscribe(_ context.Context, cursor wire.Cursor) (adapterkit.Stream, error) {
 	if _, err := a.config.Journal.Operation(cursor.Operation); err != nil {
@@ -350,12 +388,17 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if err != nil {
 		return wire.Reply{}, err
 	}
+	a.setStarting(r.Operation, true)
+	defer a.setStarting(r.Operation, false)
 	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline})
 	if errors.Is(err, journal.ErrPayloadMismatch) {
 		return rejected(r, wire.FailureStalePrecondition, "operation payload changed"), nil
 	}
 	if err != nil {
 		return wire.Reply{}, err
+	}
+	if op.State == journal.StateCancelled {
+		return rejected(r, wire.FailureCancelled, "operation was cancelled before it started"), nil
 	}
 	if !created {
 		if op.ThreadID == "" || op.TurnID == "" {
@@ -431,7 +474,11 @@ func (a *Adapter) ensureStartEvents(op journal.Operation) error {
 	if _, err := a.config.Journal.AppendEvent(op.ID, "runtime:"+op.ThreadID, "runtime.started", map[string]any{"native_ref": op.ThreadID}); err != nil {
 		return err
 	}
-	_, err := a.config.Journal.AppendEvent(op.ID, "turn:"+op.TurnID, "turn.started", map[string]any{"native_ref": op.TurnID, "session_ref": op.ThreadID})
+	if _, err := a.config.Journal.AppendEvent(op.ID, "turn:"+op.TurnID, "turn.started", map[string]any{"native_ref": op.TurnID, "session_ref": op.ThreadID}); err != nil {
+		return err
+	}
+	// The product can only settle a start it lost the reply to from this entry.
+	_, err := a.config.Journal.AppendEvent(op.ID, "outcome:accepted", "operation_outcome", map[string]string{"state": "accepted"})
 	return err
 }
 

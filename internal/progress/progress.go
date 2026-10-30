@@ -112,6 +112,19 @@ func (s Step) FollowOperation(ctx context.Context, operation lifecycle.ProviderO
 		(operation.State == lifecycle.OperationAccepted || operation.State == lifecycle.OperationSucceeded || operation.State == lifecycle.OperationUncertain) {
 		return nil
 	}
+	if operation.State == lifecycle.OperationRejected && attempt.State == lifecycle.AttemptCancellationRequested && !attempt.RuntimeStopped {
+		// A runtime that rejected its start ran nothing, so nothing else will
+		// report the stop this Attempt is waiting for.
+		runtime, err := store.GetOperationByAttempt(ctx, s.UOW, s.Tenant, attempt.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil || runtime.ID != operation.ID {
+			return err
+		}
+		_, _, _, err = s.Attempt(ctx, attempt.ID, lifecycle.AttemptRuntimeStopped, "")
+		return err
+	}
 	event, target, ok := lifecycle.AttemptFollowsOperation(operation.State, attempt.State)
 	if !ok {
 		return nil
