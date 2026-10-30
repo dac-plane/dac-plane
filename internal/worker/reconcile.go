@@ -14,7 +14,8 @@ import (
 
 const reconcileStream = "dispatch"
 
-// Reconcile inspects uncertain effects. It never dispatches them again.
+// Reconcile inspects uncertain effects and never dispatches them again. It also
+// repeats interrupts, which are requests rather than effects.
 func (w *Worker) Reconcile(ctx context.Context) error {
 	tenants, err := store.ListTenants(ctx, w.pool)
 	if err != nil {
@@ -35,6 +36,39 @@ func (w *Worker) Reconcile(ctx context.Context) error {
 			if err := w.reconcileOperation(ctx, tenant, op); err != nil {
 				w.logger.Error("operation reconcile failed", "operation", op.ID.String(), "error", err)
 			}
+		}
+		if err := w.repeatInterrupts(ctx, tenant); err != nil {
+			w.logger.Error("interrupt repeat failed", "tenant", tenant.String(), "error", err)
+		}
+	}
+	return nil
+}
+
+// repeatInterrupts asks again for every runtime stop still unobserved. An
+// interrupt is acknowledged when its frame is written, so an adapter that lost
+// it would otherwise leave the Attempt waiting forever. It is a request to stop
+// rather than an effect, so repeating it is safe; a failed repeat waits for the
+// next pass.
+func (w *Worker) repeatInterrupts(ctx context.Context, tenant ids.TenantID) error {
+	operations, err := store.InterruptedOperations(ctx, w.pool, tenant)
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		port := w.port(tenant, operation.Provider, contracts.RoleRuntime)
+		if port == nil {
+			w.stats.SkippedNoPort.Add(1)
+			continue
+		}
+		delivery, err := ids.New[ids.Delivery]()
+		if err != nil {
+			return err
+		}
+		sendCtx, cancel := context.WithTimeout(ctx, w.cfg.SendTimeout)
+		err = port.Cancel(sendCtx, contracts.Cancel{Operation: operation.ID, Delivery: delivery})
+		cancel()
+		if err != nil {
+			w.logger.Warn("interrupt repeat not delivered", "operation", operation.ID.String(), "error", err)
 		}
 	}
 	return nil

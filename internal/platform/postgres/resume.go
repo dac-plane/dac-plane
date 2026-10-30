@@ -177,6 +177,48 @@ func OutboxReadyDispatch(ctx context.Context, q Querier, tenant ids.TenantID, no
 	return out, rows.Err()
 }
 
+// InterruptedOperations lists the operations whose delivered interrupt has not
+// produced a runtime stop. Delivery only proves a frame was written, so these
+// Attempts still wait on a request the provider may never have acted on.
+func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {
+	rows, err := q.Query(ctx, `
+		select x.payload->>'operation' from outbox x
+		join attempt a on a.tenant_id = x.tenant_id and a.attempt_id = x.attempt_id
+		where x.tenant_id = $1 and x.status = 'done' and x.payload->>'method' = 'interrupt'
+		and a.state = 'cancellation_requested' and not a.runtime_stopped
+		order by x.updated_at`,
+		tenant.String(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var identifiers []ids.OperationID
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, err
+		}
+		id, err := parseID[ids.Operation](`outbox.payload.operation`, text)
+		if err != nil {
+			return nil, err
+		}
+		identifiers = append(identifiers, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	operations := make([]lifecycle.ProviderOperation, 0, len(identifiers))
+	for _, id := range identifiers {
+		operation, err := GetOperation(ctx, q, tenant, id)
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, operation)
+	}
+	return operations, nil
+}
+
 // UncertainOperations returns operations stuck in unknown durability for
 // reconciliation. They are never redispatched; #21 resolves them.
 func UncertainOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {
