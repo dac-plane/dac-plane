@@ -162,11 +162,17 @@ func (s *cancellationStack) startActiveTask(t *testing.T) httpapi.SubmissionBody
 		"Use exec_command with sandbox_permissions require_escalated to run: "+s.command+". Wait for the command to finish.",
 		"the command finishes unless DAC cancels the task")
 	approved := map[ids.AttentionID]bool{}
-	poll(t, s.ctx, "active command", func() (struct{}, bool) {
+	deadline, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
+	defer cancel()
+	poll(t, deadline, "active command", func() (struct{}, bool) {
 		if s.commandRunning(t) {
 			return struct{}{}, true
 		}
 		view := s.view(t, task)
+		switch view.Task.State {
+		case lifecycle.TaskFailed, lifecycle.TaskCancelled, lifecycle.TaskSucceeded, lifecycle.TaskReadyForReview:
+			t.Fatalf("task reached %s before %q ran: attempt %+v\n%s", view.Task.State, s.command, view.Attempt, s.taskEvidence(t, task))
+		}
 		for _, attention := range view.OpenAttention {
 			if attention.State == lifecycle.AttentionPending && !approved[attention.ID] {
 				approved[attention.ID] = true
@@ -256,8 +262,12 @@ func (s *cancellationStack) snapshot(t *testing.T, task httpapi.SubmissionBody) 
 // report keeps the ordered stop evidence in the test log for the evidence note.
 func (s *cancellationStack) report(t *testing.T, scenario string, task httpapi.SubmissionBody, started time.Time) {
 	t.Helper()
-	evidence := s.sql(t, fmt.Sprintf("select occurred_at, event, from_state, to_state, outcome, reason from audit_event where record_id = '%s' order by occurred_at, version", task.Attempt.ID))
-	t.Logf("%s converged in %s\n%s", scenario, time.Since(started).Round(time.Millisecond), evidence)
+	t.Logf("%s converged in %s\n%s", scenario, time.Since(started).Round(time.Millisecond), s.taskEvidence(t, task))
+}
+
+func (s *cancellationStack) taskEvidence(t *testing.T, task httpapi.SubmissionBody) string {
+	t.Helper()
+	return s.sql(t, fmt.Sprintf("select occurred_at, event, from_state, to_state, outcome, reason from audit_event where record_id = '%s' order by occurred_at, version", task.Attempt.ID))
 }
 
 func (s *cancellationStack) sandbox(t *testing.T, task httpapi.SubmissionBody) string {
