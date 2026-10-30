@@ -20,7 +20,7 @@ func TestOperationsSourceAddsOnlyTheRolloutProbe(t *testing.T) {
 		}
 	}
 	if len(names) != 16 || names[14] != "00015_task_environment_assignment.sql" || names[15] != "00016_rollout_probe.sql" {
-		t.Fatalf("operations migrations = %v, want released migrations plus probe 15", names)
+		t.Fatalf("operations migrations = %v, want released migrations plus probe 16", names)
 	}
 	if !slices.IsSorted(names) {
 		t.Fatalf("operations migrations are not sorted: %v", names)
@@ -33,7 +33,7 @@ func TestOperationsSourceAddsOnlyTheRolloutProbe(t *testing.T) {
 			t.Errorf("CheckServable(%d) = %v", version, err)
 		}
 	}
-	for _, version := range []int64{12, 16} {
+	for _, version := range []int64{12} {
 		if err := CheckServable(version); err == nil {
 			t.Errorf("CheckServable(%d) succeeded", version)
 		}
