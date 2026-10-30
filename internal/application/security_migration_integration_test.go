@@ -171,7 +171,11 @@ func TestSecurityMigrationCrossTenantReadAndHoldPreventAcquisition(t *testing.T)
 
 func migrationFixture(t *testing.T) (*fixture, application.CreateMigrationPass) {
 	t.Helper()
-	f := newFixture(t, lifecycle.HarnessLive)
+	return migrationFixtureOn(t, newFixture(t, lifecycle.HarnessLive))
+}
+
+func migrationFixtureOn(t *testing.T, f *fixture) (*fixture, application.CreateMigrationPass) {
+	t.Helper()
 	target := mustID[ids.Provider](t)
 	f.seed(t, func(u *store.UnitOfWork) error {
 		if err := store.SetHarnessAdministrator(f.ctx, u, f.tenant, f.principal, true); err != nil {
@@ -601,6 +605,80 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 	}
 	if stops != 1 || sourceEnvironment.Ledger().Effects(items[0].CleanupOperation) != 1 {
 		t.Fatalf("quiesced source cleanup requests=%d effects=%d; want one confirmed stop", stops, sourceEnvironment.Ledger().Effects(items[0].CleanupOperation))
+	}
+}
+
+// Schema 14 has no assignment columns and a migration target has no submitting
+// command record: its assignment reads from the migration item, and schema 15
+// stores it.
+func TestMigrationTargetKeepsAssignmentThroughSchema15(t *testing.T) {
+	t.Parallel()
+	f, cmd := migrationFixtureOn(t, newFixtureAtVersion(t, lifecycle.HarnessLive, 14))
+	submission := f.submit(t, f.submitCommand("migration-rollout"))
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{submission.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, sourceRuntime)
+	frame := simulator.RowsFrame(false, row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "rollout-source-session"}))
+	if got := f.ingest(t, f.event(sourceRuntime, submission, 1, frame)); got.Applied != 1 {
+		t.Fatalf("source bindings=%+v", got)
+	}
+	view, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view = migrate(t, f, view, lifecycle.MigrationPreview, "migration-rollout-preview")
+	view = migrate(t, f, view, lifecycle.MigrationExecute, "migration-rollout-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item lifecycle.MigrationItem
+	for pass := range 10 {
+		if pass > 0 {
+			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("migration-rollout-%d", pass),
+			wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime},
+				wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: environment})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.ReapClaims(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, view.Pass.ID)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("items=%+v err=%v", items, err)
+		}
+		if item = items[0]; !item.EnvironmentOperation.IsZero() {
+			break
+		}
+	}
+	if item.EnvironmentOperation.IsZero() {
+		t.Fatal("migration never allocated its target")
+	}
+	check := func(schema string) {
+		t.Helper()
+		target, err := store.GetAttempt(f.ctx, f.pool, f.tenant, item.TargetAttempt)
+		if err != nil || target.EnvironmentProvider != f.environmentProvider || target.EnvironmentOperation != item.EnvironmentOperation {
+			t.Fatalf("%s target assignment=%s/%s err=%v; want %s/%s", schema, target.EnvironmentProvider, target.EnvironmentOperation, err, f.environmentProvider, item.EnvironmentOperation)
+		}
+	}
+	check("schema 14")
+	migrateFixtureTo(t, f, 15)
+	check("schema 15")
+	if n := f.count(t, "attempt", "attempt_id=$2 and environment_operation_id=$3", item.TargetAttempt.String(), item.EnvironmentOperation.String()); n != 1 {
+		t.Fatalf("stored assignments=%d; want the backfilled target", n)
 	}
 }
 

@@ -265,7 +265,8 @@ func GetTaskForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, i
 // columns are read through the row's JSON form, so one statement serves both
 // the current schema and the schemas 13 and 14 an upgraded binary still
 // serves during a rollout (ADR-0011). Only on those, where the columns do not
-// exist, is the assignment read from the submitting command record.
+// exist, is the assignment read from the submitting command record or, for a
+// migration target, from its migration item.
 func GetAttempt(ctx context.Context, q Querier, tenant ids.TenantID, id ids.AttemptID) (lifecycle.Attempt, error) {
 	var attempt lifecycle.Attempt
 	var state, idText, tenantText, taskText string
@@ -302,6 +303,12 @@ func GetAttempt(ctx context.Context, q Querier, tenant ids.TenantID, id ids.Atte
 		err = q.QueryRow(ctx, `select coalesce(result->>'environment_provider_id', result->'scheduling'->>'environment_provider_id'), coalesce(result->>'environment_operation_id', result->'scheduling'->>'environment_operation_id') from command_record where tenant_id=$1 and command in ('submit_task','review_result') and coalesce(result->>'attempt',result->'scheduling'->>'attempt')=$2 order by created_at desc limit 1`, tenant.String(), id.String()).Scan(&provider, &operation)
 		if err != nil && !isNoRows(err) {
 			return lifecycle.Attempt{}, err
+		}
+		if provider == nil {
+			err = q.QueryRow(ctx, `select o.provider_id::text, m.environment_operation_id::text from migration_item m join provider_operation o on o.tenant_id=m.tenant_id and o.operation_id=m.environment_operation_id where m.tenant_id=$1 and m.target_attempt_id=$2`, tenant.String(), id.String()).Scan(&provider, &operation)
+			if err != nil && !isNoRows(err) {
+				return lifecycle.Attempt{}, err
+			}
 		}
 	}
 	if provider != nil && operation != nil {
