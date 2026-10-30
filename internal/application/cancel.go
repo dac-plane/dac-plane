@@ -206,6 +206,15 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 	} else if attempt.EnvironmentProvider.IsZero() {
 		return nil, fmt.Errorf("%w: the attempt has no dispatch to interrupt", ErrInvalidCommand)
 	}
+	if runtimeMayHaveStarted {
+		// A turn that already ended has nothing to interrupt, and its end was
+		// consumed before any stop was awaited, so nothing would report it again.
+		ended, err := store.RuntimeTurnsEnded(ctx, u.uow, tenant, attempt.ID)
+		if err != nil {
+			return nil, err
+		}
+		runtimeMayHaveStarted = !ended
+	}
 	var cancellationOutbox *store.OutboxPayload
 	if runtimeMayHaveStarted {
 		body, err := json.Marshal(map[string]any{
