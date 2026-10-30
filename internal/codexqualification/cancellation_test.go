@@ -108,6 +108,49 @@ func TestTaskCancellationQualification(t *testing.T) {
 		s.requireConverged(t, task)
 		s.report(t, "runtime adapter restart", task, started)
 	})
+
+	// The frames below reach a paused adapter's socket and die with it, so the
+	// control plane believes they were delivered and the adapter never saw them.
+	t.Run("interrupt lost with its adapter", func(t *testing.T) {
+		started := time.Now()
+		task := s.startActiveTask(t)
+		s.docker(t, "pause", "codex-adapter")
+		cancelTask(t, ctx, client, s.token, task.Task.ID)
+		s.waitSQL(t, "interrupt written", fmt.Sprintf("select count(*) = 1 from outbox where attempt_id = '%s' and status = 'done' and payload->>'method' = 'interrupt'", task.Attempt.ID))
+		s.docker(t, "kill", "codex-adapter")
+		s.start(t, "codex-adapter")
+		s.requireConverged(t, task)
+		s.report(t, "interrupt lost with its adapter", task, started)
+	})
+
+	t.Run("start lost with its adapter", func(t *testing.T) {
+		started := time.Now()
+		s.tasks++
+		s.command = fmt.Sprintf("sleep %d", 3170+s.tasks)
+		s.docker(t, "pause", "codex-adapter")
+		task := submit(t, ctx, client, s.token, "Use exec_command to run: "+s.command+".", "the command finishes unless DAC cancels the task")
+		s.waitSQL(t, "uncertain start", fmt.Sprintf("select state = 'uncertain' from provider_operation where operation_id = '%s'", task.Operation.ID))
+		cancelTask(t, ctx, client, s.token, task.Task.ID)
+		s.docker(t, "kill", "codex-adapter")
+		s.start(t, "codex-adapter")
+		s.requireConverged(t, task)
+		s.report(t, "start lost with its adapter", task, started)
+	})
+
+	t.Run("stop lost with its adapter", func(t *testing.T) {
+		started := time.Now()
+		task := s.startActiveTask(t)
+		s.docker(t, "pause", "e2b-adapter")
+		cancelTask(t, ctx, client, s.token, task.Task.ID)
+		s.requireRuntimeStopped(t, task)
+		s.waitSQL(t, "uncertain stop", fmt.Sprintf(`select count(*) = 1 from provider_operation o join outbox x on x.record_id = o.operation_id
+			where o.attempt_id = '%s' and o.state = 'uncertain' and x.payload->>'method' = 'stop'`, task.Attempt.ID))
+		s.requireEnvironmentPending(t, task)
+		s.docker(t, "kill", "e2b-adapter")
+		s.start(t, "e2b-adapter")
+		s.requireConverged(t, task)
+		s.report(t, "stop lost with its adapter", task, started)
+	})
 }
 
 // startActiveTask approves actions until the command is observably running.
@@ -282,6 +325,13 @@ func (s *cancellationStack) sql(t *testing.T, query string) string {
 		t.Fatalf("sql: %v: %s", err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func (s *cancellationStack) waitSQL(t *testing.T, description, query string) {
+	t.Helper()
+	deadline, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
+	defer cancel()
+	poll(t, deadline, description, func() (struct{}, bool) { return struct{}{}, s.sql(t, query) == "t" })
 }
 
 func (s *cancellationStack) stop(t *testing.T, services ...string) { s.docker(t, "stop", services...) }

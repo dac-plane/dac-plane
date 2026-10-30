@@ -3,6 +3,7 @@
 package application_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -567,6 +568,76 @@ func TestRejectedUncertainStartProvesRuntimeStop(t *testing.T) {
 	f.observeEnvironmentStop(t, s, 2)
 	if task, state := f.states(t, s); task != lifecycle.TaskCancelled || state != lifecycle.AttemptTerminated {
 		t.Fatalf("states = %s/%s, want cancelled/terminated", task, state)
+	}
+}
+
+type replayingEnvironment struct {
+	contracts.Port
+	replays []contracts.Request
+}
+
+func (p *replayingEnvironment) Replay(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	p.replays = append(p.replays, request)
+	return p.Port.Send(ctx, request)
+}
+
+type fixedEnvironmentPorts struct{ port contracts.Port }
+
+func (p fixedEnvironmentPorts) Port(_ ids.TenantID, _ ids.ProviderID, role contracts.Role) contracts.Port {
+	if role == contracts.RoleEnvironment {
+		return p.port
+	}
+	return nil
+}
+
+func (fixedEnvironmentPorts) ArtifactStore(ids.TenantID, ids.ProviderID) (worker.ArtifactStorePort, bool) {
+	return worker.ArtifactStorePort{}, false
+}
+
+// A stop frame can die unread with its adapter. Nothing was journaled there, so
+// the stop must be redelivered to a provider that negotiated replay, and only to
+// one that did.
+func TestUncertainEnvironmentStopReplaysOnlyWhenNegotiated(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("n-1"))
+	f.dispatchPendingEnvironments(t)
+	f.cancel(t, s, "c-1")
+	stop := f.environmentStopOperation(t, s)
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Operations: map[ids.OperationID]simulator.EnvironmentOp{
+			stop: {Reply: simulator.Unknown(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "lost reply"})},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := func(port contracts.Port) *worker.Worker {
+		t.Helper()
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "test-environment-worker", worker.WithPorts(fixedEnvironmentPorts{port}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if err := build(environment).Tick(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, stop); err != nil || op.State != lifecycle.OperationUncertain {
+		t.Fatalf("stop operation = %s, %v; want uncertain", op.State, err)
+	}
+	if err := build(environment).Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(environment.Ledger().Sent()); got != 1 {
+		t.Fatalf("sends = %d, want no redelivery without negotiated replay", got)
+	}
+	replaying := &replayingEnvironment{Port: environment}
+	if err := build(replaying).Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(replaying.replays) != 1 || replaying.replays[0].Operation != stop || replaying.replays[0].Method != contracts.MethodStop {
+		t.Fatalf("replays = %+v, want the stop", replaying.replays)
 	}
 }
 

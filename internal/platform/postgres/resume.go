@@ -224,6 +224,35 @@ func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID, 
 	return operations, nil
 }
 
+// UnsettledEnvironmentStops lists the stops a cancelling Attempt still waits on
+// whose delivery is unknown. An adapter that lost the frame never journaled the
+// stop, so nothing else would finish it. Each stop's own deadline ends this, and
+// limit bounds one pass.
+func UnsettledEnvironmentStops(ctx context.Context, q Querier, tenant ids.TenantID, limit int) ([]OutboxRow, error) {
+	rows, err := q.Query(ctx, selectOutboxRow+` where tenant_id = $1
+		and payload->>'role' = 'environment' and payload->>'method' = 'stop'
+		and (payload->>'deadline')::timestamptz > clock_timestamp()
+		and exists (select 1 from provider_operation o join attempt a on a.tenant_id = o.tenant_id and a.attempt_id = o.attempt_id
+			where o.tenant_id = outbox.tenant_id and o.operation_id = outbox.record_id and o.state = 'uncertain'
+			and a.state = 'cancellation_requested' and not a.environment_stopped)
+		order by updated_at limit $2`,
+		tenant.String(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboxRow
+	for rows.Next() {
+		var row OutboxRow
+		if err := scanOutboxRow(rows, &row); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // UncertainOperations returns operations stuck in unknown durability for
 // reconciliation. They are never redispatched; #21 resolves them.
 func UncertainOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {

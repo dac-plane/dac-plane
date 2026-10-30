@@ -39,6 +39,11 @@ change the rule that
 reconciliation never dispatches an uncertain effect again: an interrupt is a request to stop, not an
 effect.
 
+An environment stop is different: its delivery can be unknown with the adapter never having seen it, and
+it is a provider call rather than a request to stop. The worker therefore replays an unsettled stop only
+to a provider that negotiated `operation.replay` under ADR-0012, with the same bounds. The E2B adapter
+offers it because the stop operation is its idempotency key.
+
 A runtime adapter reports a stop only once the work has ended, not merely the turn. Codex 0.165.0 ended
 an interrupted turn and left its command running under the app-server, so the Codex adapter ends the
 thread's background terminals before it reports the interruption. If it cannot, it exits rather than

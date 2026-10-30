@@ -91,7 +91,7 @@ func run() error {
 		return err
 	}
 	go handler.RetryStops(ctx)
-	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleEnvironment, Handler: handler, TLS: tlsConfig, Logger: logger})
+	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleEnvironment, Handler: handler, Offered: []string{wire.CapabilityOperationReplay}, TLS: tlsConfig, Logger: logger})
 }
 
 // adapterTLS configures the connections to the control plane and its token
