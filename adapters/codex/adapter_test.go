@@ -467,7 +467,9 @@ func TestInterruptedTurnEndsItsCommandsBeforeReportingTheStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.native.notifications <- interruptedTurn()
-	waitFor(t, func() bool { return strings.HasSuffix(strings.Join(entryKinds(t, f), ","), "turn.finished,runtime.stopped") })
+	waitFor(t, func() bool {
+		return strings.HasSuffix(strings.Join(entryKinds(t, f), ","), "turn.finished,runtime.stopped")
+	})
 	if got := f.native.count("thread/backgroundTerminals/clean"); got != 1 {
 		t.Fatalf("clean calls=%d", got)
 	}
@@ -502,7 +504,10 @@ func TestCancelAfterFinishedTurnEndsItsCommands(t *testing.T) {
 	}
 	f.native.notifications <- interruptedTurn()
 	waitFor(t, func() bool { return f.native.count("thread/backgroundTerminals/clean") == 1 })
-	waitFor(t, func() bool { return strings.Contains(strings.Join(entryKinds(t, f), ","), "runtime.stopped") })
+	waitFor(t, func() bool {
+		op, err := f.store.Operation(testOperation)
+		return err == nil && op.State == "interrupted"
+	})
 	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
 		t.Fatal(err)
 	}

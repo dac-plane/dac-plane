@@ -39,6 +39,14 @@ change the rule that
 reconciliation never dispatches an uncertain effect again: an interrupt is a request to stop, not an
 effect.
 
+A runtime adapter reports a stop only once the work has ended, not merely the turn. Codex 0.165.0 ended
+an interrupted turn and left its command running under the app-server, so the Codex adapter ends the
+thread's background terminals before it reports the interruption. If it cannot, it exits rather than
+report a stop: a restart ends the command, and the resumed thread reports the interruption.
+
+A start the runtime rejects ran nothing, so its rejection is runtime stop evidence for an Attempt
+awaiting its stops.
+
 ## Consequences
 
 - A cancellation no longer depends on a provider reporting a stop it had no reason to report.
