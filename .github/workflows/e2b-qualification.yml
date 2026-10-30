@@ -1,0 +1,43 @@
+name: E2B Cloud qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Managed E2B Cloud live qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go and just
+        uses: ./.github/actions/setup
+        with:
+          just-version: 1.57.0
+
+      - name: Set up Node.js for pinned E2B CLI
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.19.0
+
+      - name: Run live E2B Cloud qualification
+        env:
+          APIKEY_E2B: ${{ secrets.APIKEY_E2B }}
+        run: just qualify-e2b-environment
+
+      - name: Upload sanitized qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2b-cloud-qualification-${{ github.run_id }}
+          path: |
+            .work/e2b-qualification/host.txt
+            .work/e2b-qualification/e2b-cli-version.txt
+            .work/e2b-qualification/live-test.txt
+          if-no-files-found: warn
+          retention-days: 14

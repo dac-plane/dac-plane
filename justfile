@@ -7,6 +7,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 go_dirs := "cmd internal"
 adapterkit_dirs := "adapterkit"
 codex_adapter_dir := "adapters/codex"
+e2b_adapter_dir := "adapters/e2b"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
@@ -26,7 +27,7 @@ default:
 
 # Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci-fast: fmt-check mod-check deps-check vet vet-integration test test-race test-codex-adapter test-conformance vuln lint-workflows
+ci-fast: fmt-check mod-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-conformance vuln lint-workflows
 
 # Full local equivalent of the parallel GitHub PR checks. This is intentionally
 # slower and is best used for final local verification or CI diagnosis.
@@ -38,12 +39,14 @@ ci: ci-fast test-integration-other-race test-security-race image-repro test-stac
 fmt:
     gofmt -w {{ go_dirs }}
     cd {{ codex_adapter_dir }} && gofmt -w .
+    cd {{ e2b_adapter_dir }} && gofmt -w .
 
 # Fail if any Go file or this justfile is not formatted, listing the files
 [group('check')]
 fmt-check:
     unformatted="$(gofmt -l {{ go_dirs }})"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
     unformatted="$(cd {{ codex_adapter_dir }} && gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+    unformatted="$(cd {{ e2b_adapter_dir }} && gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
     {{ just_executable() }} --unstable --fmt --check
 
 # Verify module checksums and that go.mod and go.sum are tidy
@@ -53,6 +56,7 @@ mod-check:
     go mod tidy -diff
     cd adapterkit && go mod verify && go mod tidy -diff
     cd {{ codex_adapter_dir }} && go mod verify && go mod tidy -diff
+    cd {{ e2b_adapter_dir }} && go mod verify && go mod tidy -diff
 
 # Run go vet on every package
 [group('check')]
@@ -60,6 +64,7 @@ vet:
     go vet ./...
     cd adapterkit && go vet ./...
     cd {{ codex_adapter_dir }} && go vet ./...
+    cd {{ e2b_adapter_dir }} && go vet ./...
 
 # Unit files build without tags; integration files only build behind the
 # integration tag, so they need their own vet pass.
@@ -72,6 +77,7 @@ vet-integration:
 deps-check:
     go list -deps ./cmd/dac-plane | while IFS= read -r dep; do case "$dep" in */internal/simulator|*/internal/testsupport|*/internal/testsupport/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "release binary imports forbidden package: $dep"; exit 1;; esac; done
     cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "Codex adapter imports control-plane internal package: $dep"; exit 1;; esac; done
+    cd {{ e2b_adapter_dir }} && go list -deps ./cmd/dac-e2b-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "E2B adapter imports control-plane internal package: $dep"; exit 1;; esac; done
 
 # Run unit tests, including the JSON Schema contract conformance suites
 [group('test')]
@@ -118,6 +124,20 @@ test-adapterkit:
 test-codex-adapter:
     cd {{ codex_adapter_dir }} && go test ./...
     cd {{ codex_adapter_dir }} && go test -race ./...
+
+# The E2B adapter uses a deterministic fake provider in CI; the real Embed
+# qualification is separate and requires a private Linux/KVM host.
+[group('test')]
+test-e2b-adapter:
+    cd {{ e2b_adapter_dir }} && go test ./...
+    cd {{ e2b_adapter_dir }} && go test -race ./...
+    cd {{ e2b_adapter_dir }} && go test -tags=e2bqualification -run '^$' ./...
+
+# Run the real E2B Cloud qualification with a bounded, secret-backed sandbox probe.
+[doc('Qualify managed E2B Cloud (requires APIKEY_E2B and incurs sandbox usage)')]
+[group('test')]
+qualify-e2b-environment:
+    ./adapters/e2b/qualification/run.sh
 
 # Run the secret-backed Codex qualification against the deployed HTTPS and
 # ControlFrame boundaries. The disposable artifact service is a test fixture,
@@ -227,13 +247,14 @@ image-build:
     docker buildx build --load --target dac-plane -t dac-plane:dev .
     docker buildx build --load --target dac-sim-adapter -t dac-sim-adapter:dev .
     docker buildx build --load --target dac-codex-adapter -t dac-codex-adapter:dev .
+    docker buildx build --load --target dac-e2b-adapter -t dac-e2b-adapter:dev .
 
 # Build each target twice as OCI archives and compare the resulting manifest
 # digest. Timestamps are fixed to the source commit as documented by BuildKit.
 [group('image')]
 image-repro:
     mkdir -p .work/image-repro
-    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter dac-codex-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
+    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter dac-codex-adapter dac-e2b-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
 
 # Generate throwaway development certificates and credentials under .work/.
 [group('stack')]
@@ -327,6 +348,7 @@ vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_versi
     {{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd adapterkit && ../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ codex_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
+    cd {{ e2b_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
 
 # Lint GitHub Actions workflows
 [group('check')]

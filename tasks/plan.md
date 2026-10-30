@@ -1,74 +1,34 @@
-# Issue #91 — Qualify the first production runtime
+# Issue #92 — Qualify E2B Cloud as the first execution-environment provider
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/91
-Branch: `feature/91-codex-runtime-qualification`, from merged #99 at `1e0c86b`.
-Parent: #75. Depends on #72, #73 and #99. The cancellation gate exposed missing task-environment
-orchestration, tracked by [#102](https://github.com/dac-plane/dac-plane/issues/102). Joint deployed
-qualification with the #92 environment provider is tracked by
-[#101](https://github.com/dac-plane/dac-plane/issues/101); #101 does not require #91 to be closed.
+Tracker: https://github.com/dac-plane/dac-plane/issues/92
+Branch: `feature/92-e2b-environment-qualification`, from merged #103.
+Parent: #75. Depends on #72 and #73. #102 owns task environment assignment and cancellation orchestration.
 
-## Direction
+## Provider decision and qualification boundary
 
-Qualify pinned Codex app-server 0.165.0 through a separate out-of-process Go adapter. DAC remains
-provider-neutral: Camer routing, model choice, credentials, workspace selection and Codex state stay
-inside adapter configuration and deployment. A bounded real app-server spike must prove the native
-protocol before the adapter makes any capability claim.
+Use E2B Cloud's managed sandbox API. E2B provisions and operates the Firecracker hosts; DAC needs no customer-owned Linux/KVM machine, Render service, or self-hosted OpenSandbox cluster. The E2B key is supplied through the existing local `APIKEY_E2B` environment entry and GitHub Actions secret of the same name. Never print or persist the key in the repository, tests, evidence, logs, or artifacts.
 
-Stable operation replay is advertised only if crash-window tests prove that a lost reply or adapter
-restart cannot create a second native turn. A provider availability or credential failure is recorded
-as an environmental gate and does not reject Codex.
+Use the documented E2B control API v2 (`https://api.e2b.app`) and its stable metadata lookup for create reconciliation. Pin and record the adapter commit and E2B CLI/SDK versions used by the qualification. E2B does not expose a customer-selectable build revision for E2B Cloud; record the qualification date, API surface, returned service metadata, and that provider server revision is managed and not pinnable. The open-source Embed source/runtime commits are not part of this qualification.
+
+The adapter remains out-of-process and imports `adapterkit` only. Keep E2B-specific API fields inside `adapters/e2b`; do not change DAC's public contracts. E2B Cloud execution is billable after any account credits, so create only two short-lived default sandboxes, use the account's configured budget/usage guard, and always clean them up. Do not switch the provider to live based only on deterministic tests.
 
 ## Implementation
 
-1. **Candidate gate**
-   - [x] Pin and checksum Codex app-server 0.165.0.
-   - [x] Execute the bounded native protocol spike: routing, thread start/read/resume, events,
-     approval response, interrupt and history reconstruction.
-   - [x] Record the observed capability and recovery boundary before adapter completion.
-2. **Adapter boundary**
-   - [x] Add the independent `adapters/codex` module and `dac-codex-adapter` executable using only
-     the published adapter kit.
-   - [x] Supervise app-server over stdio with isolated persistent Codex home and file-mounted secrets.
-   - [x] Persist DAC operation mappings, native identities, sequences, decisions and replayable results
-     in pinned bbolt state.
-3. **Runtime translation**
-   - [x] Map start, progress, attention, decisions, cancellation, usage, stop and result evidence into
-     ordered ControlFrame entries.
-   - [x] Reconstruct native history and adapter journal state after reconnect without duplicate event
-     identities.
-   - [x] Export exact changed fixture artifacts through the deterministic artifact-store fixture.
-4. **Qualification and delivery**
-   - [x] Add deterministic fake-app-server tests for protocol failures, recovery, crash boundaries,
-     redaction and replay claims.
-   - [x] Add `just test-codex-adapter` and secret-backed `just qualify-codex-runtime` recipes.
-   - [x] Record observed versions, local image identifier, model route, effects, artifacts, durations,
-     failures and current provider disposition.
-   - [x] Keep this PR's live cancellation evidence scoped to the Codex runtime interruption and
-     `runtime_stopped` observation. Do not include the incomplete task-cancel test that waits for
-     environment stop evidence.
-   - [ ] In a later PR, complete #102 task-environment orchestration and then run #101 with the
-     independently qualified #92 provider and this runtime adapter to prove task cancellation
-     convergence. #92 owns environment-provider and isolation qualification; #102 owns the DAC
-     orchestration path.
-   - [x] Run `just ci-fast` and review the final diff; `git diff --check` passed.
-   - [ ] Pass the full parallel PR workflow, including Codex image reproducibility, security-race,
-     deployed stack and operations jobs.
-   - [ ] Keep #91 open until #101 proves cross-adapter cancellation and every other required #91
-     acceptance check passes. #101 depends on #92 and #102, not on #91 being closed.
-
-## Limits
-
-This issue does not qualify workspace isolation, egress control or environment ownership (#92), the
-production artifact store (#93), user-selected models or BYOK (#94), or the external example surface
-(#97). No availability, throughput, cost or provider-wide production claim follows from the bounded
-qualification.
+1. Keep `adapters/e2b` as an independent Go module with an executable, durable bbolt operation/resource mapping, monotonic observations, and existing provision/stop/observe methods. Correct API request and response mapping against E2B Cloud's official v2 API; persist operation identity in sandbox metadata and reconcile an uncertain create before any retry. Do not advertise `operation.replay` without a provider-side guarantee.
+2. Make cancellation durable even if it arrives before provision begins. Report provider 404 observations as the contract's `absent` state. Add regression coverage for both behaviors.
+3. Replace the Embed Compose/KVM qualification runner with a Cloud qualification runner that reads `APIKEY_E2B` from the process environment, writes it only to a mode-0600 temporary file when a CLI needs a file, and removes it on exit. Use the production Cloud API origin, the pinned CLI/SDK lockfile, two isolated sandboxes, positive filesystem/process checks, a verified denied-egress probe, stop/observe, journal close/reopen recovery, and deletion/cleanup verification. Do not print command environments or secrets.
+4. Add a manually triggered GitHub Actions qualification job that receives the existing `APIKEY_E2B` secret, runs the same repository recipe on a standard Ubuntu runner, uploads only sanitized evidence, and reports a failing result if cleanup or required probes fail. It does not need KVM, Docker, an E2B Embed source checkout, or privileged runner access.
+5. Rewrite `adapters/e2b/README.md` and `evidence.md` for the managed service. Separate deterministic results from observed live Cloud results; record date, API surface, package versions, adapter commit, sandbox references in redacted form, elapsed times, isolation/egress outcomes, cleanup, failures, cost/credit boundary, and explicit limits. Keep disposition off/unqualified until every required live scenario passes.
+6. Correct the unrelated invalid-cursor fixture in `internal/httpapi/api_test.go` that made the existing PR integration job fail: use a stream tag with an actually invalid shape, preserving parser behavior.
 
 ## Verification
 
-```text
-just test-codex-adapter
-just test-conformance
-just qualify-codex-runtime
-just ci
-git diff --check
-```
+- Run `just test-e2b-adapter` and the focused `internal/httpapi` test that previously failed.
+- Run the tagged qualification compile and `just ci-fast`, then `git diff --check`.
+- Run the live recipe with the configured E2B key, capture its exit code and redacted logs, and verify all created sandboxes are deleted even after failure.
+- Run the manual GitHub workflow with the repository secret and same qualification recipe. Do not claim the real provider acceptance criterion until its observed result passes.
+- Recheck PR #104's review threads, CI, and description; report the actual current state. #92 remains open until the real provider evidence is complete.
+
+## Limits
+
+This qualifies the E2B Cloud API and account configuration observed during the run, not a pinnable E2B server build, E2B BYOC/Embed, multi-region availability, task assignment/cancellation integration (#102), provider-wide availability, throughput, or cost guarantees. The deterministic fake-provider suite does not replace live evidence.

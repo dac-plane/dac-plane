@@ -4,7 +4,7 @@
 # Editor files: .idea/ holds per-machine settings; module files are a subset
 .idea/
 *.iml
-
+.env
 # Local work logs, caches and scratch state (up.sh, mise, np.sh output)
 /.work/
 

@@ -65,6 +65,27 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-codex-adapter ./cmd/dac-codex-adapter
 
+FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS e2b-adapter-build
+
+WORKDIR /src
+COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
+COPY adapters/e2b/go.mod adapters/e2b/go.sum ./adapters/e2b/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    cd adapters/e2b && go mod download
+
+COPY adapterkit ./adapterkit
+COPY adapters/e2b ./adapters/e2b
+
+ARG TARGETOS
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    test "${TARGETOS}" = linux && \
+    cd adapters/e2b && \
+    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
+    -o /out/dac-e2b-adapter ./cmd/dac-e2b-adapter
+
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-plane
 
 COPY --from=build --chown=nonroot:nonroot /out/dac-plane /dac-plane
@@ -90,3 +111,10 @@ COPY --from=codex-adapter-build --chown=65532:65532 /out/dac-codex-adapter /dac-
 COPY --from=codex-adapter-build --chown=65532:65532 /out/codex-app-server /codex-app-server
 USER 65532:65532
 ENTRYPOINT ["/dac-codex-adapter"]
+
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS dac-e2b-adapter
+
+COPY --from=e2b-adapter-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=e2b-adapter-build --chown=65532:65532 /out/dac-e2b-adapter /dac-e2b-adapter
+USER 65532:65532
+ENTRYPOINT ["/dac-e2b-adapter"]
