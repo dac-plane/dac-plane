@@ -26,39 +26,40 @@ func connect(t *testing.T, ctx context.Context, databaseURL string) *pgx.Conn {
 }
 
 func TestStartIsolatesConcurrentFixtures(t *testing.T) {
-	// Parallel subtests run after this function returns, so a deferred cancel
-	// would end their context before they start.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	t.Cleanup(cancel)
-	var written sync.WaitGroup
-	written.Add(2)
-	for _, name := range []string{"first", "second"} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			wrote := sync.OnceFunc(written.Done)
-			defer wrote()
-			conn := connect(t, ctx, testpostgres.Start(t))
-			if _, err := conn.Exec(ctx, `create table marker (owner text not null)`); err != nil {
-				t.Fatalf("create table: %v", err)
-			}
-			if _, err := conn.Exec(ctx, `insert into marker (owner) values ($1)`, name); err != nil {
-				t.Fatalf("insert: %v", err)
-			}
-			// Both fixtures have written before either reads.
-			wrote()
-			written.Wait()
-			rows, err := conn.Query(ctx, `select owner from marker`)
-			if err != nil {
-				t.Fatalf("select: %v", err)
-			}
-			owners, err := pgx.CollectRows(rows, pgx.RowTo[string])
-			if err != nil {
-				t.Fatalf("collect: %v", err)
-			}
-			if len(owners) != 1 || owners[0] != name {
-				t.Fatalf("marker owners = %v, want only %q", owners, name)
+	defer cancel()
+	owners := []string{"first", "second"}
+	conns := make([]*pgx.Conn, len(owners))
+	for i := range owners {
+		conns[i] = connect(t, ctx, testpostgres.Start(t))
+	}
+	// Both fixtures write at the same time, in goroutines rather than parallel
+	// subtests, so the test cannot deadlock when -parallel is 1.
+	errs := make([]error, len(owners))
+	var writers sync.WaitGroup
+	for i, owner := range owners {
+		writers.Go(func() {
+			if _, errs[i] = conns[i].Exec(ctx, `create table marker (owner text not null)`); errs[i] == nil {
+				_, errs[i] = conns[i].Exec(ctx, `insert into marker (owner) values ($1)`, owner)
 			}
 		})
+	}
+	writers.Wait()
+	for i, owner := range owners {
+		if errs[i] != nil {
+			t.Fatalf("%s fixture write: %v", owner, errs[i])
+		}
+		rows, err := conns[i].Query(ctx, `select owner from marker`)
+		if err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		if len(got) != 1 || got[0] != owner {
+			t.Fatalf("%s fixture marker owners = %v, want only %q", owner, got, owner)
+		}
 	}
 }
 

@@ -154,7 +154,7 @@ func TestSecuritySpendExpiryRecheckedAfterChallengeLock(t *testing.T) {
 	defer cancel()
 	for {
 		var blocked bool
-		if err := f.pool.QueryRow(waitCtx, `select exists(select 1 from pg_stat_activity where wait_event_type='Lock' and query like '%from spend_challenge%for update%')`).Scan(&blocked); err != nil {
+		if err := f.pool.QueryRow(waitCtx, `select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%from spend_challenge%for update%')`).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {

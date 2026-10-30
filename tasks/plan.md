@@ -29,7 +29,10 @@ full integration run, serialised within each package.
 Isolation facts that make a shared server safe:
 
 - Migrations and the store create only database-local objects. No `CREATE ROLE`, `ALTER SYSTEM`,
-  `ALTER DATABASE`, extension, tablespace or `pg_stat_activity` use was found.
+  `ALTER DATABASE`, extension or tablespace use was found.
+- Five application tests read `pg_stat_activity`, which spans the whole server, to detect their own
+  lock waits. Four of them did not filter by database; on a shared server they could see another
+  fixture's wait. All five now filter on `datname = current_database()`.
 - Every advisory lock (goose `PostgresSessionLocker`, `pg_advisory_xact_lock` in attention,
   governed actions, migration admin and the surface-event trigger) is keyed within the current
   database, so fixtures on separate databases cannot contend.
