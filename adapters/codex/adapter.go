@@ -28,6 +28,9 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/adapters/codex/journal"
 )
 
+// terminalCleanTimeout bounds the end of an interrupted turn's commands.
+const terminalCleanTimeout = 15 * time.Second
+
 type Native interface {
 	Call(context.Context, string, any, any) error
 	Reply(json.RawMessage, any) error
@@ -180,6 +183,10 @@ func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
 	if op.State == journal.StateCancelled {
 		return nil
 	}
+	if op.State == "completed" || op.State == "failed" || op.State == "interrupted" {
+		// A finished turn leaves its background commands running.
+		return a.cleanTerminals(ctx, op.ThreadID)
+	}
 	if op.ThreadID != "" && op.TurnID != "" {
 		var result any
 		return a.config.Native.Call(ctx, "turn/interrupt", map[string]any{"threadId": op.ThreadID, "turnId": op.TurnID}, &result)
@@ -190,6 +197,13 @@ func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
 	}
 	// A start that ended without a turn is never redelivered as a new one.
 	return a.fence(cancel.Operation)
+}
+
+// cleanTerminals ends the thread's commands. turn/interrupt ends only the turn:
+// observed on Codex 0.165.0, its command keeps running under the app-server.
+func (a *Adapter) cleanTerminals(ctx context.Context, thread string) error {
+	var result any
+	return a.config.Native.Call(ctx, "thread/backgroundTerminals/clean", map[string]any{"threadId": thread}, &result)
 }
 
 // fence refuses a start that produced no turn and reports the rejection, which
@@ -780,6 +794,21 @@ func (a *Adapter) processNotification(m appserver.Message) {
 	}
 	switch m.Method {
 	case "turn/completed":
+		if binding.Turn.Status == "interrupted" {
+			// The interruption is stop evidence, so it is reported only once the
+			// command has ended. Otherwise exit: restarting ends the command, and
+			// the resumed thread reports the interruption.
+			ctx, cancel := context.WithTimeout(context.Background(), terminalCleanTimeout)
+			err := a.cleanTerminals(ctx, op.ThreadID)
+			cancel()
+			if err != nil {
+				select {
+				case a.fatal <- fmt.Errorf("end interrupted commands: %w", err):
+				default:
+				}
+				return
+			}
+		}
 		a.turnCompleted(op, binding.Turn.ID, binding.Turn.Status, m.Params)
 	case "thread/tokenUsage/updated":
 		_, _ = a.config.Journal.AppendEvent(op.ID, journal.Key(m.Method, string(m.Params)), "usage.reported", map[string]any{"unit": "tokens", "cumulative": binding.TokenUsage.Total.TotalTokens})

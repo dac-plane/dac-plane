@@ -106,7 +106,7 @@ func Start(ctx context.Context, config Config) (*Client, error) {
 	go c.read(stdout)
 	go c.logStderr(stderr)
 	var initialized json.RawMessage
-	if err := c.Call(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "dac-codex-adapter", "title": "DAC Codex runtime adapter", "version": "0.1.0"}}, &initialized); err != nil {
+	if err := c.Call(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "dac-codex-adapter", "title": "DAC Codex runtime adapter", "version": "0.1.0"}, "capabilities": map[string]any{"experimentalApi": true}}, &initialized); err != nil {
 		_ = c.Close()
 		return nil, err
 	}

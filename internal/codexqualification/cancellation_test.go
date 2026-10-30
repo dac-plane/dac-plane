@@ -20,8 +20,8 @@ import (
 	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
 )
 
-// activeCommand is unique so a process listing cannot match anything else.
-const activeCommand = "sleep 317"
+// commandGrace bounds how long a command may outlive its interrupted turn.
+const commandGrace = 60 * time.Second
 
 // cancellationStack is the deployed Codex and E2B stack one scenario drives.
 type cancellationStack struct {
@@ -31,6 +31,9 @@ type cancellationStack struct {
 	token   *tokenSource
 	project string
 	e2bKey  string
+	tasks   int
+	// command is unique per task, so a process listing matches only that task.
+	command string
 }
 
 // A cancellation scenario proves the stop rather than the request: each one
@@ -110,8 +113,10 @@ func TestTaskCancellationQualification(t *testing.T) {
 // startActiveTask approves actions until the command is observably running.
 func (s *cancellationStack) startActiveTask(t *testing.T) httpapi.SubmissionBody {
 	t.Helper()
+	s.tasks++
+	s.command = fmt.Sprintf("sleep %d", 3170+s.tasks)
 	task := submit(t, s.ctx, s.client, s.token,
-		"Use exec_command with sandbox_permissions require_escalated to run: "+activeCommand+". Wait for the command to finish.",
+		"Use exec_command with sandbox_permissions require_escalated to run: "+s.command+". Wait for the command to finish.",
 		"the command finishes unless DAC cancels the task")
 	approved := map[ids.AttentionID]bool{}
 	poll(t, s.ctx, "active command", func() (struct{}, bool) {
@@ -166,9 +171,7 @@ func (s *cancellationStack) requireConverged(t *testing.T, task httpapi.Submissi
 	if got := s.sql(t, fmt.Sprintf("select state from reservation where attempt_id = '%s'", task.Attempt.ID)); got != string(lifecycle.ReservationReleased) {
 		t.Fatalf("reservation = %q, want released", got)
 	}
-	if s.commandRunning(t) {
-		t.Fatalf("%q survived the cancellation", activeCommand)
-	}
+	s.requireCommandGone(t)
 	if s.sandboxExists(t, s.sandbox(t, task)) {
 		t.Fatal("the sandbox survived its observed stop")
 	}
@@ -177,6 +180,21 @@ func (s *cancellationStack) requireConverged(t *testing.T, task httpapi.Submissi
 			t.Fatalf("applied %s = %s, want exactly one", stop, got)
 		}
 	}
+}
+
+// requireCommandGone proves the work itself ended, not only its lifecycle.
+func (s *cancellationStack) requireCommandGone(t *testing.T) {
+	t.Helper()
+	started := time.Now()
+	for time.Since(started) < commandGrace {
+		if !s.commandRunning(t) {
+			t.Logf("%q gone %s after convergence", s.command, time.Since(started).Round(time.Millisecond))
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	output, _ := exec.CommandContext(s.ctx, "docker", "top", s.container("codex-adapter"), "-o", "pid,ppid,stat,etime,args").CombinedOutput()
+	t.Fatalf("%q survived the cancellation by %s:\n%s", s.command, commandGrace, output)
 }
 
 func (s *cancellationStack) view(t *testing.T, task httpapi.SubmissionBody) httpapi.TaskBody {
@@ -254,7 +272,7 @@ func (s *cancellationStack) commandRunning(t *testing.T) bool {
 		// A stopped container has no process list, and so no running command.
 		return false
 	}
-	return strings.Contains(string(output), activeCommand)
+	return strings.Contains(string(output), s.command)
 }
 
 func (s *cancellationStack) sql(t *testing.T, query string) string {

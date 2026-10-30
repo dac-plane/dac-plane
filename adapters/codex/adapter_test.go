@@ -40,6 +40,7 @@ type fakeNative struct {
 	failThreadStart     bool
 	failTurnStart       bool
 	failResume          bool
+	failClean           bool
 	failReplyOnce       bool
 	completeOnTurnStart bool
 	blockTurnStart      bool
@@ -56,7 +57,11 @@ func (f *fakeNative) Call(_ context.Context, method string, params, result any) 
 	f.calls = append(f.calls, nativeCall{method, raw})
 	fail := f.failThreadStart && method == "thread/start"
 	failResume := f.failResume && method == "thread/resume"
+	failClean := f.failClean && method == "thread/backgroundTerminals/clean"
 	f.mu.Unlock()
+	if failClean {
+		return errors.New("clean failed")
+	}
 	if fail {
 		return errors.New("lost thread/start reply")
 	}
@@ -447,6 +452,65 @@ func TestCancelDuringStartWaitsForTheTurn(t *testing.T) {
 	}
 	if got := f.native.count("turn/interrupt"); got != 1 {
 		t.Fatalf("turn/interrupt calls=%d, want the repeat to find the mapped turn", got)
+	}
+}
+
+func interruptedTurn() appserver.Message {
+	return appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}`)}
+}
+
+// turn/interrupt leaves its command running, so the stop evidence must follow
+// the end of the command rather than the end of the turn.
+func TestInterruptedTurnEndsItsCommandsBeforeReportingTheStop(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.notifications <- interruptedTurn()
+	waitFor(t, func() bool { return strings.HasSuffix(strings.Join(entryKinds(t, f), ","), "turn.finished,runtime.stopped") })
+	if got := f.native.count("thread/backgroundTerminals/clean"); got != 1 {
+		t.Fatalf("clean calls=%d", got)
+	}
+}
+
+func TestFailedCommandCleanupWithholdsTheStopAndExits(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.mu.Lock()
+	f.native.failClean = true
+	f.native.mu.Unlock()
+	f.native.notifications <- interruptedTurn()
+	select {
+	case err := <-f.adapter.Fatal():
+		if err == nil {
+			t.Fatal("nil fatal error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("adapter kept running without ending the command")
+	}
+	if got := strings.Join(entryKinds(t, f), ","); strings.Contains(got, "runtime.stopped") || strings.Contains(got, "turn.finished") {
+		t.Fatalf("entries=%s, want no stop evidence", got)
+	}
+}
+
+func TestCancelAfterFinishedTurnEndsItsCommands(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.notifications <- interruptedTurn()
+	waitFor(t, func() bool { return f.native.count("thread/backgroundTerminals/clean") == 1 })
+	waitFor(t, func() bool { return strings.Contains(strings.Join(entryKinds(t, f), ","), "runtime.stopped") })
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.native.count("thread/backgroundTerminals/clean"); got != 2 {
+		t.Fatalf("clean calls=%d", got)
+	}
+	if got := f.native.count("turn/interrupt"); got != 0 {
+		t.Fatalf("turn/interrupt calls=%d", got)
 	}
 }
 
