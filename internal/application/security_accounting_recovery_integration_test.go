@@ -18,6 +18,7 @@ import (
 )
 
 func TestSecurityLateUsageRechecksQueuedReworkCoverage(t *testing.T) {
+	t.Parallel()
 	for _, usage := range []uint64{1200, 950, 900} {
 		t.Run(strconv.FormatUint(usage, 10), func(t *testing.T) {
 			g := newResultFixture(t)
@@ -60,6 +61,7 @@ func TestSecurityLateUsageRechecksQueuedReworkCoverage(t *testing.T) {
 }
 
 func TestSecurityRecoveryAccountsUsageOnBothSidesOfOutcome(t *testing.T) {
+	t.Parallel()
 	for _, usageFirst := range []bool{true, false} {
 		name := "after_outcome"
 		if usageFirst {

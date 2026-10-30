@@ -88,6 +88,7 @@ func failedTurn(session, turn string, at time.Time) contracts.TurnFinished {
 }
 
 func TestEventRuntimeStartBindsSessionAndExecutes(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	f.ingest(t, f.event(rt, s, 1, simulator.ConnectedFrame(f.at)))
@@ -120,6 +121,7 @@ func TestEventRuntimeStartBindsSessionAndExecutes(t *testing.T) {
 }
 
 func TestEventTurnFinishedRecordsTurnEnds(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	ended := f.at.Add(30 * time.Second)
@@ -164,6 +166,7 @@ func TestEventTurnFinishedRecordsTurnEnds(t *testing.T) {
 }
 
 func TestEventRefusesUnknownStateChangingKinds(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	got := f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -186,6 +189,7 @@ func TestEventRefusesUnknownStateChangingKinds(t *testing.T) {
 }
 
 func TestEventForgedEnvelopesRefusedBeforeMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	other, _ := f.live(t, "n-2")
@@ -223,6 +227,7 @@ func TestEventForgedEnvelopesRefusedBeforeMutation(t *testing.T) {
 }
 
 func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	first, rt := f.live(t, "n-1")
 	second, _ := f.live(t, "n-2")
@@ -254,6 +259,7 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 }
 
 func TestEventEnvironmentObservationsKeepTheNewest(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	observed := func(sequence uint64, state lifecycle.RunState) contracts.EnvironmentObserved {
@@ -276,6 +282,7 @@ func TestEventEnvironmentObservationsKeepTheNewest(t *testing.T) {
 }
 
 func TestEventRehydrationReplaysWithoutRepeating(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	rows := []simulator.Row{
@@ -339,6 +346,7 @@ func (f *fixture) replied(t *testing.T, nonce string, reply simulator.Reply) (ap
 }
 
 func TestReconcileLostReplyMovesAttemptToReconciling(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		outcome lifecycle.OperationState
 		task    lifecycle.TaskState
@@ -374,6 +382,7 @@ func TestReconcileLostReplyMovesAttemptToReconciling(t *testing.T) {
 }
 
 func TestReconcileOutcomeForSettledOperationChangesNothing(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	frame := simulator.RowsFrame(false, row(1, contracts.EntryOperationOutcome, contracts.OperationOutcome{State: lifecycle.OperationFailed}))
@@ -389,6 +398,7 @@ func TestReconcileOutcomeForSettledOperationChangesNothing(t *testing.T) {
 }
 
 func TestEventConcurrentDuplicateFramesApplyOnce(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	// The cursor exists before the race, so only its row lock orders the racers.
@@ -425,6 +435,7 @@ func TestEventConcurrentDuplicateFramesApplyOnce(t *testing.T) {
 }
 
 func TestEventCursorNeverMovesBackwards(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	f.ingest(t, f.event(rt, s, 1, simulator.ConnectedFrame(f.at)))
@@ -472,6 +483,7 @@ func TestEventCursorNeverMovesBackwards(t *testing.T) {
 }
 
 func TestReconcileFailedTurnWhileReconcilingStaysFailed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "n-1")
 	got := f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -494,6 +506,7 @@ func TestReconcileFailedTurnWhileReconcilingStaysFailed(t *testing.T) {
 }
 
 func TestDispatchRejectedReplyFailsAttemptAndTask(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.replied(t, "n-1", simulator.Rejected(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "refused"}))
 	if after := f.reload(t, "n-1"); after.Operation.State != lifecycle.OperationRejected {
@@ -509,6 +522,7 @@ func TestDispatchRejectedReplyFailsAttemptAndTask(t *testing.T) {
 }
 
 func TestEventTurnUnderAnotherSessionRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.live(t, "n-1")
 	got := f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -529,6 +543,7 @@ func TestEventTurnUnderAnotherSessionRefused(t *testing.T) {
 }
 
 func TestReconcileWorkerCursorNeverRestoresOlderProgress(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "n-1")
 	const dispatchStream = "dispatch"

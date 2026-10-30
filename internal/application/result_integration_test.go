@@ -54,6 +54,7 @@ func newResultFixtureAtVersion(t *testing.T, version int64) *resultFixture {
 }
 
 func TestReviewRequestChangesPreservesSchema13Brief(t *testing.T) {
+	t.Parallel()
 	g := newResultFixtureAtVersion(t, 13)
 	g.propose(t, true)
 	first := g.finalize(t)
@@ -125,6 +126,7 @@ func (g *resultFixture) reviewCommand(t *testing.T, r lifecycle.ResultRevision, 
 }
 
 func TestResultArtifactAdmissionBothObservationOrders(t *testing.T) {
+	t.Parallel()
 	for _, first := range []bool{true, false} {
 		t.Run(map[bool]string{true: "proposal_first", false: "turn_first"}[first], func(t *testing.T) {
 			g := newResultFixture(t)
@@ -169,6 +171,7 @@ func TestResultArtifactAdmissionBothObservationOrders(t *testing.T) {
 }
 
 func TestResultArtifactMismatchNeverCreatesRevision(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"digest", "size", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			g := newResultFixture(t)
@@ -203,6 +206,7 @@ func TestResultArtifactMismatchNeverCreatesRevision(t *testing.T) {
 }
 
 func TestReviewAcceptRejectAndImmutableDisposition(t *testing.T) {
+	t.Parallel()
 	for _, d := range []lifecycle.Disposition{lifecycle.DispositionAccept, lifecycle.DispositionReject} {
 		t.Run(string(d), func(t *testing.T) {
 			g := newResultFixture(t)
@@ -231,6 +235,7 @@ func TestReviewAcceptRejectAndImmutableDisposition(t *testing.T) {
 }
 
 func TestReviewRequestChangesSchedulesNewAttemptAndPreservesLineage(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	first := g.finalize(t)
@@ -280,6 +285,7 @@ func TestReviewRequestChangesSchedulesNewAttemptAndPreservesLineage(t *testing.T
 }
 
 func TestReviewBudgetFailureAndUnauthorizedActorRollBack(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	r := g.finalize(t)
@@ -322,6 +328,7 @@ func (p *lostArtifactReply) Send(ctx context.Context, r contracts.Request) (cont
 }
 
 func TestArtifactLostCommitReplyRecoversExactManifest(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	port := &lostArtifactReply{Port: g.bytes}

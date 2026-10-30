@@ -61,6 +61,7 @@ func (p *reportUsageAfterMigrationProvision) Send(ctx context.Context, request c
 }
 
 func TestSecurityMigrationRevocationSerializesWithCommand(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	u, err := store.Begin(f.ctx, f.pool)
 	if err != nil {
@@ -76,7 +77,7 @@ func TestSecurityMigrationRevocationSerializesWithCommand(t *testing.T) {
 	defer cancel()
 	for {
 		var blocked bool
-		if err := f.pool.QueryRow(waitCtx, `select exists(select 1 from pg_stat_activity where wait_event_type='Lock' and query like '%from harness_administrator%for update%')`).Scan(&blocked); err != nil {
+		if err := f.pool.QueryRow(waitCtx, `select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%from harness_administrator%for update%')`).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {
@@ -100,6 +101,7 @@ func TestSecurityMigrationRevocationSerializesWithCommand(t *testing.T) {
 }
 
 func TestSecurityMigrationCrossTenantReadAndHoldPreventAcquisition(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
 	if err != nil {
@@ -167,6 +169,7 @@ func migrate(t *testing.T, f *fixture, v application.MigrationView, event lifecy
 }
 
 func TestSecurityMigrationPermissionReplayAndPreviewHold(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	f.seed(t, func(u *store.UnitOfWork) error {
 		return store.SetHarnessAdministrator(f.ctx, u, f.tenant, f.principal, false)
@@ -235,6 +238,7 @@ func TestSecurityMigrationPermissionReplayAndPreviewHold(t *testing.T) {
 }
 
 func TestSecurityMigrationStalePreviewAndClaimTakeover(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	s := f.submit(t, f.submitCommand("migration-takeover-source"))
 	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
@@ -352,6 +356,7 @@ func TestSecurityMigrationStalePreviewAndClaimTakeover(t *testing.T) {
 }
 
 func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	s := f.submit(t, f.submitCommand("migration-source"))
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
@@ -397,6 +402,7 @@ func TestMigrationExecutionSnapshotsTenantSourceAttempts(t *testing.T) {
 }
 
 func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	submission := f.submit(t, f.submitCommand("migration-legacy-brief"))
 	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
@@ -476,6 +482,7 @@ func TestMigrationRefusesLegacyTaskBeforeSourceQuiesce(t *testing.T) {
 }
 
 func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	submission := f.submit(t, f.submitCommand("migration-exhausted-reservation"))
 	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
@@ -575,6 +582,7 @@ func TestMigrationFailsCleanlyWhenReservationExhaustsDuringQuiesce(t *testing.T)
 }
 
 func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	submit := f.submitCommand("migration-budget-recheck")
 	submit.Ceiling = 150
@@ -732,6 +740,7 @@ func TestMigrationRechecksBudgetBeforeStartingTarget(t *testing.T) {
 }
 
 func TestEmptyMigrationCompletesAndReleasesTenantSlot(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
 	if err != nil {
@@ -762,6 +771,7 @@ func TestEmptyMigrationCompletesAndReleasesTenantSlot(t *testing.T) {
 }
 
 func TestExecutingMigrationCannotBeCancelledWithoutCleanupEvidence(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
 	if err != nil {
@@ -789,6 +799,7 @@ func TestExecutingMigrationCannotBeCancelledWithoutCleanupEvidence(t *testing.T)
 }
 
 func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	s := f.submit(t, f.submitCommand("migration-e2e-source"))
 	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
@@ -962,6 +973,7 @@ func TestMigrationExecutesQuiescePrepareCutoverAndCleanup(t *testing.T) {
 }
 
 func TestMigrationStaleWorkerCannotSettleAfterTakeover(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	s := f.submit(t, f.submitCommand("migration-stale-worker-source"))
 	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
@@ -1127,6 +1139,7 @@ func (p *dropFirstMigrationReply) Send(ctx context.Context, request contracts.Re
 }
 
 func TestSecurityMigrationDowngradePreservesAdministration(t *testing.T) {
+	t.Parallel()
 	f, cmd := migrationFixture(t)
 	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
 	if err != nil {

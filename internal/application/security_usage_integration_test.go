@@ -13,6 +13,7 @@ import (
 )
 
 func TestSecurityUsageLateReportsRemainAccountedAfterTerminal(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "security-usage")
 	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -60,6 +61,7 @@ func TestSecurityUsageLateReportsRemainAccountedAfterTerminal(t *testing.T) {
 }
 
 func TestSecurityUsageNonLiveReportsCannotChangeAccounting(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "security-shadow-usage")
 	before := f.reload(t, s.Nonce)

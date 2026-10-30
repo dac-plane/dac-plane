@@ -15,6 +15,7 @@ import (
 )
 
 func TestRecoveryShadowResetReopensLocalReplay(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"shadow", "off"} {
 		for _, reset := range []string{"too_old", "cleared", "unavailable", "reset_loop"} {
 			t.Run(mode+"/"+reset, func(t *testing.T) {

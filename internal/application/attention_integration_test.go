@@ -119,6 +119,7 @@ func (f *fixture) deliver(t *testing.T, s application.Submission) *simulator.Run
 }
 
 func TestAttentionRequestedCreatesRequestAndWaits(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	expires := f.at.Add(time.Hour)
@@ -149,6 +150,7 @@ func TestAttentionRequestedCreatesRequestAndWaits(t *testing.T) {
 }
 
 func TestAttentionRequestedSecondBlockingRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -165,6 +167,7 @@ func TestAttentionRequestedSecondBlockingRefused(t *testing.T) {
 }
 
 func TestAttentionRequestedNativeReferenceRaceHasOneReachableWait(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	first, firstRuntime := f.live(t, "n-1")
 	second, secondRuntime := f.live(t, "n-2")
@@ -241,6 +244,7 @@ func TestAttentionRequestedNativeReferenceRaceHasOneReachableWait(t *testing.T) 
 }
 
 func TestAttentionRequestedKindPayloads(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	// An approval must carry its action and digest: a bare one is refused.
@@ -264,6 +268,7 @@ func TestAttentionRequestedKindPayloads(t *testing.T) {
 }
 
 func TestAttentionRequestedExpiredRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	// The event time is f.at plus a minute, so an expiry at f.at is behind it.
@@ -279,6 +284,7 @@ func TestAttentionRequestedExpiredRefused(t *testing.T) {
 }
 
 func TestDecisionDenyRecordsAndDelivers(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, approval("a-1", f.at.Add(time.Hour)))
@@ -327,6 +333,7 @@ func TestDecisionDenyRecordsAndDelivers(t *testing.T) {
 }
 
 func TestDecisionAnswerCarriesDigest(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -361,6 +368,7 @@ func TestDecisionAnswerCarriesDigest(t *testing.T) {
 }
 
 func TestDecisionApproveOnceIssuesAllowOnceGrant(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	// The approval's action is askable, so the grant the decision confers
 	// issues under the tenant's current generation.
@@ -410,6 +418,7 @@ func TestDecisionApproveOnceIssuesAllowOnceGrant(t *testing.T) {
 }
 
 func TestDecisionStaleVersionConflicts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -426,6 +435,7 @@ func TestDecisionStaleVersionConflicts(t *testing.T) {
 }
 
 func TestDecisionWrongResponderForbidden(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -454,6 +464,7 @@ func TestDecisionWrongResponderForbidden(t *testing.T) {
 }
 
 func TestDecisionReplayReturnsRecordedDecision(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -472,6 +483,7 @@ func TestDecisionReplayReturnsRecordedDecision(t *testing.T) {
 }
 
 func TestDecisionStalePolicyForbidden(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -489,6 +501,7 @@ func TestDecisionStalePolicyForbidden(t *testing.T) {
 }
 
 func TestDecisionConsumedBeforeDeliveryRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -513,6 +526,7 @@ func TestDecisionConsumedBeforeDeliveryRefused(t *testing.T) {
 }
 
 func TestDecisionConsumedWhileDispatchingProvesDelivery(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
@@ -559,6 +573,7 @@ func TestDecisionConsumedWhileDispatchingProvesDelivery(t *testing.T) {
 }
 
 func TestDecisionConcurrentDuplicatesConverge(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))

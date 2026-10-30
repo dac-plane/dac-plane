@@ -96,6 +96,7 @@ func outcomeFrame(seq uint64) contracts.StreamFrame {
 }
 
 func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("loss"))
 	rt := f.runtime(t, s.Operation.ID)
@@ -155,6 +156,7 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 }
 
 func TestRecoveryReconcileRejectsMalformedAndDuplicateOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"bad_hash", "out_of_order", "duplicate", "omitted"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -193,6 +195,7 @@ func TestRecoveryReconcileRejectsMalformedAndDuplicateOutcomes(t *testing.T) {
 }
 
 func TestRecoveryReconcileReopensLostCursor(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"cleared", "too_old", "unavailable"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -258,6 +261,7 @@ func TestRecoveryReconcileReopensLostCursor(t *testing.T) {
 }
 
 func TestRecoveryShadowObservationsCannotSettlePrimary(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"ingest", "reconcile"} {
 		t.Run(path, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -294,6 +298,7 @@ func TestRecoveryShadowObservationsCannotSettlePrimary(t *testing.T) {
 }
 
 func TestRecoveryOffObservationsDoNotMutate(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "off")
 	f.seed(t, func(u *store.UnitOfWork) error {
@@ -314,6 +319,7 @@ func TestRecoveryOffObservationsDoNotMutate(t *testing.T) {
 }
 
 func TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "shadow")
 	f.seed(t, func(u *store.UnitOfWork) error {

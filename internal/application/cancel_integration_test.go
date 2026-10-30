@@ -68,6 +68,7 @@ func (f *fixture) reservation(t *testing.T, s application.Submission) lifecycle.
 }
 
 func TestCancelQueuedTaskCancelsAndReleases(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-1")
 	view := f.cancel(t, s, "c-1")
@@ -95,6 +96,7 @@ func TestCancelQueuedTaskCancelsAndReleases(t *testing.T) {
 }
 
 func TestCancelRequiresTaskOwner(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-1")
 	other := mustID[ids.Principal](t)
@@ -122,6 +124,7 @@ func TestCancelRequiresTaskOwner(t *testing.T) {
 }
 
 func TestCancelReadyForReviewKeepsCompletedAttempt(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, _ := f.executing(t, "n-1")
 	f.seed(t, func(uow *store.UnitOfWork) error {
@@ -163,6 +166,7 @@ func TestCancelReadyForReviewKeepsCompletedAttempt(t *testing.T) {
 }
 
 func TestCancelDispatchedTaskWaitsForStops(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	f.seedSendPolicy(t)
 	s, rt := f.executing(t, "n-1")
@@ -215,6 +219,14 @@ func TestCancelDispatchedTaskWaitsForStops(t *testing.T) {
 	}
 	// The interrupt dispatches on the next tick.
 	f.tick(t, rt)
+	// The adapter records a cancel asynchronously once the frame arrives.
+	deadline := time.Now().Add(5 * time.Second)
+	for len(rt.Ledger().Cancelled()) < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("protocol cancel was not delivered")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	if n := len(rt.Ledger().Cancelled()); n != 1 {
 		t.Fatalf("protocol cancels = %d, want 1", n)
 	}
@@ -224,6 +236,7 @@ func TestCancelDispatchedTaskWaitsForStops(t *testing.T) {
 }
 
 func TestEventEnvironmentStopConvergesCancellation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -259,6 +272,7 @@ func TestEventEnvironmentStopConvergesCancellation(t *testing.T) {
 }
 
 func TestEventRuntimeStopCompletesCancellation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -307,6 +321,7 @@ func TestEventRuntimeStopCompletesCancellation(t *testing.T) {
 }
 
 func TestEventStaleEnvironmentStopCannotConvergeCancellation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -340,6 +355,7 @@ func TestEventStaleEnvironmentStopCannotConvergeCancellation(t *testing.T) {
 }
 
 func TestTerminalAttemptAloneDoesNotProveCancellationStops(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, _ := f.executing(t, "n-1")
 	actor := lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: f.principal}
@@ -384,6 +400,7 @@ func TestTerminalAttemptAloneDoesNotProveCancellationStops(t *testing.T) {
 }
 
 func TestCancelUsesPreviouslyObservedEnvironmentStop(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
@@ -415,6 +432,7 @@ func TestCancelUsesPreviouslyObservedEnvironmentStop(t *testing.T) {
 }
 
 func TestEventFailedTurnAfterCancelRefuses(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.cancel(t, s, "c-1")
@@ -433,6 +451,7 @@ func TestEventFailedTurnAfterCancelRefuses(t *testing.T) {
 }
 
 func TestReservationReleasesAtAttemptTerminal(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	// A failed turn is terminal: the hold releases exactly once.
@@ -485,6 +504,7 @@ func TestReservationReleasesAtAttemptTerminal(t *testing.T) {
 }
 
 func TestReconcileUnknownOutcomeSupersedesAttention(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("n-1"))
 	rt := f.runtime(t, s.Operation.ID)

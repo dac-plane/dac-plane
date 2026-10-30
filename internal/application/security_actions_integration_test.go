@@ -14,6 +14,7 @@ import (
 )
 
 func TestSecurityStatefulActionsSerializeAcrossAttemptsAndFreshRetry(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	s, rt := g.live(t, "second-action-attempt")
 	g.ingestNow(t, g.event(rt, s, 1, simulator.RowsFrame(false, row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-2"}))))

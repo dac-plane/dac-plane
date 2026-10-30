@@ -19,6 +19,7 @@ import (
 )
 
 func TestRecoveryRestartWaitingAndTwoDecisions(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("waiting"))
 	decisions := map[ids.DecisionID]simulator.RuntimeOp{}
@@ -99,6 +100,7 @@ func TestRecoveryRestartWaitingAndTwoDecisions(t *testing.T) {
 }
 
 func TestRecoveryConcurrentCursorPreventsStaleOutcome(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "loss")
 	var afterAdvance map[string]string
@@ -116,6 +118,7 @@ func TestRecoveryConcurrentCursorPreventsStaleOutcome(t *testing.T) {
 }
 
 func TestRecoveryOutcomeAndCursorRollbackTogether(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "loss")
 	f.ingest(t, rt.Event(s.Attempt.ID, s.Operation.ID, "dispatch", 1, simulator.HeartbeatFrame(f.at)))
@@ -151,6 +154,7 @@ func TestRecoveryOutcomeAndCursorRollbackTogether(t *testing.T) {
 }
 
 func TestRecoveryReconnectNegotiatesBeforeProviderWork(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"version", "capability", "before_ready", "reconnect"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -218,6 +222,7 @@ func TestRecoveryReconnectNegotiatesBeforeProviderWork(t *testing.T) {
 }
 
 func TestRecoveryReconnectResumesDurableCursor(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "resume")
 	var cursors []contracts.Cursor
@@ -252,6 +257,7 @@ func TestRecoveryReconnectResumesDurableCursor(t *testing.T) {
 }
 
 func TestRecoveryRehydrationResetLoopIsBounded(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "reset")
 	count := 0
@@ -269,6 +275,7 @@ func TestRecoveryRehydrationResetLoopIsBounded(t *testing.T) {
 }
 
 func TestRecoveryStaleSubscriptionCannotRelabelGeneration(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.lost(t, "generation")
 	var advanced map[string]string
