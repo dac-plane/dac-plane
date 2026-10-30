@@ -17,6 +17,7 @@ import (
 )
 
 func TestSecurityLateUsageRefusesReworkWithoutIncreasingCeiling(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	r := g.finalize(t)
@@ -36,6 +37,7 @@ func TestSecurityLateUsageRefusesReworkWithoutIncreasingCeiling(t *testing.T) {
 }
 
 func TestSecurityArtifactRestartAfterBytesBeforeCommit(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	work := g.work(t)
@@ -63,6 +65,7 @@ func TestSecurityArtifactRestartAfterBytesBeforeCommit(t *testing.T) {
 
 // This is an explicit repository-layer race, not an application scheduling API.
 func TestSecurityBudgetConcurrentReservationsRespectOneCeiling(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("budget-race"))
 	var attempts []lifecycle.Attempt
@@ -113,6 +116,7 @@ func TestSecurityBudgetConcurrentReservationsRespectOneCeiling(t *testing.T) {
 }
 
 func TestSecurityReworkRaceReservesAndDispatchesOnce(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	revision := g.finalize(t)
@@ -158,6 +162,7 @@ func TestSecurityReworkRaceReservesAndDispatchesOnce(t *testing.T) {
 }
 
 func TestSecurityArtifactRestartAfterAdmissionKeepsExactRevision(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	// Restart before any bytes exist; the durable proposal drives the worker.

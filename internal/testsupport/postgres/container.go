@@ -116,6 +116,9 @@ func startServer() (string, error) {
 		postgrescontainer.WithUsername("dac_plane"),
 		postgrescontainer.WithPassword("integration-test-only"),
 		postgrescontainer.BasicWaitStrategies(),
+		// Parallel fixtures each hold a pool against the shared server; the
+		// default limit of 100 connections is too low for them.
+		testcontainers.WithCmdArgs("-c", "max_connections=500"),
 	)
 	if started != nil {
 		container = started

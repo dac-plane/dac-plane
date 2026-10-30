@@ -27,6 +27,7 @@ import (
 )
 
 func TestGovernedActionExpiresDuringSlowBatch(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	second := g.next(t)
 	e := g.enforcement(t, simulator.AllowHook(), nil, g.cmd, second)
@@ -53,6 +54,7 @@ func TestGovernedActionExpiresDuringSlowBatch(t *testing.T) {
 }
 
 func TestGovernedActionExpiresWhileWaitingForDispatchLock(t *testing.T) {
+	t.Parallel()
 	for _, table := range []string{"policy", "provider_operation"} {
 		t.Run(table, func(t *testing.T) {
 			testGovernedActionExpiresWhileLocked(t, table)
@@ -132,6 +134,7 @@ func assertExpiredGovernedAction(t *testing.T, g *governedFixture, operation ids
 }
 
 func TestGovernedActionNeverSentReclaimRejects(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	g.enforce(t, e, g.cmd)
@@ -190,6 +193,7 @@ func (p *notDeliveredOnce) Subscribe(ctx context.Context, cursor contracts.Curso
 // send_unknown would park the action on reconciliation that can never see a
 // receipt for a request the provider never received.
 func TestGovernedActionNotDeliveredIsRetriedNotUncertain(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	g.enforce(t, e, g.cmd)
@@ -242,6 +246,7 @@ func TestGovernedActionNotDeliveredIsRetriedNotUncertain(t *testing.T) {
 // delivered, whose grant is revoked before the retry, is rejected rather than
 // left uncertain waiting for a receipt the provider can never produce.
 func TestGovernedActionNotDeliveredThenRevokedRejects(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	g.enforce(t, e, g.cmd)
@@ -309,6 +314,7 @@ func (s *receiptResetStream) Next(context.Context) (contracts.StreamFrame, error
 func (*receiptResetStream) Close() error { return nil }
 
 func TestGovernedActionReceiptRehydrates(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"cleared", "cursor_too_old"} {
 		t.Run(mode, func(t *testing.T) {
 			g := newGovernedFixture(t, false)
@@ -372,6 +378,7 @@ func TestGovernedActionReceiptRehydrates(t *testing.T) {
 }
 
 func TestGovernedActionReceiptRehydrateUnavailable(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), errors.New("reply lost"))
 	g.enforce(t, e, g.cmd)
@@ -406,6 +413,7 @@ func governedRecoveryWorker(t *testing.T, g *governedFixture, port contracts.Por
 }
 
 func TestGovernedActionDowngradePreservesPendingApproval(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	f.seed(t, func(u *store.UnitOfWork) error {
 		_, err := store.UpdatePolicyGeneration(f.ctx, u, store.PolicyUpdate{Tenant: f.tenant, ExpectedGeneration: 1, NextGeneration: 1, Settings: map[identity.ActionClass]identity.Permission{"resource.mutate": identity.PermissionAlways}, Ceiling: map[identity.ActionClass]identity.Permission{"resource.mutate": identity.PermissionAlways}, At: f.at})

@@ -117,6 +117,22 @@ Template step: skipped. A probe of `newFixture` under `-race` measured about 0.3
 migrations included (2.8s for the first, which starts the container). Across 164 application tests
 that is about 55s of 491s; the remainder is test-body time, which a template cannot reduce.
 
+## Follow-up on this branch: parallel application tests
+
+With a database per fixture, the remaining application time was serial test bodies. An audit found no
+mutable package-level state in the application tests or the packages they drive (the only shared
+test-support state, `wiretest`'s registry, is mutex-guarded and keyed per test), no `Setenv`, and
+only `httptest` ports. Every top-level application integration test now calls `t.Parallel()`
+(164 tests). Fixture pools default to 10 connections each on 10 CPUs, so the shared container now
+runs with `max_connections=500` instead of PostgreSQL's default 100.
+
+| Command | Serial (after #105) | Parallel, three consecutive runs |
+|---|---|---|
+| `just test-integration-race ./internal/application/` | 491s | 186s, 158s, 176s |
+
+No run reported a failure, data race or connection exhaustion; only Ryuk remained afterwards.
+Against the original 960s, the shard is about 5.5 times faster.
+
 ## Limits
 
 One container per package process, not per `go test` invocation: `go test ./...` still starts one

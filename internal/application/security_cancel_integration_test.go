@@ -39,6 +39,7 @@ func (p *lostCancelAcknowledgement) Cancel(ctx context.Context, c contracts.Canc
 }
 
 func TestSecurityCancelLostAcknowledgementPartialStopsAndRestart(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "cancel-loss")
 	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false, row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "box", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at}))))

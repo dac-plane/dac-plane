@@ -15,6 +15,7 @@ import (
 )
 
 func TestRecoveryDecisionErrorsRespectFences(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"transport", "unknown", "malformed"} {
 		for _, fence := range []string{"outbox_expiry", "attempt_expiry", "outbox_takeover", "attempt_takeover"} {
 			t.Run(outcome+"/"+fence, func(t *testing.T) {
@@ -70,6 +71,7 @@ func TestRecoveryDecisionErrorsRespectFences(t *testing.T) {
 }
 
 func TestRecoveryDecisionQualificationBeforeSend(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"shadow", "off"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -108,6 +110,7 @@ func TestRecoveryDecisionQualificationBeforeSend(t *testing.T) {
 }
 
 func TestRecoveryDecisionDemotionBeforeSettlement(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"accepted", "rejected", "transport", "malformed"} {
 		for _, mode := range []string{"shadow", "off"} {
 			t.Run(outcome+"/"+mode, func(t *testing.T) {
@@ -155,6 +158,7 @@ func TestRecoveryDecisionDemotionBeforeSettlement(t *testing.T) {
 }
 
 func TestRecoveryLostDecisionFenceKeepsBatchMoving(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"accepted", "transport", "malformed"} {
 		for _, fence := range []string{"outbox_expiry", "attempt_expiry", "outbox_takeover", "attempt_takeover", "late_attempt_expiry"} {
 			if fence == "late_attempt_expiry" && outcome != "accepted" {

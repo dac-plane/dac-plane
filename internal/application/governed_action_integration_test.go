@@ -106,6 +106,7 @@ func (g *governedFixture) next(t *testing.T) application.GovernedActionRequest {
 }
 
 func TestGovernedActionOnceReceiptAndReplay(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	v := g.enforce(t, e, g.cmd)
@@ -155,6 +156,7 @@ func TestGovernedActionOnceReceiptAndReplay(t *testing.T) {
 }
 
 func TestGovernedActionPostHookIsDurableAndSafe(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	response := contracts.HookResponse{Kind: contracts.HookPostAction, UserMessage: "private-user-marker", AgentMessage: "private-agent-marker", AdditionalContext: []string{"private-context-marker"}, Usage: []contracts.UsageMeter{{Unit: "tokens", Amount: 7}}}
 	preResponse := simulator.AllowHook()
@@ -190,6 +192,7 @@ func TestGovernedActionPostHookIsDurableAndSafe(t *testing.T) {
 }
 
 func TestGovernedActionLostPostHookReplyRecoversWithoutRepeatingAction(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: contracts.HookResponse{Kind: contracts.HookPostAction, AgentMessage: "recorded"}, SendError: errors.New("reply lost")}})
 	g.enforce(t, e, g.cmd)
@@ -214,6 +217,7 @@ func TestGovernedActionLostPostHookReplyRecoversWithoutRepeatingAction(t *testin
 }
 
 func TestGovernedActionMalformedPostHookReplyDoesNotAdmitEvidence(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: contracts.HookResponse{Kind: contracts.HookPostAction}}})
 	g.enforce(t, e, g.cmd)
@@ -235,6 +239,7 @@ func TestGovernedActionMalformedPostHookReplyDoesNotAdmitEvidence(t *testing.T) 
 }
 
 func TestGovernedActionStaleHookClaimCannotCommitEvidence(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcementWithHooks(t, simulator.AllowHook(), map[simulator.HookStageKey]simulator.EnforcementOp{{Operation: g.cmd.Request.Operation, Kind: contracts.HookPostAction}: {Response: contracts.HookResponse{Kind: contracts.HookPostAction}}})
 	g.enforce(t, e, g.cmd)
@@ -266,6 +271,7 @@ func TestGovernedActionStaleHookClaimCannotCommitEvidence(t *testing.T) {
 }
 
 func TestGovernedActionFailureHookUsesTypedFailureStage(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	cmd := g.cmd
 	pre := *cmd.Precondition
@@ -290,6 +296,7 @@ func TestGovernedActionFailureHookUsesTypedFailureStage(t *testing.T) {
 }
 
 func TestGovernedActionHookDenialNoExecutableOperation(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"deny", "missing", "transport", "malformed", "timeout", "rewrite_target"} {
 		t.Run(mode, func(t *testing.T) {
 			g := newGovernedFixture(t, false)
@@ -338,6 +345,7 @@ func (p hookPort) Send(ctx context.Context, r contracts.Request) (contracts.Repl
 }
 
 func TestGovernedActionStandingRewriteRevokeAndStaleToken(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	response := simulator.AllowHook()
 	response.UpdatedInput = json.RawMessage(`{"resource":"screen","value":"rewritten"}`)
@@ -379,6 +387,7 @@ func TestGovernedActionStandingRewriteRevokeAndStaleToken(t *testing.T) {
 }
 
 func TestGovernedActionAuthorityDenials(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"no_grant", "wrong_operation", "input_mismatch", "stale_generation", "above_ceiling", "expired"} {
 		t.Run(kind, func(t *testing.T) {
 			standing := kind == "stale_generation" || kind == "above_ceiling"
@@ -438,6 +447,7 @@ func TestGovernedActionAuthorityDenials(t *testing.T) {
 }
 
 func TestGovernedActionConcurrentReplay(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	var wg sync.WaitGroup
@@ -465,6 +475,7 @@ func TestGovernedActionConcurrentReplay(t *testing.T) {
 }
 
 func TestGovernedActionLostReplyNeverRepeatsEffect(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), errors.New("reply lost"))
 	g.enforce(t, e, g.cmd)
@@ -492,6 +503,7 @@ func TestGovernedActionLostReplyNeverRepeatsEffect(t *testing.T) {
 }
 
 func TestGovernedActionRechecksQueuedAuthority(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"revoked", "attempt_failed"} {
 		t.Run(kind, func(t *testing.T) {
 			g := newGovernedFixture(t, true)
@@ -516,6 +528,7 @@ func TestGovernedActionRechecksQueuedAuthority(t *testing.T) {
 }
 
 func TestGovernedActionSerialResourceAndEffectBoundary(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"busy", "state_changed"} {
 		t.Run(kind, func(t *testing.T) {
 			g := newGovernedFixture(t, true)
@@ -562,6 +575,7 @@ func TestGovernedActionSerialResourceAndEffectBoundary(t *testing.T) {
 }
 
 func TestGovernedActionRejectsRuntimeOperationCollision(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	cmd := g.cmd
 	cmd.Request.Operation = g.s.Operation.ID
@@ -579,6 +593,7 @@ func TestGovernedActionRejectsRuntimeOperationCollision(t *testing.T) {
 }
 
 func TestGovernedActionCrashMarkerNeverResends(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	g.enforce(t, e, g.cmd)
@@ -639,6 +654,7 @@ func TestGovernedActionCrashMarkerNeverResends(t *testing.T) {
 }
 
 func TestGovernedActionOneTimeGrantRacesDifferentOperations(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	other := g.next(t)
 	e := g.enforcement(t, simulator.AllowHook(), nil, g.cmd, other)
@@ -671,6 +687,7 @@ func TestGovernedActionOneTimeGrantRacesDifferentOperations(t *testing.T) {
 }
 
 func TestGovernedActionCannotReportRuntimeLifecycle(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	g.enforce(t, e, g.cmd)
@@ -684,6 +701,7 @@ func TestGovernedActionCannotReportRuntimeLifecycle(t *testing.T) {
 }
 
 func TestGovernedActionScopedNeverBlocksIssuance(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	f.seed(t, func(u *store.UnitOfWork) error {
 		_, err := store.UpdatePolicyGeneration(f.ctx, u, store.PolicyUpdate{Tenant: f.tenant, ExpectedGeneration: 1, NextGeneration: 1, Settings: map[identity.ActionClass]identity.Permission{"resource.mutate": identity.PermissionAlways}, Ceiling: map[identity.ActionClass]identity.Permission{"resource.mutate": identity.PermissionAlways}, Denies: []identity.DenyPolicy{{Action: "resource.mutate", Target: "screen"}}, At: f.at})
@@ -704,6 +722,7 @@ func TestGovernedActionScopedNeverBlocksIssuance(t *testing.T) {
 }
 
 func TestGovernedActionDigestsExactInputBytes(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	g.cmd.Input = json.RawMessage("{\n  \"resource\": \"screen\", \"value\": 1\n}")
 	g.cmd.Request.InputDigest = identity.DigestOf(g.cmd.Input)

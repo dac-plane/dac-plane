@@ -17,6 +17,7 @@ import (
 )
 
 func TestRecoveryStaleSendSettlementWritesNothing(t *testing.T) {
+	t.Parallel()
 	for _, fence := range []string{"outbox", "attempt", "expiry"} {
 		t.Run(fence, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -56,6 +57,7 @@ func TestRecoveryStaleSendSettlementWritesNothing(t *testing.T) {
 }
 
 func TestRecoveryStaleDecisionAcknowledgementWritesNothing(t *testing.T) {
+	t.Parallel()
 	for _, fence := range []string{"outbox", "attempt", "expiry"} {
 		t.Run(fence, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -99,6 +101,7 @@ func TestRecoveryStaleDecisionAcknowledgementWritesNothing(t *testing.T) {
 }
 
 func TestRecoveryShadowGovernedReceiptPreservesPrimary(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, false)
 	e := g.enforcement(t, simulator.AllowHook(), errors.New("lost receipt"))
 	g.enforce(t, e, g.cmd)
@@ -123,6 +126,7 @@ func TestRecoveryShadowGovernedReceiptPreservesPrimary(t *testing.T) {
 }
 
 func TestRecoveryPendingAndMalformedRepliesRemainUncertain(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"pending", "malformed", "wrong_delivery"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
@@ -156,6 +160,7 @@ func TestRecoveryPendingAndMalformedRepliesRemainUncertain(t *testing.T) {
 }
 
 func TestRecoveryCrashBoundariesPreserveUncertainty(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"unclaimed", "marked_before_effect", "after_effect"} {
 		t.Run(boundary, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)

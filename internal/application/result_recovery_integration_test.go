@@ -27,6 +27,7 @@ import (
 )
 
 func TestResultProposalConcurrentStreamsJoinOnce(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	proposed := g.event(g.rt, g.s, 1, simulator.RowsFrame(false, row(1, contracts.EntryResultProposed, g.proposal)))
 	proposed.Stream = "proposal"
@@ -59,6 +60,7 @@ func TestResultProposalConcurrentStreamsJoinOnce(t *testing.T) {
 }
 
 func TestResultProposalRejectsForgedChangedAndLateEvidence(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	e := g.event(g.rt, g.s, 1, simulator.RowsFrame(false, row(2, contracts.EntryResultProposed, g.proposal)))
 	wrong := g.peer()
@@ -95,6 +97,7 @@ func TestResultProposalRejectsForgedChangedAndLateEvidence(t *testing.T) {
 }
 
 func TestArtifactPartialAdmissionCannotFinalize(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	test := g.proposal.Artifacts[0]
 	test.NativeRef = "tests"
@@ -147,6 +150,7 @@ func (p *mutateArtifactPort) Send(ctx context.Context, r contracts.Request) (con
 	return reply, err
 }
 func TestArtifactCommitRechecksBytesAndExactManifest(t *testing.T) {
+	t.Parallel()
 	for _, rewrite := range []bool{false, true} {
 		t.Run(map[bool]string{false: "mutated_bytes", true: "mismatched_receipt"}[rewrite], func(t *testing.T) {
 			g := newResultFixture(t)
@@ -163,6 +167,7 @@ func TestArtifactCommitRechecksBytesAndExactManifest(t *testing.T) {
 }
 
 func TestArtifactCurrentWriterRejectsStaleAndFutureFences(t *testing.T) {
+	t.Parallel()
 	for _, epoch := range []uint64{0, 2} {
 		t.Run(map[uint64]string{0: "future", 2: "stale"}[epoch], func(t *testing.T) {
 			g := newResultFixture(t)
@@ -181,6 +186,7 @@ func TestArtifactCurrentWriterRejectsStaleAndFutureFences(t *testing.T) {
 }
 
 func TestArtifactShadowAndCancellationBeforeAdmission(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"shadow", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			g := newResultFixture(t)
@@ -227,6 +233,7 @@ func (g *resultFixture) work(t *testing.T) store.ArtifactWork {
 }
 
 func TestArtifactCrashAfterStoreCommitFencesOldWorker(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	work := g.work(t)
@@ -262,6 +269,7 @@ func TestArtifactCrashAfterStoreCommitFencesOldWorker(t *testing.T) {
 }
 
 func TestResultRuntimeFailureAndReconciliationPreservePhase(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	g.ingestNow(t, g.event(g.rt, g.s, 1, simulator.RowsFrame(false, row(4, contracts.EntryOperationOutcome, contracts.OperationOutcome{State: lifecycle.OperationSucceeded}))))
@@ -274,6 +282,7 @@ func TestResultRuntimeFailureAndReconciliationPreservePhase(t *testing.T) {
 }
 
 func TestReviewConcurrentDispositionsOnlyOneWins(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	r := g.finalize(t)
@@ -303,6 +312,7 @@ func TestReviewConcurrentDispositionsOnlyOneWins(t *testing.T) {
 }
 
 func TestArtifactMigrationPreservesEvidenceAndRefusesDowngrade(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	g.finalize(t)
@@ -330,6 +340,7 @@ func TestArtifactMigrationPreservesEvidenceAndRefusesDowngrade(t *testing.T) {
 }
 
 func TestReviewSpendGovernedReworkAwaitsExactReceipt(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	r := g.finalize(t)
@@ -366,6 +377,7 @@ func TestReviewSpendGovernedReworkAwaitsExactReceipt(t *testing.T) {
 }
 
 func TestResultRuntimeReconciliationRestoresFinalizing(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	// Drive only the crash's uncertainty marker; the proposal and final result
@@ -429,6 +441,7 @@ func (p delayedArtifactPort) Send(ctx context.Context, r contracts.Request) (con
 }
 
 func TestArtifactRenewsLeaseAcrossSlowStages(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	cfg := worker.DefaultConfig()
@@ -450,6 +463,7 @@ func TestArtifactRenewsLeaseAcrossSlowStages(t *testing.T) {
 }
 
 func TestArtifactDemotionOrCancelWhileCommitInFlightPreventsAdmission(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"shadow", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			g := newResultFixture(t)
@@ -490,6 +504,7 @@ func TestArtifactDemotionOrCancelWhileCommitInFlightPreventsAdmission(t *testing
 }
 
 func TestArtifactExpiryDuringFinalBudgetLockRollsBackAdmission(t *testing.T) {
+	t.Parallel()
 	g := newResultFixture(t)
 	g.propose(t, true)
 	work := g.work(t)

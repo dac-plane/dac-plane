@@ -211,6 +211,7 @@ func requireRefusal(t *testing.T, err error, code lifecycle.RejectionCode) {
 }
 
 func TestSubmitTaskDispatchesTurnThroughSelectedHarness(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("n-1"))
 	switch {
@@ -247,6 +248,7 @@ func TestSubmitTaskDispatchesTurnThroughSelectedHarness(t *testing.T) {
 }
 
 func TestSubmitTaskReplayReturnsOriginalSubmission(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	first := f.submit(t, f.submitCommand("n-1"))
 	replay := f.submit(t, f.submitCommand("n-1"))
@@ -266,6 +268,7 @@ func TestSubmitTaskReplayReturnsOriginalSubmission(t *testing.T) {
 }
 
 func TestSubmitTaskLateRetryReturnsOriginalSubmission(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	original := f.submit(t, f.submitCommand("n-1"))
 	for _, at := range []time.Time{original.Deadline, original.Deadline.Add(time.Hour)} {
@@ -287,6 +290,7 @@ func TestSubmitTaskLateRetryReturnsOriginalSubmission(t *testing.T) {
 }
 
 func TestSubmitTaskConcurrentDuplicatesConverge(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	const racers = 4
 	results := make([]application.Submission, racers)
@@ -316,6 +320,7 @@ func TestSubmitTaskConcurrentDuplicatesConverge(t *testing.T) {
 }
 
 func TestSubmitTaskChangedPayloadRejected(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	original := f.submit(t, f.submitCommand("n-1"))
 	changed := f.submitCommand("n-1")
@@ -330,6 +335,7 @@ func TestSubmitTaskChangedPayloadRejected(t *testing.T) {
 }
 
 func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
+	t.Parallel()
 	f := newFixtureAtVersion(t, lifecycle.HarnessLive, 13)
 	command := f.submitCommand("brief-schema-13")
 	submission := f.submit(t, command)
@@ -414,6 +420,7 @@ func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
 }
 
 func TestSubmitTaskRejectsInvalidCommands(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	for name, mutate := range map[string]func(c *application.SubmitTask){
 		"zero actor":       func(c *application.SubmitTask) { c.Actor = identity.AuthorizationContext{} },
@@ -459,6 +466,7 @@ func TestSubmitTaskRejectsInvalidCommands(t *testing.T) {
 }
 
 func TestSubmitTaskCeilingRefusalDoesNotDispatch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	cmd := f.submitCommand("n-over")
 	cmd.Amount = cmd.Ceiling + 1
@@ -475,6 +483,7 @@ func TestSubmitTaskCeilingRefusalDoesNotDispatch(t *testing.T) {
 }
 
 func TestSubmitTaskPersistsCorrelationIdentities(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("n-1"))
 	if s.Operation.Attempt != s.Attempt.ID || s.Operation.Provider != f.provider || s.Attempt.Task != s.Task.ID ||
@@ -488,6 +497,7 @@ func TestSubmitTaskPersistsCorrelationIdentities(t *testing.T) {
 }
 
 func TestDispatchShadowHarnessWithholdsSend(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessShadow)
 	s := f.submit(t, f.submitCommand("n-1"))
 	if s.Mode != lifecycle.HarnessShadow {
@@ -505,6 +515,7 @@ func TestDispatchShadowHarnessWithholdsSend(t *testing.T) {
 }
 
 func TestDispatchHarnessDemotionExhausts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("n-1"))
 	f.seed(t, func(uow *store.UnitOfWork) error {
@@ -557,6 +568,7 @@ func (f *fixture) assertCommand(nonce string, s application.Submission, assertio
 }
 
 func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-gov")
 	rt := f.runtime(t, s.Operation.ID)
@@ -604,6 +616,7 @@ func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
 }
 
 func TestSubmitSpendGovernedRejectsMismatchedAssertion(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-gov")
 	spender := &simulator.Spender{Tenant: f.tenant, Principal: f.principal, Drift: true}
@@ -620,6 +633,7 @@ func TestSubmitSpendGovernedRejectsMismatchedAssertion(t *testing.T) {
 }
 
 func TestSubmitSpendGovernedRejectsExpiredAssertion(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-gov")
 	spender := &simulator.Spender{Tenant: f.tenant, Principal: f.principal, Expired: true}
@@ -635,6 +649,7 @@ func TestSubmitSpendGovernedRejectsExpiredAssertion(t *testing.T) {
 }
 
 func TestSubmitSpendAssertsRejectStaleVersion(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-gov")
 	spender := &simulator.Spender{Tenant: f.tenant, Principal: f.principal}
@@ -664,6 +679,7 @@ func TestSubmitSpendAssertsRejectStaleVersion(t *testing.T) {
 // refused multi-write command rolls back entirely, yet its refusal audit
 // survives, and nothing else from the command does.
 func TestRefusalEvidencePersistsAfterRollback(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	count := func(table, where string) int {
 		t.Helper()
@@ -710,6 +726,7 @@ func TestRefusalEvidencePersistsAfterRollback(t *testing.T) {
 // here to prove the boundary still requires a held reservation, not only a
 // receipt, before it enqueues a governed dispatch.
 func TestReceiptWithoutHeldReservationIsRefused(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "n-gov")
 	f.seed(t, func(uow *store.UnitOfWork) error {

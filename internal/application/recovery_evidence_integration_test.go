@@ -20,6 +20,7 @@ import (
 )
 
 func TestRecoveryArtifactRetryAndFencedAdmission(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []lifecycle.ArtifactCommitOutcome{lifecycle.CommitRetry, lifecycle.CommitFenced} {
 		t.Run(string(outcome), func(t *testing.T) {
 			g := newResultFixture(t)
@@ -75,6 +76,7 @@ func TestRecoveryArtifactRetryAndFencedAdmission(t *testing.T) {
 }
 
 func TestRecoveryQueuedPolicyGenerationBlocksAfterRestart(t *testing.T) {
+	t.Parallel()
 	g := newGovernedFixture(t, true)
 	e := g.enforcement(t, simulator.AllowHook(), nil)
 	g.enforce(t, e, g.cmd)
@@ -98,6 +100,7 @@ func TestRecoveryQueuedPolicyGenerationBlocksAfterRestart(t *testing.T) {
 }
 
 func TestRecoveryCancelAndReviewCommandPayloadConflicts(t *testing.T) {
+	t.Parallel()
 	t.Run("cancel", func(t *testing.T) {
 		f := newFixture(t, lifecycle.HarnessLive)
 		s := f.governed(t, "queued")

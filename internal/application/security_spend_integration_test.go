@@ -17,6 +17,7 @@ import (
 )
 
 func TestSecuritySpendCancellationWinsBeforeAssertionScopeLock(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "security-cancel-assert")
 	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at)
@@ -93,6 +94,7 @@ func TestSecuritySpendCancellationWinsBeforeAssertionScopeLock(t *testing.T) {
 }
 
 func TestSecuritySpendConcurrentProofHasOneWinningCommand(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "security-concurrent")
 	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at)
@@ -128,6 +130,7 @@ func TestSecuritySpendConcurrentProofHasOneWinningCommand(t *testing.T) {
 }
 
 func TestSecuritySpendExpiryRecheckedAfterChallengeLock(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "security-lock")
 	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at)
@@ -176,6 +179,7 @@ func TestSecuritySpendExpiryRecheckedAfterChallengeLock(t *testing.T) {
 }
 
 func TestSecuritySpendTermsCannotBeSubstituted(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "security-terms")
 	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at)
@@ -204,6 +208,7 @@ func TestSecuritySpendTermsCannotBeSubstituted(t *testing.T) {
 }
 
 func TestSecuritySpendBackdatedAssertionCannotExtendExpiry(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "security-expired")
 	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at.Add(time.Second))
@@ -231,6 +236,7 @@ func TestSecuritySpendBackdatedAssertionCannotExtendExpiry(t *testing.T) {
 }
 
 func TestSecuritySpendProofCannotReplayThroughAnotherCommand(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.governed(t, "security-replay")
 	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at.Add(time.Second))
