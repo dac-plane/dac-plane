@@ -70,7 +70,7 @@ vet:
 # integration tag, so they need their own vet pass.
 [group('check')]
 vet-integration:
-    go vet -tags='integration stack operationstest' ./...
+    go vet -tags='integration stack operationstest codexqualification' ./...
 
 # Keep simulator and conformance implementations out of the release process.
 [group('check')]
@@ -164,6 +164,31 @@ qualify-codex-runtime: stack-certs
     source .work/stack/compose.env
     set +a
     go test -count=1 -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/
+
+# Run the secret-backed joint qualification: DAC cancels a live Codex turn with
+# the E2B adapter bound to the attempt. E2B is the only environment connection.
+[doc('Qualify task cancellation across Codex and E2B Cloud (needs Docker, DAC_CODEX_API_KEY_FILE and DAC_E2B_API_KEY_FILE; incurs usage)')]
+[group('test')]
+qualify-task-cancellation: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    if [[ -z "${DAC_E2B_API_KEY_FILE:-}" || ! -s "$DAC_E2B_API_KEY_FILE" ]]; then echo "DAC_E2B_API_KEY_FILE must name a non-empty E2B credential file" >&2; exit 2; fi
+    mkdir -p .work/cancellation-qualification
+    export DAC_QUALIFICATION_PROJECT=dac-cancellation-qualification
+    compose=(docker compose -p "$DAC_QUALIFICATION_PROJECT" --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >.work/cancellation-qualification/compose.log 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" "$DAC_E2B_API_KEY_FILE"; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" .work/cancellation-qualification/compose.log; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; done; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/cancellation-qualification/codex-version.txt
+    for image in dac-codex-adapter:qualification dac-e2b-adapter:qualification; do docker image inspect "$image" | jq -r '.[0].Id'; done | tee .work/cancellation-qualification/image-ids.txt
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -v -timeout=45m -tags=codexqualification -run "${DAC_CANCELLATION_QUALIFICATION_TEST:-TestTaskCancellationQualification}" ./internal/codexqualification/ 2>&1 | tee .work/cancellation-qualification/test.txt
 
 # The conformance suite runs the simulator adapter as a separate OS process,
 # the way a real provider adapter runs outside the control plane.
