@@ -3,12 +3,15 @@
 package e2badapter
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -35,6 +38,7 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	storeClosed := false
 	t.Cleanup(func() { _ = store.Close() })
 	adapter, err := New(Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, Journal: store})
 	if err != nil {
@@ -158,6 +162,32 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	storeClosed = true
+	t.Cleanup(func() {
+		if !storeClosed {
+			return
+		}
+		recovered, err := journal.Open(statePath)
+		if err != nil {
+			t.Errorf("cleanup could not reopen adapter journal: %v", err)
+			return
+		}
+		recoveredAdapter, err := New(Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, Journal: recovered})
+		if err != nil {
+			_ = recovered.Close()
+			t.Errorf("cleanup could not restore adapter: %v", err)
+			return
+		}
+		store, adapter, storeClosed = recovered, recoveredAdapter, false
+	})
+	args, _ := json.Marshal(migrationRequest{Migration: migration, Operation: operations[0], Source: source, Target: targets[0], Stage: "target_environment_ready", Epoch: 1, Recovery: "restart_from_artifacts"})
+	replayRequest := wire.Request{Operation: operations[0], Delivery: newQualificationID(), Tenant: tenant, Attempt: targets[0], Role: wire.RoleEnvironment, Method: "provision", Arguments: args, Demand: "background"}
+	if err := killAdapterAfterReplay(ctx, statePath, base, key, template, provider, replayRequest, refs[0]); err != nil {
+		t.Fatalf("kill adapter after replay: %v", err)
+	}
+	if err := verifyAdapterReplayAfterRestart(ctx, statePath, base, key, template, provider, replayRequest, refs[0]); err != nil {
+		t.Fatalf("reconcile after adapter process restart: %v", err)
+	}
 	store, err = journal.Open(statePath)
 	if err != nil {
 		t.Fatal(err)
@@ -166,18 +196,7 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args, _ := json.Marshal(migrationRequest{Migration: migration, Operation: operations[0], Source: source, Target: targets[0], Stage: "target_environment_ready", Epoch: 1, Recovery: "restart_from_artifacts"})
-	replay, err := adapter.Send(ctx, wire.Request{Operation: operations[0], Delivery: newQualificationID(), Tenant: tenant, Attempt: targets[0], Role: wire.RoleEnvironment, Method: "provision", Arguments: args, Demand: "background"})
-	if err != nil || replay.Outcome != wire.OutcomeOK {
-		t.Fatalf("reconcile after adapter restart failed: outcome=%q err=%v", replay.Outcome, err)
-	}
-	var restored migrationReceipt
-	if err := json.Unmarshal(replay.Result, &restored); err != nil {
-		t.Fatal(err)
-	}
-	if restored.EnvRef != refs[0] {
-		t.Fatal("restart changed the persisted sandbox mapping")
-	}
+	storeClosed = false
 	for i, ref := range refs {
 		operation := newQualificationID()
 		stageTarget := ""
@@ -206,7 +225,134 @@ func TestE2BCloudLiveProvider(t *testing.T) {
 			t.Fatalf("cleaned sandbox %d state=%q err=%v", i+1, state.State, err)
 		}
 	}
-	t.Log("observation, journal reopen replay, stop, absence, and cleanup checks passed")
+	t.Log("observation, killed adapter process restart, replay, stop, absence, and cleanup checks passed")
+}
+
+func TestE2BCloudAdapterRestartHelper(t *testing.T) {
+	mode := os.Getenv("DAC_E2B_RESTART_HELPER")
+	if mode == "" {
+		t.Skip("subprocess helper")
+	}
+	var req wire.Request
+	encoded := os.Getenv("DAC_E2B_RESTART_REQUEST")
+	decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+	if err != nil || json.Unmarshal(decoded, &req) != nil {
+		t.Fatal("restart helper request is invalid")
+	}
+	state, err := journal.Open(os.Getenv("DAC_E2B_STATE"))
+	if err != nil {
+		t.Fatal("restart helper could not open journal")
+	}
+	defer state.Close()
+	adapter, err := New(Config{BaseURL: os.Getenv("DAC_E2B_BASE_URL"), APIKey: os.Getenv("DAC_E2B_API_KEY"), TemplateID: os.Getenv("DAC_E2B_TEMPLATE_ID"), ProviderID: os.Getenv("DAC_PROVIDER_ID"), Journal: state})
+	if err != nil {
+		t.Fatal("restart helper could not start adapter")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	reply, err := adapter.Send(ctx, req)
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatal("restart helper could not replay provision")
+	}
+	var receipt migrationReceipt
+	if json.Unmarshal(reply.Result, &receipt) != nil || receipt.EnvRef != os.Getenv("DAC_E2B_EXPECTED_ENV_REF") {
+		t.Fatal("restart helper replay changed the sandbox mapping")
+	}
+	if mode == "kill-after-replay" {
+		_, _ = fmt.Fprintln(os.Stderr, "DAC_E2B_RESTART_REPLAY_READY")
+		select {}
+	}
+	if mode != "verify-replay" {
+		t.Fatal("restart helper mode is invalid")
+	}
+}
+
+func killAdapterAfterReplay(ctx context.Context, statePath, base, key, template, provider string, req wire.Request, expectedRef string) error {
+	cmd, stderr, err := adapterRestartCommand(statePath, base, key, template, provider, req, expectedRef, "kill-after-replay")
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return errors.New("adapter restart helper could not start")
+	}
+	ready := make(chan bool, 1)
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			if scanner.Text() == "DAC_E2B_RESTART_REPLAY_READY" {
+				ready <- true
+				return
+			}
+		}
+		ready <- false
+	}()
+	select {
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return errors.New("adapter restart helper timed out")
+	case ok := <-ready:
+		if !ok {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return errors.New("adapter restart helper exited before replay")
+		}
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		_ = cmd.Wait()
+		return errors.New("adapter restart helper could not be killed")
+	}
+	if err := cmd.Wait(); err == nil {
+		return errors.New("adapter restart helper exited without forced termination")
+	}
+	return nil
+}
+
+func verifyAdapterReplayAfterRestart(ctx context.Context, statePath, base, key, template, provider string, req wire.Request, expectedRef string) error {
+	cmd, _, err := adapterRestartCommand(statePath, base, key, template, provider, req, expectedRef, "verify-replay")
+	if err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		return errors.New("adapter restart verification could not start")
+	}
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-done
+		return errors.New("adapter restart verification timed out")
+	case err := <-done:
+		if err != nil {
+			return errors.New("adapter restart replay verification failed")
+		}
+		return nil
+	}
+}
+
+func adapterRestartCommand(statePath, base, key, template, provider string, req wire.Request, expectedRef, mode string) (*exec.Cmd, io.ReadCloser, error) {
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		return nil, nil, errors.New("adapter restart request could not be encoded")
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestE2BCloudAdapterRestartHelper$")
+	command.Env = []string{
+		"DAC_E2B_RESTART_HELPER=" + mode,
+		"DAC_E2B_RESTART_REQUEST=" + base64.RawStdEncoding.EncodeToString(encoded),
+		"DAC_E2B_EXPECTED_ENV_REF=" + expectedRef,
+		"DAC_E2B_STATE=" + statePath,
+		"DAC_E2B_BASE_URL=" + base,
+		"DAC_E2B_API_KEY=" + key,
+		"DAC_E2B_TEMPLATE_ID=" + template,
+		"DAC_PROVIDER_ID=" + provider,
+	}
+	command.Stdout = io.Discard
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		return nil, nil, errors.New("adapter restart helper stderr could not be captured")
+	}
+	return command, stderr, nil
 }
 
 func newQualificationID() string {
