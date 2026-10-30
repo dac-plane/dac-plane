@@ -348,6 +348,37 @@ func TestAdapterWireSendWithNoOpenConnectionIsNotDelivered(t *testing.T) {
 	}
 }
 
+// One request's cancellation ends that request, not the connection every other
+// request shares.
+func TestAdapterWireCancelledSendKeepsTheConnection(t *testing.T) {
+	f := setup(t, adapterwire.Options{})
+	a, _ := f.open(t, f.provider)
+	go func() {
+		for {
+			select {
+			case <-a.frames:
+			case <-f.ctx.Done():
+				return
+			}
+		}
+	}()
+	port := f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleRuntime)
+	for i := range 2000 {
+		ctx, cancel := context.WithCancel(f.ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = port.Send(ctx, f.request(t))
+		}()
+		time.Sleep(time.Duration(i%50) * time.Microsecond)
+		cancel()
+		<-done
+		if f.wire.Registry.Connections(f.tenant, f.provider, contracts.RoleRuntime) != 1 {
+			t.Fatalf("connection closed after cancelled send %d", i)
+		}
+	}
+}
+
 func TestAdapterWireDropsDuplicateAndUnmatchedReplies(t *testing.T) {
 	f := setup(t, adapterwire.Options{})
 	a, _ := f.open(t, f.provider)
