@@ -31,6 +31,6 @@ The 2026-10-30 observed run passed the two-sandbox, filesystem/process isolation
 
 ## Limits
 
-The 2026-10-30 live run predates the explicit sandbox lifetime. It ran for under 25 seconds, so E2B's 300-second default never took effect. The qualification now requests ten minutes and asserts the provider's reported `startedAt` to `endAt` span; that assertion has not yet run against E2B Cloud.
+The first 2026-10-30 live run predated the explicit sandbox lifetime. A later run the same day requested ten minutes and passed the assertion on the provider's reported `startedAt` to `endAt` span, locally on Node 22.19.0 in 26.99 seconds and in `e2b-qualification.yml`.
 
 This is a bounded qualification of the E2B Cloud account and managed API behavior observed during one run, not an immutable E2B backend build, E2B BYOC/Embed, multi-region availability, provider-wide availability, throughput, or cost guarantee. E2B Cloud usage may incur charges beyond available credits.

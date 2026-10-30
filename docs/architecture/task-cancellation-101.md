@@ -11,8 +11,8 @@ must land before the #96 pilot claims containment.
 ## Pins
 
 - Codex app-server `0.165.0`, model `deepseek-v4-flash-0731` through Camer.
-- Adapter images, Codex then E2B: `sha256:1ccfb40115a81d0551fc746568be9c86c67acf8a7ac09ba5afb6263dafd4d033`, `sha256:f4a32bcc8dfdc28957f45b857d51188f9f6e1d2a398e71eb6aaed9448a0f7d82`.
-- DAC revision `25454d8`. E2B Cloud template `base`, sandbox lifetime 15 minutes.
+- Adapter images, Codex then E2B: `sha256:7b4a885634b9645361f295b3eca92d0c5e75bd55107e444acccbe5222a18716e`, `sha256:e29eca3abfdb6c3667e81f2da0c2093a01ae9d90921cda622244e8f78588d8e4`.
+- DAC revision `6119812`. E2B Cloud template `base`, sandbox lifetime 15 minutes.
 
 ## Command
 
@@ -30,12 +30,21 @@ was running before cancelling. Each then required the task `cancelled`, the atte
 both stops, the reservation `released`, the command gone, E2B no longer reporting the sandbox as
 running, and exactly one applied stop of each kind.
 
-| Scenario | Result | Cancel to terminated |
-|---|---|---|
-| Active command | PASS, 58.02s including the restart check | 8.1s |
-| Environment adapter down, then back | PASS, 30.47s | 14.3s |
-| Control plane restarted with the stop pending | PASS, 35.02s | 18.8s |
-| Runtime adapter down, then back | PASS, 28.15s | 12.0s |
+Five full runs were made. Four passed all seven scenarios, in 251 to 271 seconds each. Run 1 failed as
+recorded below.
+
+| Scenario | How it is forced |
+|---|---|
+| Active command, then restart everything | Cancel during the command, restart all three processes afterwards |
+| Environment adapter down | Stop the adapter, cancel, start it |
+| Control plane restart | As above, with `dac-plane` restarted while the stop is pending |
+| Runtime adapter down | Stop the adapter, cancel, start it |
+| Interrupt lost | Pause the adapter, cancel, kill it with the frame unread, start it |
+| Start lost | Pause the adapter, submit until the start is uncertain, cancel, kill, start |
+| Stop lost | Pause the adapter, cancel until the stop is uncertain, kill, start |
+
+Scenarios converged in about 25 to 36 seconds from submission. The stop lost scenario took about 67
+seconds, because it waits out the 30-second send timeout and the reconcile interval.
 
 - **Order.** The runtime stop landed first in every run. In the two environment scenarios the task
   stayed `cancelling` and the sandbox stayed running until the adapter returned.
@@ -57,14 +66,25 @@ running, and exactly one applied stop of each kind.
    after convergence. `turn/interrupt` ends the turn, not its command. The adapter now calls
    `thread/backgroundTerminals/clean` first, which the pinned binary gates behind `experimentalApi`.
    That API is experimental and needs rechecking at every Codex pin change.
+4. The first stop lost run failed: the task stayed `cancelling` for the full five minutes. A frame that
+   dies unread is never journaled, so adapter retries could not finish it. The worker now replays it to
+   a provider that negotiated `operation.replay`.
+5. Run 1 of the five full runs failed and **its cause is unknown**. The active command scenario passed,
+   then the next scenario's command never appeared within the 38 minutes the wait had left. The wait had
+   no deadline and no check for an ended task, and the next run overwrote the logs. Both are fixed. The
+   three runs since passed, which shows nothing about what happened. A model that never issued the
+   command would look the same, and so would a stuck task.
 
 ## Limits
 
-- One passing run on one host. Nothing here is an availability, cost or production claim.
+- Four passes in five runs on one host, with one unexplained failure. Nothing here is an availability,
+  cost or production claim.
 - Only one command per thread was exercised, and only a plain `sleep` that holds no descriptors.
 - `thread/backgroundTerminals/clean` is reported complete by its RPC reply. The process list check, not
   the reply, is the evidence.
 - A command that outlives a turn which completed naturally is not cleaned unless a cancellation arrives.
-- The failure paths for a lost stop, a lost interrupt, an uncertain start and a rejected start are proved
-  by deterministic tests, not against the live providers.
+- A failed E2B `DELETE` is proved by deterministic tests only. The adapter allows plain HTTP only on
+  loopback, so a live fault proxy was not used.
+- The live fault scenarios kill the adapter, which also ends the Codex command. The repeat of an
+  interrupt to a live adapter holding a running turn is proved by deterministic tests.
 - Stale observations are proved by integration tests. Restarting a real adapter replays none.
