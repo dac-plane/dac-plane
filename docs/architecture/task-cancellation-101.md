@@ -11,8 +11,8 @@ must land before the #96 pilot claims containment.
 ## Pins
 
 - Codex app-server `0.165.0`, model `deepseek-v4-flash-0731` through Camer.
-- Adapter images, Codex then E2B: `sha256:7b4a885634b9645361f295b3eca92d0c5e75bd55107e444acccbe5222a18716e`, `sha256:e29eca3abfdb6c3667e81f2da0c2093a01ae9d90921cda622244e8f78588d8e4`.
-- DAC revision `6119812`. E2B Cloud template `base`, sandbox lifetime 15 minutes.
+- Adapter images, Codex then E2B: `sha256:f63aadeda68e56b861abdabad7d05218ae933a1f99ec8d1b5527099166af0684`, `sha256:c5d36087018463297b6575ef6648ccae7808e4e344ff5fb34b166cb44a77ab9e`.
+- DAC revision `dec7b56`. E2B Cloud template `base`, sandbox lifetime 15 minutes.
 
 ## Command
 
@@ -30,8 +30,8 @@ was running before cancelling. Each then required the task `cancelled`, the atte
 both stops, the reservation `released`, the command gone, E2B no longer reporting the sandbox as
 running, and exactly one applied stop of each kind.
 
-Five full runs were made. Four passed all seven scenarios, in 251 to 271 seconds each. Run 1 failed as
-recorded below.
+Eight full runs were made. Seven passed all seven scenarios, in 251 to 271 seconds each, including the
+last three on the pinned revision. Run 1 failed as recorded below.
 
 | Scenario | How it is forced |
 |---|---|
@@ -69,15 +69,15 @@ seconds, because it waits out the 30-second send timeout and the reconcile inter
 4. The first stop lost run failed: the task stayed `cancelling` for the full five minutes. A frame that
    dies unread is never journaled, so adapter retries could not finish it. The worker now replays it to
    a provider that negotiated `operation.replay`.
-5. Run 1 of the five full runs failed and **its cause is unknown**. The active command scenario passed,
+5. Run 1 of the eight full runs failed and **its cause is unknown**. The active command scenario passed,
    then the next scenario's command never appeared within the 38 minutes the wait had left. The wait had
    no deadline and no check for an ended task, and the next run overwrote the logs. Both are fixed. The
-   three runs since passed, which shows nothing about what happened. A model that never issued the
+   seven runs since passed, which shows nothing about what happened. A model that never issued the
    command would look the same, and so would a stuck task.
 
 ## Limits
 
-- Four passes in five runs on one host, with one unexplained failure. Nothing here is an availability,
+- Seven passes in eight runs on one host, with one unexplained failure. Nothing here is an availability,
   cost or production claim.
 - Only one command per thread was exercised, and only a plain `sleep` that holds no descriptors.
 - `thread/backgroundTerminals/clean` is reported complete by its RPC reply. The process list check, not
