@@ -497,7 +497,8 @@ func TestEventTurnEndAfterCancelIsRuntimeStop(t *testing.T) {
 }
 
 // A turn that ended before the cancellation reported its end while no stop was
-// awaited, so the cancellation itself must count it and send no interrupt.
+// awaited, so the cancellation itself must count it. The interrupt still goes
+// out, because the record may lag a turn the runtime has started since.
 func TestCancelUsesPreviouslyEndedTurn(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
@@ -507,15 +508,41 @@ func TestCancelUsesPreviouslyEndedTurn(t *testing.T) {
 		t.Fatalf("turn end = %+v, want applied", got)
 	}
 	f.cancel(t, s, "c-1")
-	if n := f.count(t, "outbox", "record_id = $2", s.Attempt.ID.String()); n != 0 {
-		t.Fatalf("interrupt rows = %d, want none for an ended turn", n)
-	}
 	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
 		t.Fatalf("states = %s/%s, want still cancelling", task, attempt)
 	}
 	f.observeEnvironmentStop(t, s, 2)
 	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
 		t.Fatalf("states = %s/%s, want cancelled/terminated", task, attempt)
+	}
+}
+
+// A turn awaiting input has not ended the runtime's work, so it proves no stop,
+// whether it arrives after the cancellation or was recorded before it.
+func TestAwaitingInputTurnIsNoRuntimeStop(t *testing.T) {
+	t.Parallel()
+	for name, cancelFirst := range map[string]bool{"after_cancel": true, "before_cancel": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, lifecycle.HarnessLive)
+			s, rt := f.executing(t, "n-1")
+			awaiting := f.event(rt, s, 1, simulator.RowsFrame(false,
+				row(2, contracts.EntryTurnFinished, contracts.TurnFinished{SessionRef: "s-1", TurnRef: "t-1", Outcome: lifecycle.TurnAwaitingInput, EndedAt: f.at})))
+			if cancelFirst {
+				f.cancel(t, s, "c-1")
+			}
+			f.ingestNow(t, awaiting)
+			if !cancelFirst {
+				f.cancel(t, s, "c-1")
+			}
+			attempt, err := store.GetAttempt(f.ctx, f.pool, f.tenant, s.Attempt.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempt.RuntimeStopped {
+				t.Fatal("a turn awaiting input was accepted as the runtime stop")
+			}
+		})
 	}
 }
 

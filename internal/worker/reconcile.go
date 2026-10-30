@@ -50,11 +50,14 @@ func (w *Worker) Reconcile(ctx context.Context) error {
 // rather than an effect, so repeating it is safe; a failed repeat waits for the
 // next pass.
 func (w *Worker) repeatInterrupts(ctx context.Context, tenant ids.TenantID) error {
-	operations, err := store.InterruptedOperations(ctx, w.pool, tenant)
+	operations, err := store.InterruptedOperations(ctx, w.pool, tenant, w.cfg.BatchLimit)
 	if err != nil {
 		return err
 	}
 	for _, operation := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		port := w.port(tenant, operation.Provider, contracts.RoleRuntime)
 		if port == nil {
 			w.stats.SkippedNoPort.Add(1)

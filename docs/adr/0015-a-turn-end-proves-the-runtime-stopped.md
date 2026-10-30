@@ -22,16 +22,20 @@ provider's failure to act on it reaches nobody. An adapter restart could lose it
 
 The two-party stop stands: an Attempt terminates only after both stops are observed.
 
-Any recorded end of every turn bound to the Attempt is runtime stop evidence, whatever the outcome. A
-turn that ends while the Attempt awaits its stops applies the runtime stop. A cancellation that finds
-every bound turn already ended applies the runtime stop itself and sends no interrupt.
+A terminal end of every turn bound to the Attempt is runtime stop evidence: `completed`, `failed` or
+`interrupted`. A turn `awaiting_input` has not ended the runtime's work and proves nothing. A terminal
+turn end while the Attempt awaits its stops applies the runtime stop. A cancellation that finds every
+bound turn already terminal applies the runtime stop itself and still sends the interrupt, because the
+record may lag a turn the runtime has started since.
 
 A failed turn during cancellation therefore ends the Task as `cancelled`. The cancellation came first,
 and the turn's failure stays recorded on its turn end. A result proposed during cancellation is refused
 as before and never activates.
 
 The worker repeats the interrupt for an Attempt still awaiting its runtime stop, because an interrupt
-changes nothing once the work has ended and may be delivered again. This does not change the rule that
+changes nothing once the work has ended and may be delivered again. Repeats are paced by the reconcile
+interval, capped per pass by the batch limit, and end at the interrupt's own deadline. This does not
+change the rule that
 reconciliation never dispatches an uncertain effect again: an interrupt is a request to stop, not an
 effect.
 

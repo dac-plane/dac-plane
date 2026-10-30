@@ -426,9 +426,10 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 	if err != nil {
 		return 0, err
 	}
-	if current.State == lifecycle.AttemptCancellationRequested {
-		// A turn end reports the runtime's own end of work, however it ended:
-		// the stop observation of an attempt already awaiting its stops.
+	if current.State == lifecycle.AttemptCancellationRequested && payload.Outcome != lifecycle.TurnAwaitingInput {
+		// A terminal turn reports the runtime's own end of work, however it
+		// ended: the stop observation of an attempt already awaiting its stops.
+		// A turn awaiting input has not ended the runtime's work.
 		return a.applyStop(ctx, entry, lifecycle.AttemptRuntimeStopped)
 	}
 	if payload.Outcome == lifecycle.TurnInterrupted {

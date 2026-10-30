@@ -179,15 +179,20 @@ func OutboxReadyDispatch(ctx context.Context, q Querier, tenant ids.TenantID, no
 
 // InterruptedOperations lists the operations whose delivered interrupt has not
 // produced a runtime stop. Delivery only proves a frame was written, so these
-// Attempts still wait on a request the provider may never have acted on.
-func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.ProviderOperation, error) {
+// Attempts still wait on a request the provider may never have acted on. Each
+// interrupt's own deadline ends its repetition, and limit bounds one pass.
+func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID, limit int) ([]lifecycle.ProviderOperation, error) {
 	rows, err := q.Query(ctx, `
-		select x.payload->>'operation' from outbox x
+		select o.operation_id::text from outbox x
 		join attempt a on a.tenant_id = x.tenant_id and a.attempt_id = x.attempt_id
-		where x.tenant_id = $1 and x.status = 'done' and x.payload->>'method' = 'interrupt'
+		join provider_operation o on o.tenant_id = x.tenant_id and o.attempt_id = x.attempt_id and o.operation_id::text = x.payload->>'operation'
+		where x.tenant_id = $1 and x.status = 'done'
+		and x.payload->>'role' = 'runtime' and x.payload->>'method' = 'interrupt'
+		and (x.payload->>'deadline')::timestamptz > clock_timestamp()
 		and a.state = 'cancellation_requested' and not a.runtime_stopped
-		order by x.updated_at`,
-		tenant.String(),
+		and not exists (select 1 from migration_item m where m.tenant_id = o.tenant_id and o.operation_id in (m.quiesce_operation_id, m.environment_operation_id, m.restart_operation_id, m.cleanup_operation_id, m.target_cleanup_operation_id))
+		order by x.updated_at limit $2`,
+		tenant.String(), limit,
 	)
 	if err != nil {
 		return nil, err
