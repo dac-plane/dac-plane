@@ -180,7 +180,8 @@ func OutboxReadyDispatch(ctx context.Context, q Querier, tenant ids.TenantID, no
 // InterruptedOperations lists the operations whose delivered interrupt has not
 // produced a runtime stop. Delivery only proves a frame was written, so these
 // Attempts still wait on a request the provider may never have acted on. Each
-// interrupt's own deadline ends its repetition, and limit bounds one pass.
+// interrupt's own deadline ends its repetition, and limit bounds one pass. The
+// order is random so stalled rows cannot keep newer ones out of every pass.
 func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID, limit int) ([]lifecycle.ProviderOperation, error) {
 	rows, err := q.Query(ctx, `
 		select o.operation_id::text from outbox x
@@ -191,7 +192,7 @@ func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID, 
 		and (x.payload->>'deadline')::timestamptz > clock_timestamp()
 		and a.state = 'cancellation_requested' and not a.runtime_stopped
 		and not exists (select 1 from migration_item m where m.tenant_id = o.tenant_id and o.operation_id in (m.quiesce_operation_id, m.environment_operation_id, m.restart_operation_id, m.cleanup_operation_id, m.target_cleanup_operation_id))
-		order by x.updated_at limit $2`,
+		order by random() limit $2`,
 		tenant.String(), limit,
 	)
 	if err != nil {
@@ -227,7 +228,8 @@ func InterruptedOperations(ctx context.Context, q Querier, tenant ids.TenantID, 
 // UnsettledEnvironmentStops lists the stops a cancelling Attempt still waits on
 // whose delivery is unknown. An adapter that lost the frame never journaled the
 // stop, so nothing else would finish it. Each stop's own deadline ends this, and
-// limit bounds one pass.
+// limit bounds one pass. The order is random so stalled rows cannot keep newer
+// ones out of every pass.
 func UnsettledEnvironmentStops(ctx context.Context, q Querier, tenant ids.TenantID, limit int) ([]OutboxRow, error) {
 	rows, err := q.Query(ctx, selectOutboxRow+` where tenant_id = $1
 		and payload->>'role' = 'environment' and payload->>'method' = 'stop'
@@ -235,7 +237,7 @@ func UnsettledEnvironmentStops(ctx context.Context, q Querier, tenant ids.Tenant
 		and exists (select 1 from provider_operation o join attempt a on a.tenant_id = o.tenant_id and a.attempt_id = o.attempt_id
 			where o.tenant_id = outbox.tenant_id and o.operation_id = outbox.record_id and o.state = 'uncertain'
 			and a.state = 'cancellation_requested' and not a.environment_stopped)
-		order by updated_at limit $2`,
+		order by random() limit $2`,
 		tenant.String(), limit,
 	)
 	if err != nil {

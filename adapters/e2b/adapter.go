@@ -254,7 +254,10 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 			return a.finishProvision(req, m, *found)
 		}
 	}
-	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
+	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error {
+		o.State, o.CreateExpires = "create_sent", a.cfg.Now().Add(a.cfg.SandboxTimeout+createOutcomeMargin)
+		return nil
+	}); err != nil {
 		return wire.Reply{}, err
 	}
 	createdSandbox, err := a.createSandbox(ctx, req)
@@ -314,7 +317,10 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 		}
 		return a.finishTaskProvision(req, *found)
 	}
-	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
+	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error {
+		o.State, o.CreateExpires = "create_sent", a.cfg.Now().Add(a.cfg.SandboxTimeout+createOutcomeMargin)
+		return nil
+	}); err != nil {
 		return wire.Reply{}, err
 	}
 	createdSandbox, err := a.createSandbox(ctx, req)
@@ -538,8 +544,8 @@ func (a *Adapter) stopResource(ctx context.Context, operation string) (string, e
 		return "sandbox:" + found.SandboxID, nil
 	}
 	// E2B kills a sandbox at the lifetime it was created with, so an unknown
-	// create is absent once that lifetime has certainly passed.
-	if a.cfg.Now().Sub(provision.CreatedAt) > a.cfg.SandboxTimeout+createOutcomeMargin {
+	// create is absent once the lifetime of the last create sent has passed.
+	if !provision.CreateExpires.IsZero() && a.cfg.Now().After(provision.CreateExpires) {
 		return resourceRef, nil
 	}
 	return "", errors.New("E2B create outcome remains unknown during stop")

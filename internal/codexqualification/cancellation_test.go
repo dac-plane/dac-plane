@@ -114,7 +114,7 @@ func TestTaskCancellationQualification(t *testing.T) {
 	t.Run("interrupt lost with its adapter", func(t *testing.T) {
 		started := time.Now()
 		task := s.startActiveTask(t)
-		s.docker(t, "pause", "codex-adapter")
+		s.pause(t, "codex-adapter")
 		cancelTask(t, ctx, client, s.token, task.Task.ID)
 		s.waitSQL(t, "interrupt written", fmt.Sprintf("select count(*) = 1 from outbox where attempt_id = '%s' and status = 'done' and payload->>'method' = 'interrupt'", task.Attempt.ID))
 		s.docker(t, "kill", "codex-adapter")
@@ -127,7 +127,7 @@ func TestTaskCancellationQualification(t *testing.T) {
 		started := time.Now()
 		s.tasks++
 		s.command = fmt.Sprintf("sleep %d", 3170+s.tasks)
-		s.docker(t, "pause", "codex-adapter")
+		s.pause(t, "codex-adapter")
 		task := submit(t, ctx, client, s.token, "Use exec_command to run: "+s.command+".", "the command finishes unless DAC cancels the task")
 		s.waitSQL(t, "uncertain start", fmt.Sprintf("select state = 'uncertain' from provider_operation where operation_id = '%s'", task.Operation.ID))
 		cancelTask(t, ctx, client, s.token, task.Task.ID)
@@ -140,7 +140,7 @@ func TestTaskCancellationQualification(t *testing.T) {
 	t.Run("stop lost with its adapter", func(t *testing.T) {
 		started := time.Now()
 		task := s.startActiveTask(t)
-		s.docker(t, "pause", "e2b-adapter")
+		s.pause(t, "e2b-adapter")
 		cancelTask(t, ctx, client, s.token, task.Task.ID)
 		s.requireRuntimeStopped(t, task)
 		s.waitSQL(t, "uncertain stop", fmt.Sprintf(`select count(*) = 1 from provider_operation o join outbox x on x.record_id = o.operation_id
@@ -323,6 +323,11 @@ func (s *cancellationStack) commandRunning(t *testing.T) bool {
 	output, err := exec.CommandContext(s.ctx, "docker", "top", s.container("codex-adapter")).CombinedOutput()
 	if err != nil {
 		// A stopped container has no process list, and so no running command.
+		// Any other failure proves nothing about the command.
+		state, inspectErr := exec.CommandContext(s.ctx, "docker", "inspect", "-f", "{{.State.Running}}", s.container("codex-adapter")).CombinedOutput()
+		if inspectErr != nil || strings.TrimSpace(string(state)) != "false" {
+			t.Fatalf("cannot inspect the command: %v: %s: %s", err, output, state)
+		}
 		return false
 	}
 	return strings.Contains(string(output), s.command)
@@ -335,6 +340,19 @@ func (s *cancellationStack) sql(t *testing.T, query string) string {
 		t.Fatalf("sql: %v: %s", err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+// pause leaves the stack usable by the next scenario even if this one fails
+// before it kills and starts the adapter.
+func (s *cancellationStack) pause(t *testing.T, service string) {
+	t.Helper()
+	s.docker(t, "pause", service)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "docker", "unpause", s.container(service)).Run()
+		_ = exec.CommandContext(ctx, "docker", "start", s.container(service)).Run()
+	})
 }
 
 func (s *cancellationStack) waitSQL(t *testing.T, description, query string) {

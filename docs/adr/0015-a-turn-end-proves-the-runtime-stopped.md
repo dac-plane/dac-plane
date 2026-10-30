@@ -44,13 +44,14 @@ it is a provider call rather than a request to stop. The worker therefore replay
 to a provider that negotiated `operation.replay` under ADR-0012, with the same bounds. The E2B adapter
 offers it because the stop operation is its idempotency key.
 
-A runtime adapter reports a stop only once the work has ended, not merely the turn. Codex 0.165.0 ended
-an interrupted turn and left its command running under the app-server, so the Codex adapter ends the
-thread's background terminals before it reports the interruption. If it cannot, it exits rather than
-report a stop: a restart ends the command, and the resumed thread reports the interruption.
+A runtime adapter reports a turn end only once the work has ended, not merely the turn. Codex 0.165.0
+ended an interrupted turn and left its command running under the app-server, so the Codex adapter ends
+the thread's background terminals before it reports any turn end. If it cannot, it exits rather than
+report one: a restart ends the command, and the resumed thread reports the turn.
 
 A start the runtime rejects ran nothing, so its rejection is runtime stop evidence for an Attempt
-awaiting its stops.
+awaiting its stops. An adapter that cannot prove a start ran nothing must not reject it: the Codex
+adapter restarts instead when `turn/start` had no reply.
 
 ## Consequences
 

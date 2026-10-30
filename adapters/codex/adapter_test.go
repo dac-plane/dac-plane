@@ -497,6 +497,39 @@ func TestFailedCommandCleanupWithholdsTheStopAndExits(t *testing.T) {
 	}
 }
 
+func TestNaturallyCompletedTurnEndsItsCommandsToo(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed"}}`)}
+	waitFor(t, func() bool { return strings.Contains(strings.Join(entryKinds(t, f), ","), "turn.finished") })
+	if got := f.native.count("thread/backgroundTerminals/clean"); got != 1 {
+		t.Fatalf("clean calls=%d", got)
+	}
+}
+
+// A turn/start with no reply may have reached Codex, so the rejection that would
+// prove nothing runs must wait for a process that knows it.
+func TestCancelAfterUnknownTurnStartRestartsInsteadOfRejecting(t *testing.T) {
+	f := setup(t)
+	f.native.failTurnStart = true
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err == nil {
+		t.Fatal("lost turn/start was accepted")
+	}
+	if err := f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-f.adapter.Fatal():
+	case <-time.After(5 * time.Second):
+		t.Fatal("adapter kept running with an unknown turn")
+	}
+	if got := strings.Join(entryKinds(t, f), ","); strings.Contains(got, "operation_outcome") {
+		t.Fatalf("entries=%s, want no rejection", got)
+	}
+}
+
 func TestCancelAfterFinishedTurnEndsItsCommands(t *testing.T) {
 	f := setup(t)
 	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {

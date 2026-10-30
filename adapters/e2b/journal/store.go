@@ -26,10 +26,12 @@ type Operation struct {
 	ID, Hash, Tenant, Attempt, Method, ResourceRef, State string
 	// StopOf names the provision a task stop ends. It makes the stop intent
 	// durable before the provider is called, so a restart can finish it.
-	StopOf    string
-	Sequence  uint64
-	Receipt   json.RawMessage
-	CreatedAt time.Time
+	StopOf string
+	// CreateExpires is when a sandbox from the last create sent must have ended.
+	CreateExpires time.Time
+	Sequence      uint64
+	Receipt       json.RawMessage
+	CreatedAt     time.Time
 }
 
 type Store struct {

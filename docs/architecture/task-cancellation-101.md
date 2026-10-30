@@ -82,7 +82,6 @@ seconds, because it waits out the 30-second send timeout and the reconcile inter
 - Only one command per thread was exercised, and only a plain `sleep` that holds no descriptors.
 - `thread/backgroundTerminals/clean` is reported complete by its RPC reply. The process list check, not
   the reply, is the evidence.
-- A command that outlives a turn which completed naturally is not cleaned unless a cancellation arrives.
 - A failed E2B `DELETE` is proved by deterministic tests only. The adapter allows plain HTTP only on
   loopback, so a live fault proxy was not used.
 - The live fault scenarios kill the adapter, which also ends the Codex command. The repeat of an

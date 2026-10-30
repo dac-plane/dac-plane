@@ -340,7 +340,10 @@ func TestStopOfUnknownCreateWaitsOutTheSandboxLifetime(t *testing.T) {
 	if reply, err := a.Send(context.Background(), taskStopRequest("create", "stop")); err == nil {
 		t.Fatalf("stop = %+v, want an unknown outcome", reply)
 	}
-	a.cfg.Now = func() time.Time { return op.CreatedAt.Add(a.cfg.SandboxTimeout + createOutcomeMargin + time.Second) }
+	if op.CreateExpires.IsZero() {
+		t.Fatal("the create left no expiry")
+	}
+	a.cfg.Now = func() time.Time { return op.CreateExpires.Add(time.Second) }
 	a.retryPendingStops(context.Background())
 	if got := stopObservations(t, store, "stop"); len(got) != 1 || got[0].State != "absent" || got[0].ResourceRef != "operation:create" {
 		t.Fatalf("observations = %+v, want the operation observed absent", got)

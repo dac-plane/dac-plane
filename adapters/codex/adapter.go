@@ -49,18 +49,24 @@ type Config struct {
 }
 
 type Adapter struct {
-	config        Config
-	stop          chan struct{}
-	session       string
-	nativeMu      sync.Mutex
-	deferredMu    sync.Mutex
-	deferred      map[string][]deferredNative
-	flushing      map[string]bool
-	readyThreads  map[string]bool
-	pendingStart  int
-	starting      map[string]bool
-	deferredCount int
-	fatal         chan error
+	config       Config
+	stop         chan struct{}
+	session      string
+	nativeMu     sync.Mutex
+	deferredMu   sync.Mutex
+	deferred     map[string][]deferredNative
+	flushing     map[string]bool
+	readyThreads map[string]bool
+	pendingStart int
+	starting     map[string]bool
+	// startMu makes a start's journal entry and a cancellation's decision to
+	// fence it one atomic choice.
+	startMu sync.Mutex
+	// uncertainStarts holds starts this process left without a mapped turn,
+	// whose turn/start may still have reached Codex.
+	uncertainStarts map[string]bool
+	deferredCount   int
+	fatal           chan error
 }
 
 type deferredNative struct {
@@ -92,7 +98,7 @@ func New(config Config) (*Adapter, error) {
 	if _, err := rand.Read(sessionBytes); err != nil {
 		return nil, fmt.Errorf("create native session identity: %w", err)
 	}
-	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, starting: map[string]bool{}, fatal: make(chan error, 1)}
+	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, starting: map[string]bool{}, uncertainStarts: map[string]bool{}, fatal: make(chan error, 1)}
 	if err := a.reconstruct(); err != nil {
 		return nil, err
 	}
@@ -173,10 +179,13 @@ func (a *Adapter) Send(ctx context.Context, request wire.Request) (wire.Reply, e
 	}
 }
 func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
+	a.startMu.Lock()
 	op, err := a.config.Journal.Operation(cancel.Operation)
 	if errors.Is(err, os.ErrNotExist) {
+		defer a.startMu.Unlock()
 		return a.fence(cancel.Operation)
 	}
+	a.startMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -191,15 +200,26 @@ func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
 		var result any
 		return a.config.Native.Call(ctx, "turn/interrupt", map[string]any{"threadId": op.ThreadID, "turnId": op.TurnID}, &result)
 	}
+	a.startMu.Lock()
+	defer a.startMu.Unlock()
 	if a.isStarting(cancel.Operation) {
 		// The turn is still being mapped; the repeated interrupt will find it.
+		return nil
+	}
+	if a.isUncertainStart(cancel.Operation) {
+		// turn/start may have reached Codex with no reply, so only a new process
+		// can prove nothing runs. The repeated interrupt then finds it or fences.
+		select {
+		case a.fatal <- errors.New("restarting to settle a start with an unknown turn"):
+		default:
+		}
 		return nil
 	}
 	// A start that ended without a turn is never redelivered as a new one.
 	return a.fence(cancel.Operation)
 }
 
-// cleanTerminals ends the thread's commands. turn/interrupt ends only the turn:
+// cleanTerminals ends the thread's commands. A turn's end does not:
 // observed on Codex 0.165.0, its command keeps running under the app-server.
 func (a *Adapter) cleanTerminals(ctx context.Context, thread string) error {
 	var result any
@@ -230,6 +250,22 @@ func (a *Adapter) isStarting(operation string) bool {
 	a.deferredMu.Lock()
 	defer a.deferredMu.Unlock()
 	return a.starting[operation]
+}
+
+func (a *Adapter) setUncertainStart(operation string, uncertain bool) {
+	a.deferredMu.Lock()
+	defer a.deferredMu.Unlock()
+	if uncertain {
+		a.uncertainStarts[operation] = true
+	} else {
+		delete(a.uncertainStarts, operation)
+	}
+}
+
+func (a *Adapter) isUncertainStart(operation string) bool {
+	a.deferredMu.Lock()
+	defer a.deferredMu.Unlock()
+	return a.uncertainStarts[operation]
 }
 func (a *Adapter) Subscribe(_ context.Context, cursor wire.Cursor) (adapterkit.Stream, error) {
 	if _, err := a.config.Journal.Operation(cursor.Operation); err != nil {
@@ -402,9 +438,11 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if err != nil {
 		return wire.Reply{}, err
 	}
+	a.startMu.Lock()
 	a.setStarting(r.Operation, true)
 	defer a.setStarting(r.Operation, false)
 	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline})
+	a.startMu.Unlock()
 	if errors.Is(err, journal.ErrPayloadMismatch) {
 		return rejected(r, wire.FailureStalePrecondition, "operation payload changed"), nil
 	}
@@ -463,6 +501,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 			ID string `json:"id"`
 		} `json:"turn"`
 	}
+	a.setUncertainStart(r.Operation, true)
 	err = a.config.Native.Call(ctx, "turn/start", map[string]any{"threadId": started.Thread.ID, "input": []any{map[string]any{"type": "text", "text": prompt}}}, &turn)
 	if err != nil {
 		return wire.Reply{}, err
@@ -470,6 +509,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if turn.Turn.ID == "" {
 		return wire.Reply{}, errors.New("Codex returned no turn id")
 	}
+	a.setUncertainStart(r.Operation, false)
 	if err = a.ensureStartEvents(journal.Operation{ID: r.Operation, ThreadID: started.Thread.ID, TurnID: turn.Turn.ID}); err != nil {
 		return wire.Reply{}, err
 	}
@@ -794,20 +834,18 @@ func (a *Adapter) processNotification(m appserver.Message) {
 	}
 	switch m.Method {
 	case "turn/completed":
-		if binding.Turn.Status == "interrupted" {
-			// The interruption is stop evidence, so it is reported only once the
-			// command has ended. Otherwise exit: restarting ends the command, and
-			// the resumed thread reports the interruption.
-			ctx, cancel := context.WithTimeout(context.Background(), terminalCleanTimeout)
-			err := a.cleanTerminals(ctx, op.ThreadID)
-			cancel()
-			if err != nil {
-				select {
-				case a.fatal <- fmt.Errorf("end interrupted commands: %w", err):
-				default:
-				}
-				return
+		// A turn end is stop evidence, however the turn ended, so it is reported
+		// only once its commands have ended. Otherwise exit: restarting ends them,
+		// and the resumed thread reports the turn.
+		ctx, cancel := context.WithTimeout(context.Background(), terminalCleanTimeout)
+		err := a.cleanTerminals(ctx, op.ThreadID)
+		cancel()
+		if err != nil {
+			select {
+			case a.fatal <- fmt.Errorf("end the turn's commands: %w", err):
+			default:
 			}
+			return
 		}
 		a.turnCompleted(op, binding.Turn.ID, binding.Turn.Status, m.Params)
 	case "thread/tokenUsage/updated":
