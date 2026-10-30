@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnvironmentReference",
+  "description": "Provider-neutral correlation for an environment already prepared for a runtime Attempt.",
+  "type": "object",
+  "required": ["provider_id", "resource_ref"],
+  "additionalProperties": false,
+  "properties": {
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "resource_ref": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[!-~]+$" }
+  }
+}

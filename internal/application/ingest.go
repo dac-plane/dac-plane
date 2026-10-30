@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -106,7 +107,27 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 	if _, _, err = store.LockResultScope(ctx, uow, peer.Tenant, event.Attempt); err != nil {
 		return Ingestion{}, err
 	}
-	authoritative, err := store.ObserveHarness(ctx, uow, bound, at)
+	role := contracts.RoleRuntime
+	if dispatchRow, dispatchErr := store.GetOutboxRow(ctx, uow, event.Tenant, event.Operation.Untyped()); dispatchErr == nil {
+		var dispatch struct {
+			Role contracts.Role `json:"role"`
+		}
+		if json.Unmarshal(dispatchRow.Payload, &dispatch) == nil && dispatch.Role != "" {
+			role = dispatch.Role
+		}
+	} else if !errors.Is(dispatchErr, store.ErrNotFound) {
+		return Ingestion{}, dispatchErr
+	}
+	var authoritative bool
+	if role == contracts.RoleEnvironment {
+		_, registrationErr := store.GetProviderRegistration(ctx, uow, event.Tenant, event.Provider, contracts.RoleEnvironment)
+		if registrationErr != nil && !errors.Is(registrationErr, store.ErrNotFound) {
+			return Ingestion{}, registrationErr
+		}
+		authoritative = registrationErr == nil
+	} else {
+		authoritative, err = store.ObserveHarness(ctx, uow, bound, at)
+	}
 	if err != nil {
 		return Ingestion{}, err
 	}
@@ -133,7 +154,7 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, peer contracts.Peer, event 
 		Replay: ingested.Replay, Stale: ingested.Stale, Rehydrate: ingested.Rehydrate,
 	}
 	applier := entryApplier{
-		uow: uow, event: event, operation: operation,
+		uow: uow, event: event, operation: operation, role: role,
 		step: progress.Step{
 			UOW: uow, Tenant: event.Tenant, At: at,
 			Actor: lifecycle.Actor{Kind: lifecycle.ActorProvider, Provider: peer.Provider},
@@ -201,7 +222,10 @@ type entryApplier struct {
 	uow       *store.UnitOfWork
 	event     contracts.Event
 	operation lifecycle.ProviderOperation
-	step      progress.Step
+	// role is the role the operation was dispatched to. An environment may
+	// report only its resource and its own operation's outcome.
+	role contracts.Role
+	step progress.Step
 }
 
 func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOutcome, error) {
@@ -211,6 +235,9 @@ func (a entryApplier) apply(ctx context.Context, entry contracts.Entry) (entryOu
 	case contracts.EntryRefuse:
 		// An observation cannot grant permission or change state by naming
 		// itself; it is recorded and never applied.
+		return a.refuse(ctx, entry, lifecycle.RejectUnauthorizedActor)
+	}
+	if a.role == contracts.RoleEnvironment && entry.Kind != contracts.EntryEnvironmentObserved && entry.Kind != contracts.EntryOperationOutcome {
 		return a.refuse(ctx, entry, lifecycle.RejectUnauthorizedActor)
 	}
 	var err error
@@ -431,6 +458,9 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 	if err := a.step.SupersedeOpenAttention(ctx, a.event.Attempt); err != nil {
 		return 0, err
 	}
+	if err := a.step.StopEndedEnvironment(ctx, a.event.Attempt); err != nil {
+		return 0, err
+	}
 	return entryApplied, nil
 }
 
@@ -440,6 +470,32 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 // observed absent or hibernated while the Attempt awaits its stops is a
 // definite stop observation; every other state is progress only.
 func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.Entry, payload contracts.EnvironmentObserved) (entryOutcome, error) {
+	attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	if !attempt.EnvironmentProvider.IsZero() {
+		validOperation := attempt.EnvironmentOperation == a.event.Operation
+		awaitsStop := attempt.State == lifecycle.AttemptCancellationRequested || attempt.State == lifecycle.AttemptCompleted || attempt.State == lifecycle.AttemptFailed
+		if !validOperation && awaitsStop && payload.State != lifecycle.RunRunning {
+			row, rowErr := store.GetOutboxRow(ctx, a.uow, a.event.Tenant, a.event.Operation.Untyped())
+			if rowErr == nil {
+				var dispatch struct {
+					Role   contracts.Role   `json:"role"`
+					Method contracts.Method `json:"method"`
+				}
+				if json.Unmarshal(row.Payload, &dispatch) == nil && dispatch.Role == contracts.RoleEnvironment && dispatch.Method == contracts.MethodStop {
+					validOperation = true
+				}
+			} else if !errors.Is(rowErr, store.ErrNotFound) {
+				return 0, rowErr
+			}
+		}
+		if attempt.EnvironmentProvider != a.event.Provider || !validOperation ||
+			(payload.State == lifecycle.RunRunning && attempt.EnvironmentOperation != a.event.Operation) {
+			return a.refuse(ctx, entry, lifecycle.RejectWrongRecord)
+		}
+	}
 	ok, err := a.bind(ctx, lifecycle.ResourceEnvironmentResource, payload.ResourceRef, "")
 	if err != nil {
 		return 0, err
@@ -460,6 +516,11 @@ func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.E
 		// prove a stop contradicted by the newer state already stored.
 		return entryProgress, nil
 	}
+	if payload.State == lifecycle.RunRunning && attempt.State == lifecycle.AttemptProvisioning && !attempt.EnvironmentProvider.IsZero() {
+		if err := a.enqueueRuntimeAfterEnvironment(ctx, attempt, payload.ResourceRef, payload.ObservedAt); err != nil {
+			return 0, err
+		}
+	}
 	if observation.Stopped() {
 		attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
 		if err != nil {
@@ -470,6 +531,58 @@ func (a entryApplier) environmentObserved(ctx context.Context, entry contracts.E
 		}
 	}
 	return entryApplied, nil
+}
+
+// enqueueRuntimeAfterEnvironment records the already-created runtime operation
+// only after the assigned environment has a durable running observation.
+func (a entryApplier) enqueueRuntimeAfterEnvironment(ctx context.Context, attempt lifecycle.Attempt, resourceRef string, observedAt time.Time) error {
+	task, err := store.GetTask(ctx, a.uow, a.event.Tenant, attempt.Task)
+	if err != nil {
+		return err
+	}
+	brief, present := task.Brief()
+	if !present {
+		brief, err = store.GetTaskExecutionBrief(ctx, a.uow, task)
+		if err != nil {
+			return err
+		}
+	}
+	facts, err := schedulingFactsForAttempt(ctx, a.uow, a.event.Tenant, attempt.ID)
+	if err != nil {
+		return err
+	}
+	operationID, err := ids.Parse[ids.Operation](facts.Operation)
+	if err != nil {
+		return err
+	}
+	operation, err := store.GetOperation(ctx, a.uow, a.event.Tenant, operationID)
+	if err != nil {
+		return err
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, facts.Deadline)
+	if err != nil {
+		return err
+	}
+	environment := contracts.EnvironmentReference{Provider: attempt.EnvironmentProvider, ResourceRef: resourceRef}
+	command := &unit{uow: a.uow, actor: lifecycle.Actor{Kind: lifecycle.ActorSystem}, at: observedAt.UTC().Truncate(time.Microsecond)}
+	return enqueue(ctx, command, a.event.Tenant, dispatchSpec{
+		operation: operation, task: attempt.Task, attempt: attempt.ID, demand: contracts.Demand(facts.Demand), deadline: deadline,
+		unit: lifecycle.Unit(facts.Unit), amount: facts.Amount, role: contracts.RoleRuntime, method: contracts.MethodStartTurn,
+		start: contracts.RuntimeStart{Brief: brief, Environment: &environment},
+	})
+}
+
+func schedulingFactsForAttempt(ctx context.Context, q store.Querier, tenant ids.TenantID, attempt ids.AttemptID) (submission, error) {
+	var raw json.RawMessage
+	err := q.QueryRow(ctx, `select coalesce(result->'scheduling', result) from command_record where tenant_id=$1 and command in ('submit_task','review_result') and coalesce(result->>'attempt',result->'scheduling'->>'attempt')=$2 order by created_at desc limit 1`, tenant.String(), attempt.String()).Scan(&raw)
+	if err != nil {
+		return submission{}, err
+	}
+	var facts submission
+	if err := json.Unmarshal(raw, &facts); err != nil {
+		return submission{}, err
+	}
+	return facts, nil
 }
 
 // attentionRequested raises a product attention request for the event's

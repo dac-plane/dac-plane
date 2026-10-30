@@ -48,7 +48,15 @@ func (w *Worker) Observe(ctx context.Context) error {
 // StreamTimeout passes; the next pass resumes from the durable cursor. A
 // refused event ends the pass: its refusal is already recorded.
 func (w *Worker) observeOperation(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation) error {
-	port := w.port(tenant, operation.Provider, contracts.RoleRuntime)
+	role := contracts.RoleRuntime
+	if row, err := store.GetOutboxRow(ctx, w.pool, tenant, operation.ID.Untyped()); err == nil {
+		if body, parseErr := ParseDispatchBody(row.Payload); parseErr == nil && body.Role != "" {
+			role = body.Role
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	port := w.port(tenant, operation.Provider, role)
 	if port == nil {
 		w.stats.SkippedNoPort.Add(1)
 		return nil

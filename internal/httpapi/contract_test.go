@@ -64,14 +64,14 @@ func validRequests(t *testing.T) map[string]struct {
 		},
 		Proof: digestOf("proof"), AssertedAt: testNow,
 	}
-	rework := &application.ReworkTerms{Provider: newID[ids.Provider](t), Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Amount: 5}
+	rework := &application.ReworkTerms{Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Amount: 5}
 	return map[string]struct {
 		contract schematest.Contract
 		data     []byte
 	}{
-		"submit": {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
+		"submit": {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
 		"submit governed person": {submitContract, schematest.Marshal(t, SubmitTaskRequest{
-			Provider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
+			Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
 		})},
 		"assert submission": {assertionContract, schematest.Marshal(t, SpendAssertionRequest{SubmissionKey: "submit-1", Assertion: assertion})},
 		"assert review":     {assertionContract, schematest.Marshal(t, SpendAssertionRequest{ReviewKey: "review-1", Assertion: assertion})},
@@ -105,6 +105,7 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		change     func(map[string]any)
 	}{
 		{"submit without provider", "submit", func(d map[string]any) { delete(d, "provider_id") }},
+		{"submit without environment provider", "submit", func(d map[string]any) { delete(d, "environment_provider_id") }},
 		{"submit without objective", "submit", func(d map[string]any) { delete(d, "objective") }},
 		{"submit blank objective", "submit", func(d map[string]any) { d["objective"] = "  " }},
 		{"submit without criteria", "submit", func(d map[string]any) { delete(d, "acceptance_criteria") }},

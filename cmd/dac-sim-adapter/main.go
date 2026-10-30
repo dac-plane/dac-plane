@@ -57,6 +57,7 @@ import (
 // identities are generated at submission: its rows stream on subscribe and
 // its after_decision rows follow once a decision was delivered. An artifact
 // store, when present, receives the runtime's exports of the named fixtures.
+// An environment, when present, accepts every provision and stop.
 // Everything the adapter answers comes from this file; an unscripted
 // operation fails loudly, never inventing a success.
 type scenarioFile struct {
@@ -79,6 +80,9 @@ type scenarioFile struct {
 		Provider string            `json:"provider_id"`
 		Fixtures map[string]string `json:"fixtures"`
 	} `json:"artifact_store"`
+	Environment *struct {
+		Provider string `json:"provider_id"`
+	} `json:"environment"`
 }
 
 // scriptRow is one stream entry; sequences are assigned in order.
@@ -267,6 +271,15 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simul
 		set.runtime = runtime
 		set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay}}}
 	}
+	// The environment is independent of the runtime: an artifact-only process
+	// beside a real runtime still serves it.
+	if s.Environment != nil {
+		environment, err := s.environmentAdapter(tenant, tlsConfig)
+		if err != nil {
+			return nil, err
+		}
+		set.adapters = append(set.adapters, environment)
+	}
 	if s.ArtifactStore == nil {
 		return set, nil
 	}
@@ -292,6 +305,27 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simul
 	}
 	set.adapters = append(set.adapters, adapter{provider: s.ArtifactStore.Provider, role: wire.RoleArtifactStore, port: store, token: storeToken})
 	return set, nil
+}
+
+// environmentAdapter serves the scenario's environment provider, which
+// accepts every provision and stop: operation identities exist only once
+// work is submitted. It offers no stable-operation replay (ADR-0012).
+func (s scenarioFile) environmentAdapter(tenant ids.TenantID, tlsConfig *tls.Config) (adapter, error) {
+	provider, err := ids.Parse[ids.Provider](s.Environment.Provider)
+	if err != nil {
+		return adapter{}, fmt.Errorf("scenario: environment.provider_id: %w", err)
+	}
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: tenant, Provider: provider}, simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned},
+	})
+	if err != nil {
+		return adapter{}, err
+	}
+	token, err := tokenSource("DAC_ENVIRONMENT", tlsConfig)
+	if err != nil {
+		return adapter{}, err
+	}
+	return adapter{provider: s.Environment.Provider, role: wire.RoleEnvironment, port: environment, token: token}, nil
 }
 
 func (s scenarioFile) runtimeScenario() (simulator.RuntimeScenario, error) {

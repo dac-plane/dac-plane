@@ -99,6 +99,7 @@ func TestRecoveryRuntimeTransportLossNeverResends(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s := f.submit(t, f.submitCommand("loss"))
+	f.dispatchPendingEnvironments(t)
 	rt := f.runtime(t, s.Operation.ID)
 	var mu sync.Mutex
 	effects := 0
@@ -340,5 +341,114 @@ func TestRecoveryShadowEvidenceIsDigestOnlyAndBatchIndependent(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, f.recoverySnapshot(t)) {
 		t.Fatal("shadow comparison changed primary state")
+	}
+}
+
+// forgedUsageEnvironment answers every subscription with a usage entry, which
+// only a runtime may report.
+type forgedUsageEnvironment struct {
+	*simulator.Environment
+	frame contracts.StreamFrame
+}
+
+func (e *forgedUsageEnvironment) Subscribe(context.Context, contracts.Cursor) (contracts.Stream, error) {
+	return &oneFrameStream{frame: e.frame}, nil
+}
+
+type oneFrameStream struct {
+	frame contracts.StreamFrame
+	sent  bool
+}
+
+func (s *oneFrameStream) Next(context.Context) (contracts.StreamFrame, error) {
+	if s.sent {
+		return contracts.StreamFrame{}, io.EOF
+	}
+	s.sent = true
+	return s.frame, nil
+}
+
+func (s *oneFrameStream) Close() error { return nil }
+
+// Reconciliation lets an environment settle its own uncertain operation, not
+// charge the Attempt's budget.
+func TestRecoveryEnvironmentCannotReportUsage(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("forged-usage"))
+	inner, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned, SendError: io.ErrUnexpectedEOF},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := &forgedUsageEnvironment{Environment: inner, frame: simulator.RowsFrame(false, row(1, contracts.EntryUsageReported, contracts.UsageReported{Unit: s.Unit, Cumulative: 1200}))}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "forged-usage",
+		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: environment}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.reservation(t, s); got.Consumed != 0 {
+		t.Fatalf("reservation consumed=%d after an environment's usage entry; want 0", got.Consumed)
+	}
+}
+
+// An environment reports its operations through its resource, never an
+// operation outcome. A lost provision or stop reply settles from that
+// observation, and the observe loop then applies it through ingestion.
+func TestRecoveryLostEnvironmentRepliesSettleFromObservations(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("lost-environment"))
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Default: &simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: simulator.EnvironmentProvisioned, SendError: io.ErrUnexpectedEOF},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "lost-environment",
+		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: environment}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settle := func(operation ids.OperationID) {
+		t.Helper()
+		if err := w.Tick(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, operation); err != nil || op.State != lifecycle.OperationUncertain {
+			t.Fatalf("operation after lost reply = %s, %v; want uncertain", op.State, err)
+		}
+		for range 2 {
+			if err := w.Reconcile(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Observe(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, operation); err != nil || op.State != lifecycle.OperationAccepted {
+			t.Fatalf("operation after reconciliation = %s, %v; want accepted", op.State, err)
+		}
+	}
+
+	settle(s.Attempt.EnvironmentOperation)
+	if _, attempt := f.states(t, s); attempt != lifecycle.AttemptStarting {
+		t.Fatalf("attempt after recovered provision = %s, want starting", attempt)
+	}
+	if n := f.count(t, "outbox", "attempt_id = $2 and payload->>'role' = 'runtime' and payload->>'method' = 'start_turn'", s.Attempt.ID.String()); n != 1 {
+		t.Fatalf("runtime starts after recovered provision = %d, want 1", n)
+	}
+
+	f.cancel(t, s, "lost-environment-cancel")
+	settle(f.environmentStopOperation(t, s))
+	if after := f.reload(t, s.Nonce); !after.Attempt.EnvironmentStopped {
+		t.Fatalf("attempt after recovered stop = %+v, want the environment stop recorded", after.Attempt)
 	}
 }

@@ -99,6 +99,8 @@ services:
       DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/runtime_client_secret
       DAC_ARTIFACT_STORE_CLIENT_ID: artifact-adapter
       DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_ENVIRONMENT_CLIENT_ID: environment-adapter
+      DAC_ENVIRONMENT_CLIENT_SECRET_FILE: /run/secrets/environment_client_secret
       DAC_SIM_CONTROL_ADDR: :8080
     configs:
       - source: dev_ca
@@ -108,6 +110,7 @@ services:
     secrets:
       - runtime_client_secret
       - artifact_client_secret
+      - environment_client_secret
     ports:
       - "127.0.0.1:${DAC_SIM_CONTROL_PORT:-19090}:8080"
     profiles: ["operations"]

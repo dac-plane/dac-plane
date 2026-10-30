@@ -55,11 +55,16 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 }
 
 func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.TenantID, operation lifecycle.ProviderOperation, action *store.GovernedAction) error {
-	// A governed action is executed and observed by the enforcement role;
-	// every other reconciled operation is a runtime dispatch.
+	// A governed action is executed and observed by the enforcement role.
 	role := contracts.RoleRuntime
 	if action != nil {
 		role = contracts.RoleEnforcement
+	} else if row, err := store.GetOutboxRow(ctx, w.pool, tenant, operation.ID.Untyped()); err == nil {
+		if body, parseErr := ParseDispatchBody(row.Payload); parseErr == nil && body.Role != "" {
+			role = body.Role
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	port := w.port(tenant, operation.Provider, role)
 	if port == nil {
@@ -91,7 +96,7 @@ func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.Tenant
 		if err != nil {
 			return nil
 		} // The next pass resumes from durable progress.
-		ingested, settled, err := w.reconcileFrame(sctx, operation, cursor, frame, replayWatermark, action)
+		ingested, settled, err := w.reconcileFrame(sctx, operation, role, cursor, frame, replayWatermark, action)
 		if err != nil {
 			return err
 		}
@@ -124,7 +129,7 @@ func (w *Worker) reconcileStreamOperation(ctx context.Context, tenant ids.Tenant
 // reconcileFrame validates and applies one observation under the durable
 // scope/cursor locks. Outcomes come only from accepted entries, never the raw
 // frame. Cursor and lifecycle movement share one transaction.
-func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.ProviderOperation, cursor contracts.Cursor, frame contracts.StreamFrame, replayWatermark *contracts.Cursor, action *store.GovernedAction) (contracts.Ingestion, bool, error) {
+func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.ProviderOperation, role contracts.Role, cursor contracts.Cursor, frame contracts.StreamFrame, replayWatermark *contracts.Cursor, action *store.GovernedAction) (contracts.Ingestion, bool, error) {
 	event := contracts.Event{Tenant: operation.Tenant, Attempt: operation.Attempt, Provider: operation.Provider, Operation: operation.ID, Stream: cursor.Stream, Generation: cursor.Generation, Body: frame}
 	bound, failure := contracts.BindEvent(contracts.Peer{Tenant: operation.Tenant, Provider: operation.Provider}, event, operation)
 	if failure != nil {
@@ -143,7 +148,18 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 	if _, _, err = store.LockResultScope(ctx, u, operation.Tenant, operation.Attempt); err != nil {
 		return contracts.Ingestion{}, false, err
 	}
-	authoritative, err := store.ObserveHarness(ctx, u, bound, time.Now().UTC())
+	// An environment has no harness: its registration authorizes it, as in
+	// ingestion.
+	var authoritative bool
+	if role == contracts.RoleEnvironment {
+		_, err = store.GetProviderRegistration(ctx, u, operation.Tenant, operation.Provider, contracts.RoleEnvironment)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return contracts.Ingestion{}, false, err
+		}
+		authoritative, err = err == nil, nil
+	} else {
+		authoritative, err = store.ObserveHarness(ctx, u, bound, time.Now().UTC())
+	}
 	if err != nil {
 		return contracts.Ingestion{}, false, err
 	}
@@ -185,10 +201,10 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 	}
 	settled := false
 	for _, entry := range ingested.Entries {
-		// Usage belongs to the runtime, not a governed action. Account every
-		// accepted total, including entries after the settling outcome, before
-		// advancing the cursor past this frame.
-		if action == nil && entry.Kind == contracts.EntryUsageReported && !entry.PayloadOmitted {
+		// Usage belongs to the runtime, not a governed action or an environment.
+		// Account every accepted total, including entries after the settling
+		// outcome, before advancing the cursor past this frame.
+		if action == nil && role == contracts.RoleRuntime && entry.Kind == contracts.EntryUsageReported && !entry.PayloadOmitted {
 			step := progress.Step{UOW: u, Tenant: current.Tenant, At: time.Now().UTC(), Actor: lifecycle.Actor{Kind: lifecycle.ActorProvider, Provider: current.Provider}}
 			_, refusal, err := step.Usage(ctx, current.Attempt, entry)
 			if err != nil {
@@ -208,7 +224,7 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 		if settled || current.State != lifecycle.OperationUncertain {
 			continue
 		}
-		settled, err = w.applyReconciledEntry(ctx, u, current, entry, action)
+		settled, err = w.applyReconciledEntry(ctx, u, current, role, entry, action)
 		if err != nil {
 			return contracts.Ingestion{}, false, err
 		}

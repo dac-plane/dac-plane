@@ -28,13 +28,15 @@ import (
 )
 
 const (
-	tenantID       = "01a167fd-51d9-76ba-b563-496e2bd89646"
-	providerID     = "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10"
-	currentImage   = "dac-plane:operations-current"
-	nextImage      = "dac-plane:operations-next"
-	oldImage       = "dac-plane:operations-old"
-	simulatorImage = "dac-sim-adapter:operations"
-	controlRoot    = "http://127.0.0.1:19090"
+	tenantID   = "01a167fd-51d9-76ba-b563-496e2bd89646"
+	providerID = "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10"
+	// environmentProviderID is the development stack's simulated environment.
+	environmentProviderID = "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"
+	currentImage          = "dac-plane:operations-current"
+	nextImage             = "dac-plane:operations-next"
+	oldImage              = "dac-plane:operations-old"
+	simulatorImage        = "dac-sim-adapter:operations"
+	controlRoot           = "http://127.0.0.1:19090"
 )
 
 type harness struct {
@@ -166,12 +168,12 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")
-	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "15" {
-		t.Fatalf("schema version = %q, want 15", version)
+	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "16" {
+		t.Fatalf("schema version = %q, want 16", version)
 	}
 	output, err := h.composeOutput("run", "--rm", "--no-deps", "old-schema-check")
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
-		t.Fatalf("old image at schema 15 = %v, output %q", err, output)
+		t.Fatalf("old image at schema 16 = %v, output %q", err, output)
 	}
 
 	h.decide(attention)
@@ -179,7 +181,7 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.review(submitted.Task.ID, ready)
 	h.waitTask(submitted.Task.ID, lifecycle.TaskSucceeded)
 	h.assertEffectKind(submitted.Operation.ID, "turn_started", 1)
-	t.Logf("upgrade evidence: schema=15 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
+	t.Logf("upgrade evidence: schema=16 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
 }
 
 func newHarness(t *testing.T, replicaA, replicaB string) *harness {
@@ -438,7 +440,8 @@ func (h *harness) submit() httpapi.SubmissionBody {
 	}, httpapi.SubmitTaskRequest{
 		Objective:          "Complete the operations fixture",
 		AcceptanceCriteria: []string{"The task reaches ready_for_review"},
-		Provider:           mustProviderID(h.t), Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
+		Provider:           mustProviderID(h.t, providerID), EnvironmentProvider: mustProviderID(h.t, environmentProviderID),
+		Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
 		Unit: "tokens", Ceiling: 1000, Amount: 100,
 	}, http.StatusCreated).body
 }
@@ -459,7 +462,7 @@ func (h *harness) submitLegacy() httpapi.SubmissionBody {
 	return apiRequest[httpapi.SubmissionBody](h, "replica-a", http.MethodPost, "/tasks", map[string]string{
 		"Idempotency-Key": "ops-legacy-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}, legacySubmitTaskRequest{
-		Provider: mustProviderID(h.t), Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
+		Provider: mustProviderID(h.t, providerID), Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
 		Unit: "tokens", Ceiling: 1000, Amount: 100,
 	}, http.StatusCreated).body
 }
@@ -708,8 +711,8 @@ func mustJSON(t *testing.T, value any) []byte {
 	return data
 }
 
-func mustProviderID(t *testing.T) ids.ProviderID {
-	id, err := ids.Parse[ids.Provider](providerID)
+func mustProviderID(t *testing.T, text string) ids.ProviderID {
+	id, err := ids.Parse[ids.Provider](text)
 	if err != nil {
 		t.Fatal(err)
 	}

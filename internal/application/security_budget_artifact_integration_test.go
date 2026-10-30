@@ -23,7 +23,7 @@ func TestSecurityLateUsageRefusesReworkWithoutIncreasingCeiling(t *testing.T) {
 	r := g.finalize(t)
 	g.ingestNow(t, g.event(g.rt, g.s, 1, simulator.RowsFrame(false, row(4, contracts.EntryUsageReported, contracts.UsageReported{Unit: "tokens", Cumulative: 1200}))))
 	cmd := g.reviewCommand(t, r, "overspent-rework", lifecycle.DispositionRequestChanges)
-	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Unit: "tokens", Amount: 1, Deadline: time.Now().Add(time.Hour)}
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Unit: "tokens", Amount: 1, Deadline: time.Now().Add(time.Hour)}
 	if _, err := application.ReviewResult(g.ctx, g.pool, cmd); err == nil {
 		t.Fatal("overspent budget authorized rework")
 	}
@@ -121,20 +121,31 @@ func TestSecurityReworkRaceReservesAndDispatchesOnce(t *testing.T) {
 	g.propose(t, true)
 	revision := g.finalize(t)
 	cmd := g.reviewCommand(t, revision, "rework-race-a", lifecycle.DispositionRequestChanges)
-	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 600}
-	start, done := make(chan struct{}), make(chan error, 2)
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 600}
+	type reviewResult struct {
+		view application.ReviewView
+		err  error
+	}
+	start, done := make(chan struct{}), make(chan reviewResult, 2)
 	for _, nonce := range []string{"rework-race-a", "rework-race-b"} {
 		c := cmd
 		c.Nonce = nonce
-		go func() { <-start; _, err := application.ReviewResult(g.ctx, g.pool, c); done <- err }()
+		go func() {
+			<-start
+			view, err := application.ReviewResult(g.ctx, g.pool, c)
+			done <- reviewResult{view: view, err: err}
+		}()
 	}
 	close(start)
 	winners := 0
+	var winningView application.ReviewView
 	for range 2 {
-		if err := <-done; err == nil {
+		result := <-done
+		if result.err == nil {
 			winners++
+			winningView = result.view
 		} else {
-			requireRefusal(t, err, lifecycle.RejectVersionConflict)
+			requireRefusal(t, result.err, lifecycle.RejectVersionConflict)
 		}
 	}
 	b, err := store.GetBudget(g.ctx, g.pool, g.tenant, g.s.Budget.ID)
@@ -145,14 +156,10 @@ func TestSecurityReworkRaceReservesAndDispatchesOnce(t *testing.T) {
 	if err != nil || r.ID != revision.ID || r.Artifacts[0] != revision.Artifacts[0] {
 		t.Fatal("race relabelled prior evidence", err)
 	}
-	a, err := store.GetAttemptByTask(g.ctx, g.pool, g.tenant, g.s.Task.ID)
-	if err != nil {
-		t.Fatal(err)
+	if winningView.Rework == nil {
+		t.Fatal("winning review did not expose its rework attempt")
 	}
-	op, err := store.GetOperationByAttempt(g.ctx, g.pool, g.tenant, a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	op := winningView.Rework.Operation
 	rt := g.runtime(t, op.ID)
 	g.tick(t, rt)
 	g.tick(t, rt)

@@ -43,6 +43,7 @@ func problemCases() []problemCase {
 		{"missing precondition", errMissingPrecondition, http.StatusPreconditionRequired},
 		{"payload mismatch", application.ErrPayloadMismatch, http.StatusUnprocessableEntity},
 		{"no harness", application.ErrNoHarness, http.StatusUnprocessableEntity},
+		{"no environment", application.ErrNoEnvironment, http.StatusUnprocessableEntity},
 		{"invalid command", fmt.Errorf("%w: x", application.ErrInvalidCommand), http.StatusUnprocessableEntity},
 		{"invalid lifecycle value", lifecycle.ErrInvalid, http.StatusUnprocessableEntity},
 		{"invalid identity value", identity.ErrInvalid, http.StatusUnprocessableEntity},
@@ -71,7 +72,7 @@ func TestSubmitDecoderAcceptsMaximumMultibyteBrief(t *testing.T) {
 		criteria[i] = criterion
 	}
 	body := SubmitTaskRequest{
-		Provider: newID[ids.Provider](t), Objective: strings.Repeat("😀", lifecycle.MaxObjectiveCharacters),
+		Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: strings.Repeat("😀", lifecycle.MaxObjectiveCharacters),
 		AcceptanceCriteria: criteria, Deadline: testNow.Add(time.Hour), Unit: "tokens", Ceiling: 100, Amount: 10,
 	}
 	encoded, err := json.Marshal(body)
@@ -156,7 +157,7 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		}
 		return out
 	}
-	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","objective":"Update the fixture","acceptance_criteria":["The fixture is updated"],"deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
+	validSubmit := `{"provider_id":"` + newID[ids.Provider](t).String() + `","environment_provider_id":"` + newID[ids.Provider](t).String() + `","objective":"Update the fixture","acceptance_criteria":["The fixture is updated"],"deadline":"2026-10-24T00:00:00Z","unit":"usd_cents","ceiling":10,"amount":5}`
 	validMigration := `{"from_provider_id":"` + newID[ids.Provider](t).String() + `","to_provider_id":"` + newID[ids.Provider](t).String() + `"}`
 	cases := []struct {
 		name   string

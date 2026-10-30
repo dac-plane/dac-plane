@@ -21,12 +21,13 @@ const commandReviewResult = "review_result"
 // ReworkTerms deliberately contains no new ceiling: further work consumes
 // the same Task's budget and needs a fresh deadline and spend choice.
 type ReworkTerms struct {
-	Provider ids.ProviderID   `json:"provider_id"`
-	Demand   contracts.Demand `json:"demand"`
-	Deadline time.Time        `json:"deadline"`
-	Unit     lifecycle.Unit   `json:"unit"`
-	Amount   uint64           `json:"amount"`
-	Spend    bool             `json:"spend"`
+	Provider            ids.ProviderID   `json:"provider_id"`
+	EnvironmentProvider ids.ProviderID   `json:"environment_provider_id"`
+	Demand              contracts.Demand `json:"demand"`
+	Deadline            time.Time        `json:"deadline"`
+	Unit                lifecycle.Unit   `json:"unit"`
+	Amount              uint64           `json:"amount"`
+	Spend               bool             `json:"spend"`
 }
 type ReviewResultCommand struct {
 	Command
@@ -166,7 +167,7 @@ func scheduleRework(ctx context.Context, u *unit, task lifecycle.Task, previous 
 	if !present {
 		return submission{}, fmt.Errorf("%w: legacy task has no execution brief", ErrInvalidCommand)
 	}
-	c := SubmitTask{Command: Command{Actor: actor, Nonce: nonce}, At: u.at, Provider: t.Provider, Brief: brief, Demand: t.Demand, Deadline: t.Deadline, Unit: t.Unit, Ceiling: 1, Amount: t.Amount, Spend: t.Spend}
+	c := SubmitTask{Command: Command{Actor: actor, Nonce: nonce}, At: u.at, Provider: t.Provider, EnvironmentProvider: t.EnvironmentProvider, Brief: brief, Demand: t.Demand, Deadline: t.Deadline, Unit: t.Unit, Ceiling: 1, Amount: t.Amount, Spend: t.Spend}
 	// Reuse submission validation, but authorize with the already authenticated
 	// owner from the surrounding command, not a new task or budget.
 	if err := c.validate(); err != nil {
@@ -185,6 +186,11 @@ func scheduleRework(ctx context.Context, u *unit, task lifecycle.Task, previous 
 	if h.Mode != lifecycle.HarnessLive {
 		return submission{}, ErrNoHarness
 	}
+	if _, err := store.GetProviderRegistration(ctx, u.uow, task.Tenant, t.EnvironmentProvider, contracts.RoleEnvironment); errors.Is(err, store.ErrNotFound) {
+		return submission{}, ErrNoEnvironment
+	} else if err != nil {
+		return submission{}, err
+	}
 	if previous.Number >= uint32(1<<31-1) {
 		return submission{}, ErrInvalidCommand
 	}
@@ -196,6 +202,11 @@ func scheduleRework(ctx context.Context, u *unit, task lifecycle.Task, previous 
 	if err != nil {
 		return submission{}, err
 	}
+	environmentOperation, err := ids.New[ids.Operation]()
+	if err != nil {
+		return submission{}, err
+	}
+	attempt.EnvironmentProvider, attempt.EnvironmentOperation = t.EnvironmentProvider, environmentOperation
 	if _, _, err = store.InsertAttempt(ctx, u.uow, attempt); err != nil {
 		return submission{}, err
 	}

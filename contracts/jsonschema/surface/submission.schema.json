@@ -42,6 +42,9 @@
     "provider_id": {
       "$ref": "../identity/common.schema.json#/$defs/uuidv7"
     },
+    "environment_provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
     "harness_mode": {
       "enum": [
         "off",

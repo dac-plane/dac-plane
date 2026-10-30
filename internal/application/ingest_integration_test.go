@@ -39,6 +39,20 @@ func (f *fixture) event(rt *simulator.Runtime, s application.Submission, generat
 	return rt.Event(s.Attempt.ID, s.Operation.ID, eventStream, generation, frame)
 }
 
+func (f *fixture) environmentEvent(s application.Submission, operation ids.OperationID, frame contracts.StreamFrame) contracts.Event {
+	return contracts.Event{Tenant: f.tenant, Attempt: s.Attempt.ID, Provider: f.environmentProvider,
+		Operation: operation, Stream: eventStream, Generation: 1, Body: frame}
+}
+
+func (f *fixture) ingestEnvironmentNow(t *testing.T, event contracts.Event) application.Ingestion {
+	t.Helper()
+	result, err := application.Ingest(f.ctx, f.pool, contracts.Peer{Tenant: f.tenant, Provider: f.environmentProvider}, event, f.at)
+	if err != nil {
+		t.Fatalf("environment Ingest() error = %v", err)
+	}
+	return result
+}
+
 func (f *fixture) ingest(t *testing.T, event contracts.Event) application.Ingestion {
 	t.Helper()
 	result, err := application.Ingest(f.ctx, f.pool, f.peer(), event, f.at.Add(time.Minute))
@@ -177,13 +191,13 @@ func TestEventRefusesUnknownStateChangingKinds(t *testing.T) {
 	if got.Refused != 3 || got.Applied != 0 || got.Cursor.After != 3 {
 		t.Fatalf("ingestion = %+v, want 3 refused and the cursor past them", got)
 	}
-	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptProvisioning {
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptStarting {
 		t.Fatalf("refused kinds changed state: %s/%s", task, attempt)
 	}
 	if n := f.count(t, "audit_event", "outcome = 'rejected' and provider_id = $2", f.provider.String()); n != 3 {
 		t.Fatalf("refusal evidence = %d, want 3", n)
 	}
-	if n := f.count(t, "binding", "true"); n != 0 {
+	if n := f.count(t, "binding", "kind = 'runtime_session' and native_ref = 's-1'"); n != 0 {
 		t.Fatal("a payload smuggling an identity was bound")
 	}
 }
@@ -204,6 +218,14 @@ func TestEventForgedEnvelopesRefusedBeforeMutation(t *testing.T) {
 		"another tenant's peer":   {contracts.Peer{Tenant: mustID[ids.Tenant](t), Provider: f.provider}, f.event(rt, s, 1, frame), contracts.FailureUnauthorized},
 		"another attempt's op":    {f.peer(), rt.Event(s.Attempt.ID, other.Operation.ID, eventStream, 1, frame), contracts.FailureUnauthorized},
 	}
+	// Provisioning already bound each attempt's environment; forged envelopes
+	// must add nothing and change no state.
+	tables := []string{"binding", "stream_cursor"}
+	before := map[string]int{}
+	for _, table := range tables {
+		before[table] = f.count(t, table, "true")
+	}
+	_, stateBefore := f.states(t, s)
 	for name, tc := range cases {
 		_, err := application.Ingest(f.ctx, f.pool, tc.peer, tc.event, f.at)
 		var failure *contracts.Failure
@@ -211,13 +233,13 @@ func TestEventForgedEnvelopesRefusedBeforeMutation(t *testing.T) {
 			t.Errorf("%s: Ingest() = %v, want %s", name, err, tc.code)
 		}
 	}
-	for _, table := range []string{"binding", "stream_cursor"} {
-		if n := f.count(t, table, "true"); n != 0 {
-			t.Fatalf("%s rows after forged envelopes = %d, want 0", table, n)
+	for _, table := range tables {
+		if n := f.count(t, table, "true"); n != before[table] {
+			t.Fatalf("%s rows after forged envelopes = %d, want %d", table, n, before[table])
 		}
 	}
-	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptProvisioning {
-		t.Fatalf("forged envelope changed state: %s/%s", task, attempt)
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != stateBefore {
+		t.Fatalf("forged envelope changed state: %s/%s, want running/%s", task, attempt, stateBefore)
 	}
 	// The other tenant's operation is unknown in that tenant: nothing to
 	// record. The two envelopes naming this tenant's operations leave evidence.
@@ -231,8 +253,13 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 	f := newFixture(t, lifecycle.HarnessLive)
 	first, rt := f.live(t, "n-1")
 	second, _ := f.live(t, "n-2")
+	_, secondBefore := f.states(t, second)
 	f.ingest(t, f.event(rt, first, 1, simulator.RowsFrame(false,
 		row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "s-1"}),
+	)))
+	// Only the attempt's environment provider may observe its resource.
+	// Provisioning already streamed this operation's first observation.
+	f.ingestEnvironmentNow(t, f.environmentEvent(first, first.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
 		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{ResourceRef: "box-1", State: lifecycle.RunRunning, Sequence: 1, ObservedAt: f.at}),
 	)))
 	got := f.ingest(t, f.event(rt, second, 1, simulator.RowsFrame(false,
@@ -243,10 +270,10 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 	if got.Refused != 3 || got.Applied != 0 {
 		t.Fatalf("ingestion = %+v, want all three refused", got)
 	}
-	if _, attempt := f.states(t, second); attempt != lifecycle.AttemptProvisioning {
-		t.Fatalf("second attempt = %s, want unchanged", attempt)
+	if _, attempt := f.states(t, second); attempt != secondBefore {
+		t.Fatalf("second attempt = %s, want unchanged %s", attempt, secondBefore)
 	}
-	observation, err := store.GetObservation(f.ctx, f.pool, f.tenant, f.provider, "box-1")
+	observation, err := store.GetObservation(f.ctx, f.pool, f.tenant, f.environmentProvider, "box-1")
 	if err != nil {
 		t.Fatalf("GetObservation() error = %v", err)
 	}
@@ -258,25 +285,59 @@ func TestEventBindingOfAnotherAttemptRefused(t *testing.T) {
 	}
 }
 
+func TestEventEnvironmentCannotReportRuntimeEntries(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	// The runtime has been dispatched, so its stop needs real evidence.
+	s, _ := f.live(t, "n-1")
+	_, before := f.states(t, s)
+	// Provisioning already streamed this operation's first observation.
+	got := f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
+		row(2, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "forged-session"}),
+		row(3, contracts.EntryAttentionRequested, question("forged-question", f.at.Add(time.Hour))),
+	)))
+	if got.Refused != 2 || got.Applied != 0 {
+		t.Fatalf("ingestion = %+v, want both runtime entries refused", got)
+	}
+	if _, attempt := f.states(t, s); attempt != before {
+		t.Fatalf("attempt = %s, want unchanged %s", attempt, before)
+	}
+	if n := f.count(t, "binding", "kind = 'runtime_session'"); n != 0 {
+		t.Fatalf("runtime sessions bound from an environment = %d, want 0", n)
+	}
+
+	// During cancellation the environment cannot supply the runtime's stop.
+	f.cancel(t, s, "c-1")
+	got = f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
+		row(4, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true}),
+	)))
+	if got.Refused != 1 {
+		t.Fatalf("stop ingestion = %+v, want refused", got)
+	}
+	if after := f.reload(t, s.Nonce); after.Attempt.RuntimeStopped {
+		t.Fatal("an environment supplied the runtime's stop evidence")
+	}
+}
+
 func TestEventEnvironmentObservationsKeepTheNewest(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
-	s, rt := f.live(t, "n-1")
+	s := f.submit(t, f.submitCommand("n-1"))
 	observed := func(sequence uint64, state lifecycle.RunState) contracts.EnvironmentObserved {
 		return contracts.EnvironmentObserved{ResourceRef: "box-1", State: state, Sequence: sequence, ObservedAt: f.at}
 	}
-	f.ingest(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+	f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
 		row(1, contracts.EntryEnvironmentObserved, observed(2, lifecycle.RunRunning)),
 		row(2, contracts.EntryEnvironmentObserved, observed(1, lifecycle.RunStarting)),
 	)))
-	observation, err := store.GetObservation(f.ctx, f.pool, f.tenant, f.provider, "box-1")
+	observation, err := store.GetObservation(f.ctx, f.pool, f.tenant, f.environmentProvider, "box-1")
 	if err != nil {
 		t.Fatalf("GetObservation() error = %v", err)
 	}
 	if observation.Sequence != 2 || observation.State != lifecycle.RunRunning {
 		t.Fatalf("observation = %+v, want the newer sequence", observation)
 	}
-	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptProvisioning {
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptStarting {
 		t.Fatalf("observation changed lifecycle state: %s/%s", task, attempt)
 	}
 }
@@ -392,7 +453,7 @@ func TestReconcileOutcomeForSettledOperationChangesNothing(t *testing.T) {
 	if after := f.reload(t, "n-1"); after.Operation.State != lifecycle.OperationAccepted {
 		t.Fatalf("operation = %s, want accepted", after.Operation.State)
 	}
-	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptProvisioning {
+	if task, attempt := f.states(t, s); task != lifecycle.TaskRunning || attempt != lifecycle.AttemptStarting {
 		t.Fatalf("states = %s/%s, want unchanged", task, attempt)
 	}
 }

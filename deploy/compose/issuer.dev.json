@@ -24,7 +24,7 @@
         },
         {
           "requestParam": "client_id",
-          "match": "runtime-adapter|artifact-adapter",
+          "match": "runtime-adapter|artifact-adapter|environment-adapter",
           "claims": {
             "sub": "${clientId}",
             "aud": ["dac-plane-adapters"]

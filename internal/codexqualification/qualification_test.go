@@ -30,8 +30,10 @@ import (
 const (
 	tenantID   = "01a167fd-51d9-76ba-b563-496e2bd89646"
 	providerID = "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10"
-	apiRoot    = "https://dac-plane:8443/v1/tenants/" + tenantID
-	tokenURL   = "https://issuer:8443/default/token"
+	// environmentProviderID is the development stack's simulated environment.
+	environmentProviderID = "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"
+	apiRoot               = "https://dac-plane:8443/v1/tenants/" + tenantID
+	tokenURL              = "https://issuer:8443/default/token"
 )
 
 type tokenSource struct {
@@ -133,10 +135,14 @@ func submit(t *testing.T, ctx context.Context, client *http.Client, token *token
 	if err != nil {
 		t.Fatal(err)
 	}
+	environment, err := ids.Parse[ids.Provider](environmentProviderID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return request[httpapi.SubmissionBody](t, ctx, client, token, http.MethodPost, "/tasks", map[string]string{
 		"Idempotency-Key": "codex-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}, httpapi.SubmitTaskRequest{
-		Objective: objective, AcceptanceCriteria: []string{criterion}, Provider: provider,
+		Objective: objective, AcceptanceCriteria: []string{criterion}, Provider: provider, EnvironmentProvider: environment,
 		Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(10 * time.Minute),
 		Unit: "tokens", Ceiling: 100_000, Amount: 10_000,
 	}, http.StatusCreated).value

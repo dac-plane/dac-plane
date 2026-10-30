@@ -159,6 +159,7 @@ func TestRecoveryReconnectNegotiatesBeforeProviderWork(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, lifecycle.HarnessLive)
 			s := f.submit(t, f.submitCommand("protocol"))
+			f.dispatchPendingEnvironments(t)
 			rt := f.runtime(t, s.Operation.ID)
 			connect := func() *recoveryPort {
 				local := simulator.DefaultHello()

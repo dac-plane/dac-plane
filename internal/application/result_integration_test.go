@@ -59,7 +59,7 @@ func TestReviewRequestChangesPreservesSchema13Brief(t *testing.T) {
 	g.propose(t, true)
 	first := g.finalize(t)
 	cmd := g.reviewCommand(t, first, "schema-13-rework", lifecycle.DispositionRequestChanges)
-	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
 	view, err := application.ReviewResult(g.ctx, g.pool, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +123,32 @@ func (g *resultFixture) reviewCommand(t *testing.T, r lifecycle.ResultRevision, 
 		t.Fatal(err)
 	}
 	return application.ReviewResultCommand{Command: application.Command{Actor: g.actor, Nonce: nonce, ExpectedVersion: task.Version}, Task: task.ID, Revision: r.ID, Disposition: d, At: time.Now()}
+}
+
+// A completed Attempt's outputs are admitted before its environment stops, and
+// the stop leaves the result reviewable (ADR-0014).
+func TestCompletedAttemptStopsEnvironmentAndKeepsResult(t *testing.T) {
+	t.Parallel()
+	g := newResultFixture(t)
+	g.propose(t, true)
+	r := g.finalize(t)
+	if task, attempt := g.states(t, g.s); task != lifecycle.TaskReadyForReview || attempt != lifecycle.AttemptCompleted {
+		t.Fatalf("after admission: %s/%s", task, attempt)
+	}
+	stop := g.environmentStopOperation(t, g.s)
+	g.dispatchPendingEnvironments(t)
+	if op, err := store.GetOperation(g.ctx, g.pool, g.tenant, stop); err != nil || op.State != lifecycle.OperationAccepted {
+		t.Fatalf("stop operation=%s err=%v; want accepted", op.State, err)
+	}
+	if stopped, err := store.EnvironmentStopped(g.ctx, g.pool, g.tenant, g.s.Attempt.ID); err != nil || !stopped {
+		t.Fatalf("environment stopped=%v err=%v; want the stop observed on the completed attempt", stopped, err)
+	}
+	if task, attempt := g.states(t, g.s); task != lifecycle.TaskReadyForReview || attempt != lifecycle.AttemptCompleted {
+		t.Fatalf("after stop: %s/%s", task, attempt)
+	}
+	if _, err := application.ReviewResult(g.ctx, g.pool, g.reviewCommand(t, r, "accept-after-stop", lifecycle.DispositionAccept)); err != nil {
+		t.Fatalf("review after the environment stopped: %v", err)
+	}
 }
 
 func TestResultArtifactAdmissionBothObservationOrders(t *testing.T) {
@@ -201,6 +227,7 @@ func TestResultArtifactMismatchNeverCreatesRevision(t *testing.T) {
 			if task, attempt := g.states(t, g.s); task != lifecycle.TaskFailed || attempt != lifecycle.AttemptFailed {
 				t.Fatalf("exhaustion=%s/%s", task, attempt)
 			}
+			g.environmentStopOperation(t, g.s)
 		})
 	}
 }
@@ -223,7 +250,7 @@ func TestReviewAcceptRejectAndImmutableDisposition(t *testing.T) {
 			}
 			cmd.Nonce = "rival"
 			cmd.Disposition = lifecycle.DispositionRequestChanges
-			cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
+			cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
 			if _, err = application.ReviewResult(g.ctx, g.pool, cmd); err == nil {
 				t.Fatal("terminal disposition changed")
 			}
@@ -240,7 +267,7 @@ func TestReviewRequestChangesSchedulesNewAttemptAndPreservesLineage(t *testing.T
 	g.propose(t, true)
 	first := g.finalize(t)
 	cmd := g.reviewCommand(t, first, "rework", lifecycle.DispositionRequestChanges)
-	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 100}
 	v, err := application.ReviewResult(g.ctx, g.pool, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +317,7 @@ func TestReviewBudgetFailureAndUnauthorizedActorRollBack(t *testing.T) {
 	g.propose(t, true)
 	r := g.finalize(t)
 	cmd := g.reviewCommand(t, r, "too-large", lifecycle.DispositionRequestChanges)
-	cmd.Rework = &application.ReworkTerms{Provider: g.provider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 1001}
+	cmd.Rework = &application.ReworkTerms{Provider: g.provider, EnvironmentProvider: g.environmentProvider, Deadline: time.Now().Add(time.Hour), Unit: "tokens", Amount: 1001}
 	if _, err := application.ReviewResult(g.ctx, g.pool, cmd); err == nil {
 		t.Fatal("budget bypass")
 	}

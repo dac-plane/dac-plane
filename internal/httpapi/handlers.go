@@ -20,7 +20,7 @@ func (a *API) submitTask(w http.ResponseWriter, r *http.Request, actor identity.
 		return err
 	}
 	submission, err := application.Submit(r.Context(), a.pool, application.SubmitTask{
-		Command: cmd, At: a.options.Now(), Provider: body.Provider, Demand: body.Demand, Deadline: body.Deadline,
+		Command: cmd, At: a.options.Now(), Provider: body.Provider, EnvironmentProvider: body.EnvironmentProvider, Demand: body.Demand, Deadline: body.Deadline,
 		Brief: lifecycle.ExecutionBrief{Objective: body.Objective, AcceptanceCriteria: body.AcceptanceCriteria},
 		Unit:  body.Unit, Ceiling: body.Ceiling, Amount: body.Amount, Spend: body.Spend,
 	})

@@ -128,16 +128,21 @@ var attemptMachine = newMachine(AttemptStates(), AttemptEvents(),
 // RuntimeStopped and EnvironmentStopped record stop observations received
 // while cancellation is requested.
 type Attempt struct {
-	ID                 ids.AttemptID `json:"attempt_id"`
-	Tenant             ids.TenantID  `json:"tenant_id"`
-	Task               ids.TaskID    `json:"task_id"`
-	Number             uint32        `json:"number"`
-	State              AttemptState  `json:"state"`
-	Version            uint64        `json:"version"`
-	RuntimeStopped     bool          `json:"runtime_stopped,omitempty"`
-	EnvironmentStopped bool          `json:"environment_stopped,omitempty"`
-	CreatedAt          time.Time     `json:"created_at"`
-	UpdatedAt          time.Time     `json:"updated_at"`
+	ID     ids.AttemptID `json:"attempt_id"`
+	Tenant ids.TenantID  `json:"tenant_id"`
+	Task   ids.TaskID    `json:"task_id"`
+	// EnvironmentProvider and EnvironmentOperation are the durable assignment
+	// that prepares this Attempt's environment. Both are absent only on legacy
+	// Attempts created before task environment assignment was introduced.
+	EnvironmentProvider  ids.ProviderID  `json:"environment_provider_id,omitzero"`
+	EnvironmentOperation ids.OperationID `json:"environment_operation_id,omitzero"`
+	Number               uint32          `json:"number"`
+	State                AttemptState    `json:"state"`
+	Version              uint64          `json:"version"`
+	RuntimeStopped       bool            `json:"runtime_stopped,omitempty"`
+	EnvironmentStopped   bool            `json:"environment_stopped,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 // NewAttempt returns an allocated Attempt at version 1. number is the 1-based
@@ -155,6 +160,9 @@ func NewAttempt(id ids.AttemptID, tenant ids.TenantID, task ids.TaskID, number u
 func (a Attempt) Validate() error {
 	if a.ID.IsZero() || a.Tenant.IsZero() || a.Task.IsZero() || a.Number == 0 || a.Version == 0 {
 		return fmt.Errorf("%w: attempt requires identifiers, a positive number and a positive version", ErrInvalid)
+	}
+	if a.EnvironmentProvider.IsZero() != a.EnvironmentOperation.IsZero() {
+		return fmt.Errorf("%w: environment assignment requires both provider and operation", ErrInvalid)
 	}
 	if !slices.Contains(AttemptStates(), a.State) {
 		return fmt.Errorf("%w: unknown attempt state", ErrInvalid)

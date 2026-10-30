@@ -35,13 +35,14 @@ import (
 // no M1 command surface for them. Every lifecycle fact is created and read
 // through the command boundary, the dispatch loop or the simulator ledger.
 type fixture struct {
-	ctx       context.Context
-	pool      *pgxpool.Pool
-	tenant    ids.TenantID
-	principal ids.PrincipalID
-	actor     identity.AuthorizationContext
-	provider  ids.ProviderID
-	at        time.Time
+	ctx                 context.Context
+	pool                *pgxpool.Pool
+	tenant              ids.TenantID
+	principal           ids.PrincipalID
+	actor               identity.AuthorizationContext
+	provider            ids.ProviderID
+	environmentProvider ids.ProviderID
+	at                  time.Time
 }
 
 func newFixture(t *testing.T, mode lifecycle.HarnessMode) *fixture {
@@ -73,7 +74,7 @@ func newFixtureAtVersion(t *testing.T, mode lifecycle.HarnessMode, version int64
 
 	f := &fixture{
 		ctx: ctx, pool: pool, tenant: mustID[ids.Tenant](t), principal: mustID[ids.Principal](t),
-		provider: mustID[ids.Provider](t), at: time.Now().UTC().Truncate(time.Microsecond),
+		provider: mustID[ids.Provider](t), environmentProvider: mustID[ids.Provider](t), at: time.Now().UTC().Truncate(time.Microsecond),
 	}
 	principal := identity.Principal{Tenant: f.tenant, ID: f.principal, Kind: identity.PrincipalHuman}
 	if f.actor, err = identity.NewAuthorizationContext(principal); err != nil {
@@ -87,6 +88,9 @@ func newFixtureAtVersion(t *testing.T, mode lifecycle.HarnessMode, version int64
 			return err
 		}
 		if err := store.InsertPolicy(ctx, uow, identity.Policy{Tenant: f.tenant, Generation: 1}); err != nil {
+			return err
+		}
+		if err := store.PutProviderRegistration(ctx, uow, contracts.ProviderRegistration{Tenant: f.tenant, Provider: f.environmentProvider, Role: contracts.RoleEnvironment, UpdatedAt: f.at}); err != nil {
 			return err
 		}
 		if mode == "" {
@@ -142,9 +146,10 @@ func mustID[K any](t *testing.T) ids.ID[K] {
 
 func (f *fixture) submitCommand(nonce string) application.SubmitTask {
 	return application.SubmitTask{
-		Command:  application.Command{Actor: f.actor, Nonce: nonce},
-		At:       f.at,
-		Provider: f.provider,
+		Command:             application.Command{Actor: f.actor, Nonce: nonce},
+		At:                  f.at,
+		Provider:            f.provider,
+		EnvironmentProvider: f.environmentProvider,
 		Brief: lifecycle.ExecutionBrief{
 			Objective:          "Update the integration fixture",
 			AcceptanceCriteria: []string{"The fixture change is complete"},
@@ -183,13 +188,58 @@ func (f *fixture) runtime(t *testing.T, operations ...ids.OperationID) *simulato
 // tick runs one dispatch pass with port behind the selected provider.
 func (f *fixture) tick(t *testing.T, port contracts.Port) {
 	t.Helper()
+	if port.Role() == contracts.RoleRuntime {
+		f.dispatchPendingEnvironments(t)
+	}
+	provider := f.provider
+	if port.Role() == contracts.RoleEnvironment {
+		provider = f.environmentProvider
+	}
 	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		nil, worker.DefaultConfig(), "test-worker", wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.provider: port}))
+		nil, worker.DefaultConfig(), "test-worker", wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{provider: port}))
 	if err != nil {
 		t.Fatalf("worker.New() error = %v", err)
 	}
 	if err := w.Tick(f.ctx); err != nil {
 		t.Fatalf("Tick() error = %v", err)
+	}
+}
+
+func (f *fixture) dispatchPendingEnvironments(t *testing.T) {
+	t.Helper()
+	rows, err := store.OutboxReadyDispatch(f.ctx, f.pool, f.tenant, time.Now().UTC().Add(time.Second), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations := map[ids.OperationID]simulator.EnvironmentOp{}
+	for _, row := range rows {
+		body, err := worker.ParseDispatchBody(row.Payload)
+		if err != nil || body.Role != contracts.RoleEnvironment || (body.Method != contracts.MethodProvision && body.Method != contracts.MethodStop) {
+			continue
+		}
+		kind := simulator.EnvironmentProvisioned
+		if body.Method == contracts.MethodStop {
+			kind = simulator.EnvironmentStopped
+		}
+		operations[body.Operation] = simulator.EnvironmentOp{Reply: simulator.Accepted(nil), Effect: kind}
+	}
+	if len(operations) == 0 {
+		return
+	}
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{Operations: operations})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: environment})
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "test-environment-worker", ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Observe(f.ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -221,12 +271,16 @@ func TestSubmitTaskDispatchesTurnThroughSelectedHarness(t *testing.T) {
 		t.Fatalf("attempt = %s, want provisioning once dispatched", s.Attempt.State)
 	case s.Budget.Reserved != 100 || s.Reservation.State != lifecycle.ReservationHeld || s.Reservation.Amount != 100:
 		t.Fatalf("budget %+v reservation %+v, want 100 held", s.Budget, s.Reservation)
-	case s.Operation.State != lifecycle.OperationDispatched:
-		t.Fatalf("operation = %s, want dispatched", s.Operation.State)
-	case s.Dispatch == nil || s.Dispatch.Status != "pending" || s.Dispatch.Demand != contracts.DemandPerson:
-		t.Fatalf("dispatch = %+v, want pending with person demand", s.Dispatch)
+	case s.Operation.State != lifecycle.OperationRecorded:
+		t.Fatalf("runtime operation = %s, want recorded before environment readiness", s.Operation.State)
+	case s.Dispatch != nil:
+		t.Fatalf("runtime dispatch = %+v, want no runtime outbox before environment readiness", s.Dispatch)
 	case s.Mode != lifecycle.HarnessLive || s.Provider != f.provider:
 		t.Fatalf("selection = %s/%s, want live %s", s.Mode, s.Provider, f.provider)
+	}
+	environmentOperation, err := store.GetOperation(f.ctx, f.pool, f.tenant, s.Attempt.EnvironmentOperation)
+	if err != nil || environmentOperation.State != lifecycle.OperationDispatched {
+		t.Fatalf("environment operation = %+v, %v; want dispatched", environmentOperation, err)
 	}
 
 	rt := f.runtime(t, s.Operation.ID)
@@ -237,6 +291,10 @@ func TestSubmitTaskDispatchesTurnThroughSelectedHarness(t *testing.T) {
 	sent := rt.Ledger().Sent()
 	if len(sent) != 1 || sent[0].Method != contracts.MethodStartTurn || sent[0].Demand != contracts.DemandPerson || sent[0].Attempt != s.Attempt.ID {
 		t.Fatalf("sent = %+v, want one person start_turn for the attempt", sent)
+	}
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(sent[0].Arguments, &start); err != nil || start.Environment == nil || start.Environment.Provider != f.environmentProvider || start.Environment.ResourceRef != "environment:"+s.Attempt.ID.String() {
+		t.Fatalf("runtime start environment = %+v, %v; want the prepared assignment", start.Environment, err)
 	}
 	after := f.reload(t, "n-1")
 	if after.Operation.State != lifecycle.OperationAccepted || after.Dispatch.Status != "done" {
@@ -332,9 +390,14 @@ func TestSubmitTaskChangedPayloadRejected(t *testing.T) {
 	if after.Task.ID != original.Task.ID || after.Amount != 100 || after.Reservation.Amount != 100 {
 		t.Fatalf("original changed: %+v", after)
 	}
+	changed = f.submitCommand("n-1")
+	changed.EnvironmentProvider = mustID[ids.Provider](t)
+	if _, err := application.Submit(f.ctx, f.pool, changed); !errors.Is(err, application.ErrPayloadMismatch) {
+		t.Fatalf("changed environment provider = %v, want ErrPayloadMismatch", err)
+	}
 }
 
-func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
+func TestSubmitAssignmentSurvivesSchema13AndMigration15(t *testing.T) {
 	t.Parallel()
 	f := newFixtureAtVersion(t, lifecycle.HarnessLive, 13)
 	command := f.submitCommand("brief-schema-13")
@@ -344,8 +407,16 @@ func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyAttempt, err := lifecycle.NewAttempt(mustID[ids.Attempt](t), f.tenant, legacy.ID, 1, f.at)
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.seed(t, func(u *store.UnitOfWork) error {
 		_, _, err := store.InsertTask(f.ctx, u, legacy)
+		if err != nil {
+			return err
+		}
+		_, _, err = store.InsertAttempt(f.ctx, u, legacyAttempt)
 		return err
 	})
 
@@ -367,7 +438,7 @@ func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
 	if err := json.Unmarshal(sent[0].Arguments, &start); err != nil {
 		t.Fatal(err)
 	}
-	if start.Recovery != nil || start.Brief.Objective != command.Brief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, command.Brief.AcceptanceCriteria) {
+	if start.Recovery != nil || start.Brief.Objective != command.Brief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, command.Brief.AcceptanceCriteria) || start.Environment == nil || start.Environment.Provider != command.EnvironmentProvider || start.Environment.ResourceRef != "environment:"+submission.Attempt.ID.String() {
 		t.Fatalf("schema-13 runtime start = %+v, want exact ordinary brief", start)
 	}
 
@@ -416,6 +487,15 @@ func TestSubmitTaskBriefSurvivesSchema13AndMigration14(t *testing.T) {
 	}
 	if _, present := legacyView.Task.Brief(); present {
 		t.Fatal("legacy task read fabricated an execution brief")
+	}
+	migrateFixtureTo(t, f, 15)
+	assigned, err := store.GetAttempt(f.ctx, f.pool, f.tenant, submission.Attempt.ID)
+	if err != nil || assigned.EnvironmentProvider != command.EnvironmentProvider || assigned.EnvironmentOperation != submission.Attempt.EnvironmentOperation {
+		t.Fatalf("schema-15 assignment = %+v, %v; want original provider and operation", assigned, err)
+	}
+	legacyAttempt, err = store.GetAttemptByTask(f.ctx, f.pool, f.tenant, legacy.ID)
+	if err != nil || !legacyAttempt.EnvironmentProvider.IsZero() || !legacyAttempt.EnvironmentOperation.IsZero() {
+		t.Fatalf("legacy assignment = %+v, %v; migration must not fabricate one", legacyAttempt, err)
 	}
 }
 
@@ -479,6 +559,15 @@ func TestSubmitTaskCeilingRefusalDoesNotDispatch(t *testing.T) {
 	f.tick(t, rt)
 	if got := len(rt.Ledger().Sent()); got != 0 {
 		t.Fatalf("sent %d requests after a refused submission", got)
+	}
+}
+
+func TestSubmitRequiresRegisteredEnvironmentProvider(t *testing.T) {
+	f := newFixture(t, lifecycle.HarnessLive)
+	cmd := f.submitCommand("environment-unregistered")
+	cmd.EnvironmentProvider = mustID[ids.Provider](t)
+	if _, err := application.Submit(f.ctx, f.pool, cmd); !errors.Is(err, application.ErrNoEnvironment) {
+		t.Fatalf("Submit() error = %v, want ErrNoEnvironment", err)
 	}
 }
 
@@ -589,15 +678,19 @@ func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
 	if done.Receipt == nil || done.Challenge.State != lifecycle.SpendAsserted || done.Receipt.Terms.Amount != done.Reservation.Amount {
 		t.Fatalf("after assertion: challenge %+v receipt %+v", done.Challenge, done.Receipt)
 	}
-	if done.Dispatch == nil || done.Dispatch.Status != "pending" || done.Dispatch.Demand != contracts.DemandPerson {
-		t.Fatalf("dispatch after receipt = %+v, want pending with the submission's demand", done.Dispatch)
+	if done.Dispatch != nil || done.Operation.State != lifecycle.OperationRecorded {
+		t.Fatalf("runtime dispatch after receipt = %+v operation=%s, want runtime held until environment readiness", done.Dispatch, done.Operation.State)
+	}
+	environmentOperation, err := store.GetOperation(f.ctx, f.pool, f.tenant, s.Attempt.EnvironmentOperation)
+	if err != nil || environmentOperation.State != lifecycle.OperationDispatched {
+		t.Fatalf("environment operation after receipt = %+v, %v; want dispatched", environmentOperation, err)
 	}
 	if done.Task.State != lifecycle.TaskRunning || done.Attempt.State != lifecycle.AttemptProvisioning {
 		t.Fatalf("after receipt = %s/%s, want running/provisioning", done.Task.State, done.Attempt.State)
 	}
 
 	again, err := application.Assert(f.ctx, f.pool, f.assertCommand("a-1", s, assertion))
-	if err != nil || again.Dispatch.ID != done.Dispatch.ID {
+	if err != nil || again.Dispatch != nil || again.Operation.ID != done.Operation.ID || again.Attempt.EnvironmentOperation != done.Attempt.EnvironmentOperation {
 		t.Fatalf("replayed assertion = %+v, %v", again.Dispatch, err)
 	}
 
@@ -610,8 +703,37 @@ func TestSubmitSpendGovernedAwaitsReceiptThenDispatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantBrief, present := s.Task.Brief()
-	if !present || start.Recovery != nil || start.Brief.Objective != wantBrief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) {
+	if !present || start.Recovery != nil || start.Brief.Objective != wantBrief.Objective || !slices.Equal(start.Brief.AcceptanceCriteria, wantBrief.AcceptanceCriteria) || start.Environment == nil || start.Environment.Provider != f.environmentProvider || start.Environment.ResourceRef != "environment:"+s.Attempt.ID.String() {
 		t.Fatalf("governed runtime start=%+v, want original brief", start)
+	}
+}
+
+// A governed submission from before environment assignment has none; its
+// approval keeps the previous release's direct runtime dispatch.
+func TestSubmitSpendLegacyAssertionDispatchesRuntime(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.governed(t, "n-legacy")
+	// Migration 15 leaves an attempt whose submission named no environment unassigned.
+	if _, err := f.pool.Exec(f.ctx, `update attempt set environment_provider_id = null, environment_operation_id = null where tenant_id = $1 and attempt_id = $2`, f.tenant.String(), s.Attempt.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := (&simulator.Spender{Tenant: f.tenant, Principal: f.principal}).Assert(*s.Challenge, f.at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := application.Assert(f.ctx, f.pool, f.assertCommand("a-1", s, assertion))
+	if err != nil {
+		t.Fatalf("Assert() error = %v", err)
+	}
+	if done.Receipt == nil || done.Dispatch == nil || done.Dispatch.Status != "pending" || done.Dispatch.Demand != contracts.DemandPerson {
+		t.Fatalf("legacy approval receipt=%+v dispatch=%+v, want a pending runtime dispatch", done.Receipt, done.Dispatch)
+	}
+	if done.Task.State != lifecycle.TaskRunning || done.Attempt.State != lifecycle.AttemptProvisioning {
+		t.Fatalf("after receipt = %s/%s, want running/provisioning", done.Task.State, done.Attempt.State)
+	}
+	if n := f.count(t, "outbox", "attempt_id = $2 and payload->>'role' = 'environment'", s.Attempt.ID.String()); n != 0 {
+		t.Fatalf("legacy approval enqueued %d environment rows, want none", n)
 	}
 }
 

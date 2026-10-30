@@ -4,7 +4,8 @@ This directory is the first deployment substrate defined by
 [ADR-0009](../../docs/adr/0009-deployment-unit-and-first-substrate.md). The base stack runs a
 PostgreSQL primary, a one-shot migration job and the `dac-plane serve` process. The development
 overlay adds a TLS test issuer, trusted provisioning jobs and the separate-process simulator for
-the runtime and artifact-store roles.
+the runtime, environment and artifact-store roles. Every submission names the simulated environment
+provider; its adapter accepts each provision and stop.
 
 The base stack is production-shaped, not a production platform. It deliberately leaves database
 high availability, backup and restore, ingress, certificate issuance, secret distribution and
@@ -97,13 +98,13 @@ just test-operations
 
 The simulator settings used by this profile are test controls, not provider or production
 administration interfaces. `DAC_ADAPTER_URLS` accepts a comma-separated set of adapter WebSocket
-URLs and keeps one connection per simulated role per URL while sharing the runtime, artifact bytes
-and evidence ledger. It is mutually exclusive with the normal single `DAC_ADAPTER_URL` setting.
+URLs and keeps one connection per simulated role per URL while sharing the runtime, environment,
+artifact bytes and evidence ledger. It is mutually exclusive with the normal single `DAC_ADAPTER_URL` setting.
 `DAC_SIM_CONTROL_ADDR` enables the otherwise absent HTTP pause/evidence listener. A pause may name
 an exact operation or the next operation to reach a boundary, which lets a test arm the pause before
 submission. The overlay binds that listener to host loopback only. Do not enable or publish it in a
 production deployment.
 
-The tagged next-release binary, schema-15 probe migration, pinned-old image and simulator evidence
+The tagged next-release binary, schema-16 probe migration, pinned-old image and simulator evidence
 listener exist only for this operations suite. They do not extend the release migration set or
 qualify a real provider.

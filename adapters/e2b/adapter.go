@@ -26,6 +26,10 @@ const (
 	metadataOperation = "dac_operation_id"
 	metadataTenant    = "dac_tenant_id"
 	metadataAttempt   = "dac_attempt_id"
+
+	// defaultSandboxTimeout fits every E2B plan; the Hobby plan caps a sandbox at
+	// one hour, and E2B itself would kill an unset sandbox after five minutes.
+	defaultSandboxTimeout = time.Hour
 )
 
 type Config struct {
@@ -33,6 +37,9 @@ type Config struct {
 	HTTPClient                              *http.Client
 	Journal                                 *journal.Store
 	Now                                     func() time.Time
+	// SandboxTimeout is how long a sandbox may run before E2B kills it. It bounds
+	// a sandbox whose stop never lands, so it should exceed the longest Attempt.
+	SandboxTimeout time.Duration
 }
 
 type Adapter struct {
@@ -62,6 +69,8 @@ type sandbox struct {
 	Template    string            `json:"templateID"`
 	State       string            `json:"state"`
 	EnvdVersion string            `json:"envdVersion"`
+	StartedAt   time.Time         `json:"startedAt"`
+	EndAt       time.Time         `json:"endAt"`
 	Metadata    map[string]string `json:"metadata"`
 	Network     struct {
 		DenyOut []string `json:"denyOut"`
@@ -95,6 +104,12 @@ func New(cfg Config) (*Adapter, error) {
 	}
 	if cfg.APIKey == "" || cfg.TemplateID == "" || cfg.ProviderID == "" || cfg.Journal == nil {
 		return nil, errors.New("E2B adapter configuration is incomplete")
+	}
+	if cfg.SandboxTimeout == 0 {
+		cfg.SandboxTimeout = defaultSandboxTimeout
+	}
+	if cfg.SandboxTimeout < time.Second {
+		return nil, errors.New("E2B sandbox timeout must be at least one second")
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: 45 * time.Second}
@@ -177,6 +192,13 @@ func (a *Adapter) Subscribe(_ context.Context, cursor wire.Cursor) (adapterkit.S
 }
 
 func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, error) {
+	var fields map[string]json.RawMessage
+	if err := strictDecode(req.Arguments, &fields); err != nil {
+		return rejected(req, wire.FailureInvalidArguments, "invalid environment provision request"), nil
+	}
+	if len(fields) == 0 {
+		return a.provisionTask(ctx, req)
+	}
 	var m migrationRequest
 	if err := strictDecode(req.Arguments, &m); err != nil || m.Operation != req.Operation || m.Stage != "target_environment_ready" || m.Migration == "" || m.Source == "" || m.Target == "" || m.Target != req.Attempt || m.Source == m.Target || m.Epoch == 0 || m.Recovery != "restart_from_artifacts" {
 		return rejected(req, wire.FailureInvalidArguments, "invalid migration environment provision request"), nil
@@ -225,23 +247,10 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
 		return wire.Reply{}, err
 	}
-	allowInternet := false
-	body := map[string]any{
-		"templateID":            a.cfg.TemplateID,
-		"allow_internet_access": allowInternet,
-		"network": map[string]any{
-			"denyOut": []string{"0.0.0.0/0"},
-		},
-		"metadata": map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt},
-	}
-	var createdSandbox sandbox
-	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &createdSandbox); err != nil {
-		var status apiError
-		if errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusRequestTimeout && status.status != http.StatusConflict && status.status != http.StatusTooManyRequests {
-			if resetErr := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
-				return wire.Reply{}, resetErr
-			}
-			return wire.Reply{}, fmt.Errorf("E2B rejected sandbox create: %w", err)
+	createdSandbox, err := a.createSandbox(ctx, req)
+	if err != nil {
+		if createRejected(err) {
+			return wire.Reply{}, a.releaseRejectedCreate(req.Operation, err)
 		}
 		found, lookupErr := a.findOperation(ctx, req.Operation)
 		if lookupErr == nil && found != nil {
@@ -249,13 +258,127 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 		}
 		return wire.Reply{}, fmt.Errorf("E2B create reply is uncertain: %w", err)
 	}
-	if createdSandbox.SandboxID == "" {
-		createdSandbox.SandboxID = createdSandbox.SandboxId
-	}
-	if createdSandbox.SandboxID == "" {
-		return wire.Reply{}, errors.New("E2B create response omitted sandbox identity")
-	}
 	return a.finishProvision(req, m, createdSandbox)
+}
+
+type taskProvisionResult struct {
+	ResourceRef string `json:"resource_ref"`
+}
+
+func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Reply, error) {
+	var empty struct{}
+	if err := strictDecode(req.Arguments, &empty); err != nil {
+		return rejected(req, wire.FailureInvalidArguments, "invalid environment provision request"), nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cancelled, err := a.cfg.Journal.WasCancelledBeforeStart(req.Operation)
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	if cancelled {
+		return rejected(req, wire.FailureCancelled, "provision was cancelled before it started"), nil
+	}
+	op, created, err := a.cfg.Journal.Begin(journal.Operation{ID: req.Operation, Hash: digest(req.Arguments), Tenant: req.Tenant, Attempt: req.Attempt, Method: req.Method})
+	if err != nil {
+		return rejected(req, wire.FailureInvalidArguments, "operation identity or payload mismatch"), nil
+	}
+	if op.State == "cancelled" {
+		return rejected(req, wire.FailureCancelled, "provision was cancelled before it started"), nil
+	}
+	if op.ResourceRef != "" && op.State == "provisioned" {
+		// A crash after saving the mapping left its readiness unrecorded.
+		return a.recordTaskReadiness(req, op.ResourceRef)
+	}
+	if op.ResourceRef != "" && op.State != "create_sent" {
+		raw, _ := json.Marshal(taskProvisionResult{ResourceRef: op.ResourceRef})
+		return accepted(req, raw), nil
+	}
+	if !created && op.State != "prepared" {
+		found, lookupErr := a.findOperation(ctx, req.Operation)
+		if lookupErr != nil {
+			return wire.Reply{}, lookupErr
+		}
+		if found == nil {
+			return wire.Reply{}, errors.New("E2B create outcome remains unknown; no retry was issued")
+		}
+		return a.finishTaskProvision(req, *found)
+	}
+	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
+		return wire.Reply{}, err
+	}
+	createdSandbox, err := a.createSandbox(ctx, req)
+	if err != nil {
+		if createRejected(err) {
+			return wire.Reply{}, a.releaseRejectedCreate(req.Operation, err)
+		}
+		found, lookupErr := a.findOperation(ctx, req.Operation)
+		if lookupErr == nil && found != nil {
+			return a.finishTaskProvision(req, *found)
+		}
+		return wire.Reply{}, fmt.Errorf("E2B create reply is uncertain: %w", err)
+	}
+	return a.finishTaskProvision(req, createdSandbox)
+}
+
+// createSandbox never asks E2B to pause on timeout: a paused sandbox has no
+// lifetime of its own, so one whose stop was lost would be kept indefinitely.
+func (a *Adapter) createSandbox(ctx context.Context, req wire.Request) (sandbox, error) {
+	body := map[string]any{"templateID": a.cfg.TemplateID, "allow_internet_access": false,
+		"timeout":   int64(a.cfg.SandboxTimeout / time.Second),
+		"autoPause": false,
+		"network":   map[string]any{"denyOut": []string{"0.0.0.0/0"}},
+		"metadata":  map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt}}
+	var created sandbox
+	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &created); err != nil {
+		return sandbox{}, err
+	}
+	if created.SandboxID == "" {
+		created.SandboxID = created.SandboxId
+	}
+	if created.SandboxID == "" {
+		return sandbox{}, errors.New("E2B create response omitted sandbox identity")
+	}
+	return created, nil
+}
+
+// createRejected reports a create the provider definitely refused, which
+// leaves no sandbox to reconcile.
+func createRejected(err error) bool {
+	var status apiError
+	return errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusRequestTimeout && status.status != http.StatusConflict && status.status != http.StatusTooManyRequests
+}
+
+func (a *Adapter) releaseRejectedCreate(operation string, err error) error {
+	if resetErr := a.cfg.Journal.Update(operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
+		return resetErr
+	}
+	return fmt.Errorf("E2B rejected sandbox create: %w", err)
+}
+
+func (a *Adapter) finishTaskProvision(req wire.Request, sbx sandbox) (wire.Reply, error) {
+	ref := "sandbox:" + sbx.SandboxID
+	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.ResourceRef, o.State = ref, "provisioned"; return nil }); err != nil {
+		return wire.Reply{}, err
+	}
+	return a.recordTaskReadiness(req, ref)
+}
+
+// recordTaskReadiness records the provisioned sandbox's running observation
+// and accepts the provision. The journal records it once, so a redelivery
+// after a crash between the mapping and this write repairs it.
+func (a *Adapter) recordTaskReadiness(req wire.Request, ref string) (wire.Reply, error) {
+	_, _, err := a.cfg.Journal.RecordObservation(req.Operation, ref, func(seq uint64) (json.RawMessage, error) {
+		return json.Marshal(observation{ResourceRef: ref, State: "running", Sequence: seq, ObservedAt: a.cfg.Now()})
+	})
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	raw, err := json.Marshal(taskProvisionResult{ResourceRef: ref})
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	return accepted(req, raw), nil
 }
 
 func (a *Adapter) finishProvision(req wire.Request, m migrationRequest, sbx sandbox) (wire.Reply, error) {
@@ -275,6 +398,13 @@ func (a *Adapter) finishProvision(req wire.Request, m migrationRequest, sbx sand
 }
 
 func (a *Adapter) stop(ctx context.Context, req wire.Request) (wire.Reply, error) {
+	var fields map[string]json.RawMessage
+	if err := strictDecode(req.Arguments, &fields); err != nil {
+		return rejected(req, wire.FailureInvalidArguments, "invalid environment stop request"), nil
+	}
+	if _, taskEnvironmentStop := fields["provision_operation_id"]; taskEnvironmentStop {
+		return a.stopTaskEnvironment(ctx, req)
+	}
 	var m migrationRequest
 	if err := strictDecode(req.Arguments, &m); err != nil || m.Operation != req.Operation || m.Migration == "" || m.Source == "" || m.Epoch == 0 || m.EnvRef == "" || (m.Stage != "source_cleaned" && m.Stage != "target_environment_cleaned") || (m.Target != "" && m.Target == m.Source) || (m.Stage == "target_environment_cleaned" && m.Target == "") {
 		return rejected(req, wire.FailureInvalidArguments, "invalid migration environment stop request"), nil
@@ -315,6 +445,69 @@ func (a *Adapter) stop(ctx context.Context, req wire.Request) (wire.Reply, error
 		o.ResourceRef, o.State, o.Receipt = m.EnvRef, "stopped", raw
 		return nil
 	}); err != nil {
+		return wire.Reply{}, err
+	}
+	return accepted(req, raw), nil
+}
+
+func (a *Adapter) stopTaskEnvironment(ctx context.Context, req wire.Request) (wire.Reply, error) {
+	var input struct {
+		ProvisionOperation string `json:"provision_operation_id"`
+	}
+	if err := strictDecode(req.Arguments, &input); err != nil || input.ProvisionOperation == "" {
+		return rejected(req, wire.FailureInvalidArguments, "invalid environment stop request"), nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	provision, err := a.cfg.Journal.Operation(input.ProvisionOperation)
+	resourceRef := "operation:" + input.ProvisionOperation
+	if errors.Is(err, os.ErrNotExist) {
+		if err := a.cfg.Journal.CancelBeforeStart(input.ProvisionOperation); err != nil {
+			return wire.Reply{}, err
+		}
+	} else if err != nil {
+		return wire.Reply{}, err
+	} else {
+		if provision.Tenant != req.Tenant || provision.Attempt != req.Attempt {
+			return rejected(req, wire.FailureInvalidArguments, "environment assignment is unavailable"), nil
+		}
+		if provision.ResourceRef == "" && provision.State == "prepared" {
+			if err := a.cfg.Journal.CancelBeforeStart(input.ProvisionOperation); err != nil {
+				return wire.Reply{}, err
+			}
+		} else if provision.ResourceRef == "" {
+			found, findErr := a.findOperation(ctx, input.ProvisionOperation)
+			if findErr != nil {
+				return wire.Reply{}, findErr
+			}
+			if found == nil {
+				return wire.Reply{}, errors.New("E2B create outcome remains unknown during stop")
+			}
+			provision.ResourceRef = "sandbox:" + found.SandboxID
+		}
+		if provision.ResourceRef != "" {
+			resourceRef = provision.ResourceRef
+		}
+	}
+	op, _, err := a.cfg.Journal.Begin(journal.Operation{ID: req.Operation, Hash: digest(req.Arguments), Tenant: req.Tenant, Attempt: req.Attempt, Method: req.Method, ResourceRef: resourceRef})
+	if err != nil {
+		return rejected(req, wire.FailureInvalidArguments, "operation identity or payload mismatch"), nil
+	}
+	if op.State == "observed" && len(op.Receipt) > 0 {
+		return accepted(req, op.Receipt), nil
+	}
+	if id, ok := sandboxID(resourceRef); ok {
+		if err := a.doJSON(ctx, http.MethodDelete, "/sandboxes/"+url.PathEscape(id), nil, "", nil); err != nil {
+			var status apiError
+			if !errors.As(err, &status) || status.status != http.StatusNotFound {
+				return wire.Reply{}, err
+			}
+		}
+	}
+	raw, _, err := a.cfg.Journal.RecordObservation(req.Operation, resourceRef, func(seq uint64) (json.RawMessage, error) {
+		return json.Marshal(observation{ResourceRef: resourceRef, State: "absent", Sequence: seq, ObservedAt: a.cfg.Now()})
+	})
+	if err != nil {
 		return wire.Reply{}, err
 	}
 	return accepted(req, raw), nil

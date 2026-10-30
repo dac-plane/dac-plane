@@ -406,6 +406,9 @@ func (c *connection) close(cause error) {
 	c.conn.CloseNow()
 }
 
+// write sends one frame. Cancelling a websocket write closes the connection,
+// and the connection is shared, so a caller's cancellation may stop a frame
+// from starting but never ends one in flight: only the write timeout does.
 func (c *connection) write(ctx context.Context, frame contracts.Frame) error {
 	if err := frame.Validate(); err != nil {
 		return err
@@ -414,7 +417,10 @@ func (c *connection) write(ctx context.Context, frame contracts.Frame) error {
 	if err != nil {
 		return err
 	}
-	wctx, cancel := context.WithTimeout(ctx, c.registry.options.PongTimeout)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.registry.options.PongTimeout)
 	defer cancel()
 	return c.conn.Write(wctx, websocket.MessageText, data)
 }

@@ -13,7 +13,7 @@ import (
 
 // Runtime outcomes and exact governed receipts share cursor/transaction gates,
 // but not authority: a bare outcome never proves a governed action's effect.
-func (w *Worker) applyReconciledEntry(ctx context.Context, u *store.UnitOfWork, current lifecycle.ProviderOperation, entry contracts.Entry, action *store.GovernedAction) (bool, error) {
+func (w *Worker) applyReconciledEntry(ctx context.Context, u *store.UnitOfWork, current lifecycle.ProviderOperation, role contracts.Role, entry contracts.Entry, action *store.GovernedAction) (bool, error) {
 	if entry.PayloadOmitted {
 		return false, nil
 	}
@@ -34,6 +34,15 @@ func (w *Worker) applyReconciledEntry(ctx context.Context, u *store.UnitOfWork, 
 		}
 		receipt = &r
 		outcome = lifecycle.OperationSucceeded
+	} else if role == contracts.RoleEnvironment && entry.Kind == contracts.EntryEnvironmentObserved {
+		// The environment reports its operations through its resource. Its own
+		// observation on this operation proves the request took effect; the
+		// observe loop then applies the observation through ingestion.
+		body, err := contracts.DecodeEntry[contracts.EnvironmentObserved](entry)
+		if err != nil || body.Validate() != nil {
+			return false, nil
+		}
+		outcome = lifecycle.OperationAccepted
 	} else {
 		if entry.Kind != contracts.EntryOperationOutcome {
 			return false, nil
