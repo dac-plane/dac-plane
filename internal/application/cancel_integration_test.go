@@ -219,6 +219,14 @@ func TestCancelDispatchedTaskWaitsForStops(t *testing.T) {
 	}
 	// The interrupt dispatches on the next tick.
 	f.tick(t, rt)
+	// The adapter records a cancel asynchronously once the frame arrives.
+	deadline := time.Now().Add(5 * time.Second)
+	for len(rt.Ledger().Cancelled()) < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("protocol cancel was not delivered")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	if n := len(rt.Ledger().Cancelled()); n != 1 {
 		t.Fatalf("protocol cancels = %d, want 1", n)
 	}
