@@ -3,6 +3,7 @@
 package application_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -75,6 +76,18 @@ func (f *fixture) environmentStopOperation(t *testing.T, s application.Submissio
 }
 
 // reservation reads the attempt-derived reservation the budget gate expects.
+// observeEnvironmentStop reports the assigned environment absent on its stop
+// operation, as a provider does once the resource is gone.
+func (f *fixture) observeEnvironmentStop(t *testing.T, s application.Submission, sequence uint64) {
+	t.Helper()
+	if got := f.ingestEnvironmentNow(t, f.environmentEvent(s, f.environmentStopOperation(t, s), simulator.RowsFrame(false,
+		row(1, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunAbsent, Sequence: sequence, ObservedAt: f.at,
+		})))); got.Applied != 1 {
+		t.Fatalf("environment stop = %+v, want applied", got)
+	}
+}
+
 func (f *fixture) reservation(t *testing.T, s application.Submission) lifecycle.Reservation {
 	t.Helper()
 	id, err := ids.Parse[ids.Reservation](s.Attempt.ID.String())
@@ -447,22 +460,225 @@ func TestCancelUsesPreviouslyObservedEnvironmentStop(t *testing.T) {
 	}
 }
 
-func TestEventFailedTurnAfterCancelRefuses(t *testing.T) {
+// Every way a turn can end proves the runtime stopped once a stop is awaited;
+// the runtime never has to report the interruption it was asked for.
+func TestEventTurnEndAfterCancelIsRuntimeStop(t *testing.T) {
+	t.Parallel()
+	for name, finished := range map[string]func(f *fixture) contracts.TurnFinished{
+		"completed": func(f *fixture) contracts.TurnFinished {
+			return contracts.TurnFinished{SessionRef: "s-1", TurnRef: "t-1", Outcome: lifecycle.TurnCompleted, EndedAt: f.at}
+		},
+		"failed": func(f *fixture) contracts.TurnFinished { return failedTurn("s-1", "t-1", f.at) },
+		"interrupted": func(f *fixture) contracts.TurnFinished {
+			return contracts.TurnFinished{SessionRef: "s-1", TurnRef: "t-1", Outcome: lifecycle.TurnInterrupted, EndedAt: f.at}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, lifecycle.HarnessLive)
+			s, rt := f.executing(t, "n-1")
+			f.cancel(t, s, "c-1")
+			if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+				row(2, contracts.EntryTurnFinished, finished(f))))); got.Applied != 1 {
+				t.Fatalf("turn end = %+v, want applied", got)
+			}
+			// The two-party stop stands: the environment still has to report.
+			if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
+				t.Fatalf("states = %s/%s, want still cancelling", task, attempt)
+			}
+			f.observeEnvironmentStop(t, s, 2)
+			if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
+				t.Fatalf("states = %s/%s, want cancelled/terminated", task, attempt)
+			}
+			if got := f.reservation(t, s); got.State != lifecycle.ReservationReleased {
+				t.Fatalf("reservation = %s, want released", got.State)
+			}
+		})
+	}
+}
+
+// A turn that ended before the cancellation reported its end while no stop was
+// awaited, so the cancellation itself must count it. The interrupt still goes
+// out, because the record may lag a turn the runtime has started since.
+func TestCancelUsesPreviouslyEndedTurn(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(2, contracts.EntryTurnFinished, contracts.TurnFinished{SessionRef: "s-1", TurnRef: "t-1", Outcome: lifecycle.TurnCompleted, EndedAt: f.at})))); got.Applied != 1 {
+		t.Fatalf("turn end = %+v, want applied", got)
+	}
+	f.cancel(t, s, "c-1")
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
+		t.Fatalf("states = %s/%s, want still cancelling", task, attempt)
+	}
+	f.observeEnvironmentStop(t, s, 2)
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, attempt)
+	}
+}
+
+// A turn awaiting input has not ended the runtime's work, so it proves no stop,
+// whether it arrives after the cancellation or was recorded before it.
+func TestAwaitingInputTurnIsNoRuntimeStop(t *testing.T) {
+	t.Parallel()
+	for name, cancelFirst := range map[string]bool{"after_cancel": true, "before_cancel": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, lifecycle.HarnessLive)
+			s, rt := f.executing(t, "n-1")
+			awaiting := f.event(rt, s, 1, simulator.RowsFrame(false,
+				row(2, contracts.EntryTurnFinished, contracts.TurnFinished{SessionRef: "s-1", TurnRef: "t-1", Outcome: lifecycle.TurnAwaitingInput, EndedAt: f.at})))
+			if cancelFirst {
+				f.cancel(t, s, "c-1")
+			}
+			f.ingestNow(t, awaiting)
+			if !cancelFirst {
+				f.cancel(t, s, "c-1")
+			}
+			attempt, err := store.GetAttempt(f.ctx, f.pool, f.tenant, s.Attempt.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempt.RuntimeStopped {
+				t.Fatal("a turn awaiting input was accepted as the runtime stop")
+			}
+		})
+	}
+}
+
+// A runtime that rejected a start it may have received ran nothing, so the
+// rejection is the only stop evidence that will ever arrive.
+func TestRejectedUncertainStartProvesRuntimeStop(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.lost(t, "n-1")
+	f.cancel(t, s, "c-1")
+	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(1, contracts.EntryOperationOutcome, contracts.OperationOutcome{State: lifecycle.OperationRejected})))); got.Applied != 1 {
+		t.Fatalf("outcome = %+v, want applied", got)
+	}
+	attempt, err := store.GetAttempt(f.ctx, f.pool, f.tenant, s.Attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !attempt.RuntimeStopped || attempt.State != lifecycle.AttemptCancellationRequested {
+		t.Fatalf("attempt = %+v, want the runtime stopped and the environment pending", attempt)
+	}
+	f.observeEnvironmentStop(t, s, 2)
+	if task, state := f.states(t, s); task != lifecycle.TaskCancelled || state != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, state)
+	}
+}
+
+type replayingEnvironment struct {
+	contracts.Port
+	replays []contracts.Request
+}
+
+func (p *replayingEnvironment) Replay(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
+	p.replays = append(p.replays, request)
+	return p.Port.Send(ctx, request)
+}
+
+type fixedEnvironmentPorts struct{ port contracts.Port }
+
+func (p fixedEnvironmentPorts) Port(_ ids.TenantID, _ ids.ProviderID, role contracts.Role) contracts.Port {
+	if role == contracts.RoleEnvironment {
+		return p.port
+	}
+	return nil
+}
+
+func (fixedEnvironmentPorts) ArtifactStore(ids.TenantID, ids.ProviderID) (worker.ArtifactStorePort, bool) {
+	return worker.ArtifactStorePort{}, false
+}
+
+// A stop frame can die unread with its adapter. Nothing was journaled there, so
+// the stop must be redelivered to a provider that negotiated replay, and only to
+// one that did.
+func TestUncertainEnvironmentStopReplaysOnlyWhenNegotiated(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("n-1"))
+	f.dispatchPendingEnvironments(t)
+	f.cancel(t, s, "c-1")
+	stop := f.environmentStopOperation(t, s)
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Operations: map[ids.OperationID]simulator.EnvironmentOp{
+			stop: {Reply: simulator.Unknown(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "lost reply"})},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := func(port contracts.Port) *worker.Worker {
+		t.Helper()
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "test-environment-worker", worker.WithPorts(fixedEnvironmentPorts{port}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if err := build(environment).Tick(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, stop); err != nil || op.State != lifecycle.OperationUncertain {
+		t.Fatalf("stop operation = %s, %v; want uncertain", op.State, err)
+	}
+	if err := build(environment).Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(environment.Ledger().Sent()); got != 1 {
+		t.Fatalf("sends = %d, want no redelivery without negotiated replay", got)
+	}
+	replaying := &replayingEnvironment{Port: environment}
+	if err := build(replaying).Reconcile(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(replaying.replays) != 1 || replaying.replays[0].Operation != stop || replaying.replays[0].Method != contracts.MethodStop {
+		t.Fatalf("replays = %+v, want the stop", replaying.replays)
+	}
+}
+
+// A result the runtime finished before its stop was observed stays unadmitted.
+func TestResultDuringCancellationStaysInactive(t *testing.T) {
+	t.Parallel()
+	g := newResultFixture(t)
+	g.cancel(t, g.s, "c-1")
+	finished := row(3, contracts.EntryTurnFinished, contracts.TurnFinished{SessionRef: "s-1", TurnRef: "t-1", Outcome: lifecycle.TurnCompleted, EndedAt: g.at})
+	if got := g.ingestNow(t, g.event(g.rt, g.s, 1, simulator.RowsFrame(false, row(2, contracts.EntryResultProposed, g.proposal), finished))); got.Applied != 1 || got.Refused != 1 {
+		t.Fatalf("late result = %+v, want the proposal refused and the turn end applied", got)
+	}
+	g.observeEnvironmentStop(t, g.s, 2)
+	if task, attempt := g.states(t, g.s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, attempt)
+	}
+	if n := g.count(t, "result_revision", "task_id = $2", g.s.Task.ID.String()); n != 0 {
+		t.Fatalf("result revisions = %d, want none", n)
+	}
+}
+
+// A late running observation is progress only: nothing reverses a termination.
+func TestLateRunningObservationCannotReverseTermination(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
 	s, rt := f.executing(t, "n-1")
 	f.cancel(t, s, "c-1")
-	// A failure reported after the stop was requested is a late observation:
-	// it is recorded as evidence and never overrides the cancellation.
 	if got := f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
-		row(2, contracts.EntryTurnFinished, failedTurn("s-1", "t-1", f.at))))); got.Applied != 0 || got.Refused != 1 {
-		t.Fatalf("late failure = %+v, want a refusal", got)
+		row(2, contracts.EntryRuntimeStopped, contracts.RuntimeStopped{HadActiveRun: true})))); got.Applied != 1 {
+		t.Fatalf("runtime stop = %+v, want applied", got)
 	}
-	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelling || attempt != lifecycle.AttemptCancellationRequested {
-		t.Fatalf("states = %s/%s, want still cancelling", task, attempt)
+	f.observeEnvironmentStop(t, s, 2)
+	f.ingestEnvironmentNow(t, f.environmentEvent(s, s.Attempt.EnvironmentOperation, simulator.RowsFrame(false,
+		row(2, contracts.EntryEnvironmentObserved, contracts.EnvironmentObserved{
+			ResourceRef: "environment:" + s.Attempt.ID.String(), State: lifecycle.RunRunning, Sequence: 3, ObservedAt: f.at,
+		}))))
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want still cancelled/terminated", task, attempt)
 	}
-	if n := f.count(t, "audit_event", "event = 'fail' and record_id = $2 and outcome = 'rejected'", s.Attempt.ID.String()); n != 1 {
-		t.Fatalf("late-failure evidence = %d, want 1", n)
+	if got := f.reservation(t, s); got.State != lifecycle.ReservationReleased {
+		t.Fatalf("reservation = %s, want released", got.State)
 	}
 }
 

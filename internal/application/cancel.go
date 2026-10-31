@@ -206,6 +206,15 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 	} else if attempt.EnvironmentProvider.IsZero() {
 		return nil, fmt.Errorf("%w: the attempt has no dispatch to interrupt", ErrInvalidCommand)
 	}
+	runtimeEnded := false
+	if runtimeMayHaveStarted {
+		// A turn that already ended reported its end before any stop was awaited,
+		// so nothing would report it again. The interrupt still goes out: this
+		// record may lag a turn the runtime has started since.
+		if runtimeEnded, err = store.RuntimeTurnsEnded(ctx, u.uow, tenant, attempt.ID); err != nil {
+			return nil, err
+		}
+	}
 	var cancellationOutbox *store.OutboxPayload
 	if runtimeMayHaveStarted {
 		body, err := json.Marshal(map[string]any{
@@ -228,7 +237,7 @@ func cancel(ctx context.Context, u *unit, cmd CancelTask) (json.RawMessage, erro
 		}
 		return nil, err
 	}
-	if !runtimeMayHaveStarted {
+	if !runtimeMayHaveStarted || runtimeEnded {
 		step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: u.actor, At: u.at}
 		next, applied, refusal, err := step.Attempt(ctx, attempt.ID, lifecycle.AttemptRuntimeStopped, "")
 		if err != nil {

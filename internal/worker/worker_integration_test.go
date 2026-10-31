@@ -903,6 +903,34 @@ func TestWorkerCancelIndependentOfStop(t *testing.T) {
 	if stored.State != lifecycle.AttemptCancellationRequested {
 		t.Fatalf("attempt state = %s, want cancellation_requested without observed stops", stored.State)
 	}
+
+	// A delivered interrupt proves only that a frame was written, so it repeats
+	// with a new delivery until the runtime stop is observed.
+	if err := w.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	cancels = f.loopback.Cancels()
+	if len(cancels) != 2 || cancels[1].Operation != opID || cancels[1].Delivery == cancels[0].Delivery {
+		t.Fatalf("Cancels() = %+v, want one repeat with a new delivery", cancels)
+	}
+	stopped, err := store.Begin(ctx, f.pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	stop := store.Transition{ExpectedVersion: stored.Version, At: now, Actor: f.actor, AuditID: mustID[ids.Audit](t)}
+	if _, _, err := store.ApplyAttempt(ctx, stopped, f.tenant, attempt.ID, lifecycle.AttemptRuntimeStopped, "", stop); err != nil {
+		_ = stopped.Rollback(ctx)
+		t.Fatalf("ApplyAttempt(runtime_stopped) error = %v", err)
+	}
+	if err := stopped.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if err := w.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if got := len(f.loopback.Cancels()); got != 2 {
+		t.Fatalf("Cancels() = %d, want no repeat after the runtime stop", got)
+	}
 	if len(f.loopback.Sent()) != 0 {
 		t.Fatal("Tick() sent a provider request on the cancel path")
 	}

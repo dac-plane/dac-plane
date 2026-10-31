@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -81,11 +82,36 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	token, err := tokenSource()
+	tlsConfig, err := adapterTLS()
 	if err != nil {
 		return err
 	}
-	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleEnvironment, Handler: handler, TLS: &tls.Config{MinVersion: tls.VersionTLS12}, Logger: logger})
+	token, err := tokenSource(tlsConfig)
+	if err != nil {
+		return err
+	}
+	go handler.RetryStops(ctx)
+	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleEnvironment, Handler: handler, Offered: []string{wire.CapabilityOperationReplay}, TLS: tlsConfig, Logger: logger})
+}
+
+// adapterTLS configures the connections to the control plane and its token
+// issuer only. The E2B API client keeps the system roots.
+func adapterTLS() (*tls.Config, error) {
+	config := &tls.Config{MinVersion: tls.VersionTLS12}
+	path := strings.TrimSpace(os.Getenv("DAC_ADAPTER_CA_FILE"))
+	if path == "" {
+		return config, nil
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, errors.New("cannot read adapter CA file")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, errors.New("adapter CA file has no certificates")
+	}
+	config.RootCAs = roots
+	return config, nil
 }
 
 func readSecret(path string) (string, error) {
@@ -107,7 +133,7 @@ func readSecret(path string) (string, error) {
 	return value, nil
 }
 
-func tokenSource() (adapterkit.TokenSource, error) {
+func tokenSource(tlsConfig *tls.Config) (adapterkit.TokenSource, error) {
 	if path := strings.TrimSpace(os.Getenv("DAC_ADAPTER_TOKEN_FILE")); path != "" {
 		return adapterkit.FileToken(path), nil
 	}
@@ -115,5 +141,8 @@ func tokenSource() (adapterkit.TokenSource, error) {
 	if tokenURL == "" || clientID == "" || secretFile == "" || scope == "" {
 		return nil, errors.New("adapter token file or complete client-credentials settings are required")
 	}
-	return adapterkit.ClientCredentials(adapterkit.ClientCredentialsConfig{TokenURL: tokenURL, ClientID: clientID, SecretFile: secretFile, Scopes: []string{scope}})
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig.Clone()
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	return adapterkit.ClientCredentials(adapterkit.ClientCredentialsConfig{TokenURL: tokenURL, ClientID: clientID, SecretFile: secretFile, Scopes: []string{scope}, HTTPClient: client})
 }

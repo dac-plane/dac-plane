@@ -26,6 +26,10 @@ var (
 	artifactsBucket  = []byte("artifacts")
 )
 
+// StateCancelled marks an operation fenced before it started a turn. It may name
+// an operation this journal never saw, which a later delivery must not start.
+const StateCancelled = "cancelled"
+
 type Operation struct {
 	ID, Tenant, Attempt, ArgumentsHash, ThreadID, TurnID, State string
 	Baseline                                                    map[string]string
@@ -93,6 +97,9 @@ func (s *Store) Begin(op Operation) (Operation, bool, error) {
 		if raw != nil {
 			if err := json.Unmarshal(raw, &got); err != nil {
 				return err
+			}
+			if got.State == StateCancelled {
+				return nil
 			}
 			if got.ArgumentsHash != op.ArgumentsHash || got.Tenant != op.Tenant || got.Attempt != op.Attempt {
 				return ErrPayloadMismatch
@@ -195,6 +202,25 @@ func (s *Store) UpdateOperation(id string, update func(*Operation) error) error 
 			return err
 		}
 		return b.Put([]byte(id), next)
+	})
+}
+
+// Fence records that the operation must never start a turn.
+func (s *Store) Fence(id string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(operationsBucket)
+		op := Operation{ID: id, CreatedAt: time.Now().UTC()}
+		if raw := b.Get([]byte(id)); raw != nil {
+			if err := json.Unmarshal(raw, &op); err != nil {
+				return err
+			}
+		}
+		op.State = StateCancelled
+		encoded, err := json.Marshal(op)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), encoded)
 	})
 }
 

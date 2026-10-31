@@ -393,7 +393,8 @@ func (a entryApplier) turnStarted(ctx context.Context, entry contracts.Entry, pa
 
 // turnFinished records the turn end. The turn is bound from the event's
 // operation when its start was not seen, so a failure keeps its operation.
-// Only a failure changes state: a completed turn is not a proposed result.
+// Only a failure changes state, or any end while the Attempt awaits its stops:
+// a completed turn is not a proposed result.
 func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, payload contracts.TurnFinished) (entryOutcome, error) {
 	if ok, err := a.boundSession(ctx, payload.SessionRef); err != nil || !ok {
 		if err != nil {
@@ -421,16 +422,17 @@ func (a entryApplier) turnFinished(ctx context.Context, entry contracts.Entry, p
 	} else if replayed {
 		return entryApplied, a.activateResult(ctx)
 	}
+	current, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	if current.State == lifecycle.AttemptCancellationRequested && payload.Outcome != lifecycle.TurnAwaitingInput {
+		// A terminal turn reports the runtime's own end of work, however it
+		// ended: the stop observation of an attempt already awaiting its stops.
+		// A turn awaiting input has not ended the runtime's work.
+		return a.applyStop(ctx, entry, lifecycle.AttemptRuntimeStopped)
+	}
 	if payload.Outcome == lifecycle.TurnInterrupted {
-		// An interrupted turn reports the runtime's own end of work: the
-		// stop observation of an attempt already awaiting its stops.
-		attempt, err := store.GetAttempt(ctx, a.uow, a.event.Tenant, a.event.Attempt)
-		if err != nil {
-			return 0, err
-		}
-		if attempt.State == lifecycle.AttemptCancellationRequested {
-			return a.applyStop(ctx, entry, lifecycle.AttemptRuntimeStopped)
-		}
 		return entryApplied, nil
 	}
 	if payload.Outcome != lifecycle.TurnFailed {
