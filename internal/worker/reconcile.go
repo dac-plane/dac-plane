@@ -14,7 +14,9 @@ import (
 
 const reconcileStream = "dispatch"
 
-// Reconcile inspects uncertain effects. It never dispatches them again.
+// Reconcile inspects uncertain effects and never dispatches them again. It also
+// repeats interrupts, which are requests rather than effects, and replays
+// environment stops only to a provider that negotiated operation replay.
 func (w *Worker) Reconcile(ctx context.Context) error {
 	tenants, err := store.ListTenants(ctx, w.pool)
 	if err != nil {
@@ -35,6 +37,89 @@ func (w *Worker) Reconcile(ctx context.Context) error {
 			if err := w.reconcileOperation(ctx, tenant, op); err != nil {
 				w.logger.Error("operation reconcile failed", "operation", op.ID.String(), "error", err)
 			}
+		}
+		if err := w.repeatInterrupts(ctx, tenant); err != nil {
+			w.logger.Error("interrupt repeat failed", "tenant", tenant.String(), "error", err)
+		}
+		if err := w.replayEnvironmentStops(ctx, tenant); err != nil {
+			w.logger.Error("environment stop replay failed", "tenant", tenant.String(), "error", err)
+		}
+	}
+	return nil
+}
+
+// repeatInterrupts asks again for every runtime stop still unobserved. An
+// interrupt is acknowledged when its frame is written, so an adapter that lost
+// it would otherwise leave the Attempt waiting forever. It is a request to stop
+// rather than an effect, so repeating it is safe; a failed repeat waits for the
+// next pass.
+func (w *Worker) repeatInterrupts(ctx context.Context, tenant ids.TenantID) error {
+	operations, err := store.InterruptedOperations(ctx, w.pool, tenant, w.cfg.BatchLimit)
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		port := w.port(tenant, operation.Provider, contracts.RoleRuntime)
+		if port == nil {
+			w.stats.SkippedNoPort.Add(1)
+			continue
+		}
+		delivery, err := ids.New[ids.Delivery]()
+		if err != nil {
+			return err
+		}
+		sendCtx, cancel := context.WithTimeout(ctx, w.cfg.SendTimeout)
+		err = port.Cancel(sendCtx, contracts.Cancel{Operation: operation.ID, Delivery: delivery})
+		cancel()
+		if err != nil {
+			w.logger.Warn("interrupt repeat not delivered", "operation", operation.ID.String(), "error", err)
+		}
+	}
+	return nil
+}
+
+// replayEnvironmentStops redelivers a stop whose delivery is unknown, because a
+// cancellation can never finish without it. The reply settles nothing: the stop's
+// observation does, through the stream the reconcile pass reads.
+func (w *Worker) replayEnvironmentStops(ctx context.Context, tenant ids.TenantID) error {
+	rows, err := store.UnsettledEnvironmentStops(ctx, w.pool, tenant, w.cfg.BatchLimit)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		body, err := ParseDispatchBody(row.Payload)
+		if err != nil {
+			w.logger.Error("environment stop body is invalid", "row", row.ID.String(), "error", err)
+			continue
+		}
+		operation, err := store.GetOperation(ctx, w.pool, tenant, body.Operation)
+		if err != nil {
+			return err
+		}
+		replayer, ok := w.port(tenant, operation.Provider, body.Role).(contracts.StableOperationReplayer)
+		if !ok {
+			w.stats.SkippedNoPort.Add(1)
+			continue
+		}
+		delivery, err := ids.New[ids.Delivery]()
+		if err != nil {
+			return err
+		}
+		request := contracts.Request{
+			Operation: operation.ID, Delivery: delivery, Tenant: tenant, Attempt: operation.Attempt,
+			Role: body.Role, Method: body.Method, Arguments: body.Arguments, Demand: row.Demand, Deadline: body.Deadline,
+		}
+		sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
+		_, err = replayer.Replay(sendCtx, request)
+		cancel()
+		if err != nil {
+			w.logger.Warn("environment stop replay not delivered", "operation", operation.ID.String(), "error", err)
 		}
 	}
 	return nil

@@ -1,0 +1,62 @@
+# Layered over compose.codex.yaml for the joint cancellation qualification. The
+# E2B adapter is the only environment connection: the artifact adapter's
+# scenario names no environment, so stops cannot reach the simulator.
+services:
+  e2b-init:
+    image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+    command: ["sh", "-c", "chown -R 65532:65532 /state"]
+    volumes:
+      - e2b-data:/state
+    profiles: ["qualification"]
+    restart: "no"
+
+  e2b-adapter:
+    image: ${DAC_E2B_ADAPTER_IMAGE:-dac-e2b-adapter:qualification}
+    build:
+      context: ../..
+      target: dac-e2b-adapter
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ADAPTER_CLIENT_ID: environment-adapter
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/environment_client_secret
+      DAC_PROVIDER_ID: 01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12
+      DAC_E2B_BASE_URL: ${DAC_E2B_BASE_URL:-https://api.e2b.app}
+      DAC_E2B_TEMPLATE_ID: ${DAC_E2B_TEMPLATE_ID:-base}
+      DAC_E2B_SANDBOX_TIMEOUT: ${DAC_E2B_SANDBOX_TIMEOUT:-15m}
+      DAC_E2B_API_KEY_FILE: /run/secrets/e2b_api_key
+      DAC_E2B_STATE: /state/adapter.db
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+    secrets:
+      - environment_client_secret
+      - e2b_api_key
+    volumes:
+      - e2b-data:/state
+    depends_on:
+      e2b-init:
+        condition: service_completed_successfully
+      dac-plane:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+    profiles: ["qualification"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+configs:
+  sim_scenario:
+    file: ./scenario.artifact-only.json
+
+volumes:
+  e2b-data:
+
+secrets:
+  e2b_api_key:
+    file: ${DAC_E2B_API_KEY_FILE:?set DAC_E2B_API_KEY_FILE to the E2B credential file}

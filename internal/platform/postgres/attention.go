@@ -265,6 +265,26 @@ func HasEnvironmentBinding(ctx context.Context, q Querier, tenant ids.TenantID, 
 	return found, err
 }
 
+// RuntimeTurnsEnded reports whether every turn bound to the Attempt has a
+// recorded terminal end. An Attempt with no bound turn has not ended one, and a
+// turn awaiting input has not ended the runtime's work.
+func RuntimeTurnsEnded(ctx context.Context, q Querier, tenant ids.TenantID, attempt ids.AttemptID) (bool, error) {
+	var ended bool
+	err := q.QueryRow(ctx, `
+		select count(*) > 0 and count(*) = count(e.turn_ref)
+		from binding b
+		left join turn_end e
+		  on e.tenant_id = b.tenant_id
+		 and e.attempt_id = b.attempt_id
+		 and e.provider_id = b.provider_id
+		 and e.turn_ref = b.native_ref
+		 and e.outcome <> $4
+		where b.tenant_id = $1 and b.attempt_id = $2 and b.kind = $3`,
+		tenant.String(), attempt.String(), string(lifecycle.ResourceRuntimeTurn), string(lifecycle.TurnAwaitingInput),
+	).Scan(&ended)
+	return ended, err
+}
+
 // EnvironmentStopped reports whether every environment resource bound to the
 // Attempt has a latest stored observation that is definitely stopped. No
 // binding is not stop evidence: a start may still be in flight.

@@ -1,7 +1,8 @@
 # Issue #91 Codex runtime qualification evidence
 
 Date: 2026-10-29. Host architecture: Darwin arm64. Confidence: high for the observed deterministic,
-protocol and deployed approval/result behavior; cancellation lifecycle convergence remains unproven.
+protocol and deployed approval/result behavior. Cancellation convergence was proved later, with the
+limits recorded in [task-cancellation-101.md](task-cancellation-101.md).
 
 This note separates the candidate protocol gate, deterministic adapter verification and deployed
 qualification. It is not evidence for workspace isolation (#92), a production artifact store (#93),
@@ -101,6 +102,10 @@ waits for task cancellation without the required environment path. Keep #91 open
 unqualified (`off`) until #101 passes. This limitation does not invalidate the observed Codex
 `turn/interrupt` behavior.
 
+Issue #101 later showed that `turn/interrupt` ended the turn but left its command running, which the
+observation above did not check. The adapter now ends the thread's background terminals first; the
+disposition stays `off` until the promotion requirements below are met.
+
 The deterministic artifact fixture proves adapter export integration only; it does not qualify the
 production artifact store owned by #93. The deployed qualification still lacks recovery evidence
 across an unresolved native approval. Issue #101 covers the later joint task-environment and runtime
@@ -129,8 +134,9 @@ workspace-containment claim follows from the observations in this note.
    - [x] `go test -race ./...` in `adapters/codex` passed after latest edits.
    - [x] Tagged qualification driver compiled with no tests run.
    - [x] Targeted deployed approval/artifact scenario passed in 16.261 seconds.
-   - [ ] Complete full task cancellation in #101 after #102 provides task-environment orchestration
-     and #92 qualifies the environment provider.
+   - [x] Complete full task cancellation in #101 after #102 provides task-environment orchestration
+     and #92 qualifies the environment provider. See
+     [task-cancellation-101.md](task-cancellation-101.md).
    - [x] `just ci-fast` passed; `git diff --check` passed after the final evidence and scope edits.
    - [ ] Full parallel PR workflow, including reproducible Codex image build, security-race tests,
      deployed stack and operations suite, is pending on the pushed branch.

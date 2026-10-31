@@ -30,6 +30,14 @@ const (
 	// defaultSandboxTimeout fits every E2B plan; the Hobby plan caps a sandbox at
 	// one hour, and E2B itself would kill an unset sandbox after five minutes.
 	defaultSandboxTimeout = time.Hour
+	// defaultStopRetryInterval paces retries of a stop the provider has not
+	// confirmed.
+	defaultStopRetryInterval = 5 * time.Second
+	// createOutcomeMargin allows for a create that reached E2B late.
+	createOutcomeMargin = 5 * time.Minute
+	// unrecordedCreateLifetime is the Pro plan's cap, the longest a published
+	// plan lets a sandbox run, for a create that did not record its own lifetime.
+	unrecordedCreateLifetime = 24 * time.Hour
 )
 
 type Config struct {
@@ -40,6 +48,8 @@ type Config struct {
 	// SandboxTimeout is how long a sandbox may run before E2B kills it. It bounds
 	// a sandbox whose stop never lands, so it should exceed the longest Attempt.
 	SandboxTimeout time.Duration
+	// StopRetryInterval paces retries of unconfirmed stops.
+	StopRetryInterval time.Duration
 }
 
 type Adapter struct {
@@ -104,6 +114,9 @@ func New(cfg Config) (*Adapter, error) {
 	}
 	if cfg.APIKey == "" || cfg.TemplateID == "" || cfg.ProviderID == "" || cfg.Journal == nil {
 		return nil, errors.New("E2B adapter configuration is incomplete")
+	}
+	if cfg.StopRetryInterval == 0 {
+		cfg.StopRetryInterval = defaultStopRetryInterval
 	}
 	if cfg.SandboxTimeout == 0 {
 		cfg.SandboxTimeout = defaultSandboxTimeout
@@ -244,7 +257,10 @@ func (a *Adapter) provision(ctx context.Context, req wire.Request) (wire.Reply, 
 			return a.finishProvision(req, m, *found)
 		}
 	}
-	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
+	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error {
+		o.State, o.CreateExpires = "create_sent", a.cfg.Now().Add(a.cfg.SandboxTimeout+createOutcomeMargin)
+		return nil
+	}); err != nil {
 		return wire.Reply{}, err
 	}
 	createdSandbox, err := a.createSandbox(ctx, req)
@@ -304,7 +320,10 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 		}
 		return a.finishTaskProvision(req, *found)
 	}
-	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "create_sent"; return nil }); err != nil {
+	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error {
+		o.State, o.CreateExpires = "create_sent", a.cfg.Now().Add(a.cfg.SandboxTimeout+createOutcomeMargin)
+		return nil
+	}); err != nil {
 		return wire.Reply{}, err
 	}
 	createdSandbox, err := a.createSandbox(ctx, req)
@@ -460,57 +479,121 @@ func (a *Adapter) stopTaskEnvironment(ctx context.Context, req wire.Request) (wi
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	provision, err := a.cfg.Journal.Operation(input.ProvisionOperation)
-	resourceRef := "operation:" + input.ProvisionOperation
-	if errors.Is(err, os.ErrNotExist) {
-		if err := a.cfg.Journal.CancelBeforeStart(input.ProvisionOperation); err != nil {
-			return wire.Reply{}, err
-		}
-	} else if err != nil {
-		return wire.Reply{}, err
-	} else {
-		if provision.Tenant != req.Tenant || provision.Attempt != req.Attempt {
-			return rejected(req, wire.FailureInvalidArguments, "environment assignment is unavailable"), nil
-		}
-		if provision.ResourceRef == "" && provision.State == "prepared" {
-			if err := a.cfg.Journal.CancelBeforeStart(input.ProvisionOperation); err != nil {
-				return wire.Reply{}, err
-			}
-		} else if provision.ResourceRef == "" {
-			found, findErr := a.findOperation(ctx, input.ProvisionOperation)
-			if findErr != nil {
-				return wire.Reply{}, findErr
-			}
-			if found == nil {
-				return wire.Reply{}, errors.New("E2B create outcome remains unknown during stop")
-			}
-			provision.ResourceRef = "sandbox:" + found.SandboxID
-		}
-		if provision.ResourceRef != "" {
-			resourceRef = provision.ResourceRef
-		}
+	if err == nil && (provision.Tenant != req.Tenant || provision.Attempt != req.Attempt) {
+		return rejected(req, wire.FailureInvalidArguments, "environment assignment is unavailable"), nil
 	}
-	op, _, err := a.cfg.Journal.Begin(journal.Operation{ID: req.Operation, Hash: digest(req.Arguments), Tenant: req.Tenant, Attempt: req.Attempt, Method: req.Method, ResourceRef: resourceRef})
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return wire.Reply{}, err
+	}
+	op, _, err := a.cfg.Journal.Begin(journal.Operation{ID: req.Operation, Hash: digest(req.Arguments), Tenant: req.Tenant, Attempt: req.Attempt, Method: req.Method, StopOf: input.ProvisionOperation})
 	if err != nil {
 		return rejected(req, wire.FailureInvalidArguments, "operation identity or payload mismatch"), nil
 	}
 	if op.State == "observed" && len(op.Receipt) > 0 {
 		return accepted(req, op.Receipt), nil
 	}
+	raw, err := a.finishStop(ctx, op)
+	if err != nil {
+		// The intent is journaled: RetryStops finishes it and records the
+		// observation that settles this unknown reply.
+		return wire.Reply{}, err
+	}
+	return accepted(req, raw), nil
+}
+
+// finishStop ends the sandbox of a journaled stop and records it absent. It
+// holds no state of its own, so every retry resolves the resource afresh.
+func (a *Adapter) finishStop(ctx context.Context, op journal.Operation) (json.RawMessage, error) {
+	resourceRef, err := a.stopResource(ctx, op.StopOf)
+	if err != nil {
+		return nil, err
+	}
 	if id, ok := sandboxID(resourceRef); ok {
 		if err := a.doJSON(ctx, http.MethodDelete, "/sandboxes/"+url.PathEscape(id), nil, "", nil); err != nil {
 			var status apiError
 			if !errors.As(err, &status) || status.status != http.StatusNotFound {
-				return wire.Reply{}, err
+				return nil, err
 			}
 		}
 	}
-	raw, _, err := a.cfg.Journal.RecordObservation(req.Operation, resourceRef, func(seq uint64) (json.RawMessage, error) {
+	raw, _, err := a.cfg.Journal.RecordObservation(op.ID, resourceRef, func(seq uint64) (json.RawMessage, error) {
 		return json.Marshal(observation{ResourceRef: resourceRef, State: "absent", Sequence: seq, ObservedAt: a.cfg.Now()})
 	})
-	if err != nil {
-		return wire.Reply{}, err
+	return raw, err
+}
+
+// stopResource resolves what a stop ends, fencing a provision that has not
+// created anything so it never does.
+func (a *Adapter) stopResource(ctx context.Context, operation string) (string, error) {
+	resourceRef := "operation:" + operation
+	provision, err := a.cfg.Journal.Operation(operation)
+	if errors.Is(err, os.ErrNotExist) {
+		return resourceRef, a.cfg.Journal.CancelBeforeStart(operation)
 	}
-	return accepted(req, raw), nil
+	if err != nil {
+		return "", err
+	}
+	if provision.ResourceRef != "" {
+		return provision.ResourceRef, nil
+	}
+	if provision.State == "prepared" || provision.State == "cancelled" {
+		return resourceRef, a.cfg.Journal.CancelBeforeStart(operation)
+	}
+	found, err := a.findOperation(ctx, operation)
+	if err != nil {
+		return "", err
+	}
+	if found != nil {
+		return "sandbox:" + found.SandboxID, nil
+	}
+	if provision.CreateExpires.IsZero() {
+		// A journal older than this field recorded neither when its create was
+		// sent nor what lifetime it asked for, only that it was sent before now.
+		provision.CreateExpires = a.cfg.Now().Add(max(a.cfg.SandboxTimeout, unrecordedCreateLifetime) + createOutcomeMargin)
+		if err := a.cfg.Journal.Update(operation, func(o *journal.Operation) error {
+			o.CreateExpires = provision.CreateExpires
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	}
+	// E2B kills a sandbox at the lifetime it was created with, so an unknown
+	// create is absent once the lifetime of the last create sent has passed.
+	if a.cfg.Now().After(provision.CreateExpires) {
+		return resourceRef, nil
+	}
+	return "", errors.New("E2B create outcome remains unknown during stop")
+}
+
+// RetryStops finishes journaled stops until ctx ends, including those a previous
+// process left behind. The control plane never sends a stop twice, so a failed
+// or interrupted one can only complete from here.
+func (a *Adapter) RetryStops(ctx context.Context) {
+	ticker := time.NewTicker(a.cfg.StopRetryInterval)
+	defer ticker.Stop()
+	for {
+		a.retryPendingStops(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *Adapter) retryPendingStops(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	pending, err := a.cfg.Journal.PendingStops()
+	if err != nil {
+		return
+	}
+	for _, op := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		_, _ = a.finishStop(ctx, op)
+	}
 }
 
 type observationRequest struct {

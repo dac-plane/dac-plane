@@ -1,0 +1,9 @@
+{
+  "tenant_id": "01a167fd-51d9-76ba-b563-496e2bd89646",
+  "provider_id": "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10",
+  "role": "runtime",
+  "artifact_store": {
+    "provider_id": "01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11",
+    "fixtures": {}
+  }
+}
