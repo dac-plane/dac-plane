@@ -1,6 +1,6 @@
 # Issue #101 task cancellation qualification evidence
 
-Date: 2026-10-30. Host architecture: Darwin arm64. Result: PASS for the bounded scenarios below on the
+Dates: 2026-10-30 and 2026-10-31. Host architecture: Darwin arm64. Result: PASS for the bounded scenarios below on the
 deployed Surface API and ControlFrame boundaries. Disposition: both providers stay `off`.
 
 **This does not prove that E2B stopped the work.** Codex runs in its adapter container and receives the
@@ -11,8 +11,8 @@ must land before the #96 pilot claims containment.
 ## Pins
 
 - Codex app-server `0.165.0`, model `deepseek-v4-flash-0731` through Camer.
-- Adapter images, Codex then E2B: `sha256:f63aadeda68e56b861abdabad7d05218ae933a1f99ec8d1b5527099166af0684`, `sha256:c5d36087018463297b6575ef6648ccae7808e4e344ff5fb34b166cb44a77ab9e`.
-- DAC revision `dec7b56`. E2B Cloud template `base`, sandbox lifetime 15 minutes.
+- Adapter images, Codex then E2B: `sha256:c41b0433980f0119e63df42344e1a5e1e8868f1e68730ec35c97817119f898b6`, `sha256:f161af9fbf92b2541de7efd289dffe3fa3a00fe3de3de5c9e58fcf993f39c2a8`.
+- DAC revision `001c3ec`. E2B Cloud template `base`, sandbox lifetime 15 minutes.
 
 ## Command
 
@@ -30,8 +30,9 @@ was running before cancelling. Each then required the task `cancelled`, the atte
 both stops, the reservation `released`, the command gone, E2B no longer reporting the sandbox as
 running, and exactly one applied stop of each kind.
 
-Eight full runs were made. Seven passed all seven scenarios, in 251 to 271 seconds each, including the
-last three on the pinned revision. Run 1 failed as recorded below.
+Nine full runs were made. Eight passed all seven scenarios, in 251 to 271 seconds each: three on
+`dec7b56` and run 9 on the pinned revision, which changes how a cancel settles a start with no mapped
+turn. Run 1 failed as recorded below.
 
 | Scenario | How it is forced |
 |---|---|
@@ -72,12 +73,16 @@ seconds, because it waits out the 30-second send timeout and the reconcile inter
 5. Run 1 of the eight full runs failed and **its cause is unknown**. The active command scenario passed,
    then the next scenario's command never appeared within the 38 minutes the wait had left. The wait had
    no deadline and no check for an ended task, and the next run overwrote the logs. Both are fixed. The
-   seven runs since passed, which shows nothing about what happened. A model that never issued the
+   eight runs since passed, which shows nothing about what happened. A model that never issued the
    command would look the same, and so would a stuck task.
+6. Review found no live failure but a race these runs could not hit: a cancel that read an operation
+   before its turn was mapped could fence the start after it finished, publishing a rejection for a
+   live turn. A deterministic test reproduced it in two of three attempts before the fix. Only that
+   test covers the race; run 9 shows the fix did not break the live paths.
 
 ## Limits
 
-- Seven passes in eight runs on one host, with one unexplained failure. Nothing here is an availability,
+- Eight passes in nine runs on one host, with one unexplained failure. Nothing here is an availability,
   cost or production claim.
 - Only one command per thread was exercised, and only a plain `sleep` that holds no descriptors.
 - `thread/backgroundTerminals/clean` is reported complete by its RPC reply. The process list check, not
