@@ -455,6 +455,50 @@ func TestCancelDuringStartWaitsForTheTurn(t *testing.T) {
 	}
 }
 
+// A cancel that read the operation before its turn was mapped must not fence
+// the start once it has finished.
+func TestCancelRacingAFinishingStartLeavesItsTurnMapped(t *testing.T) {
+	for range 100 {
+		f := setup(t)
+		f.native.blockTurnStart = true
+		f.native.turnStartEntered = make(chan struct{})
+		f.native.releaseTurnStart = make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.adapter.Send(context.Background(), startRequest(validStart))
+			done <- err
+		}()
+		<-f.native.turnStartEntered
+		stop := make(chan struct{})
+		var cancels sync.WaitGroup
+		for range 4 {
+			cancels.Go(func() {
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+						_ = f.adapter.Cancel(context.Background(), wire.Cancel{Operation: testOperation, Delivery: testDelivery})
+					}
+				}
+			})
+		}
+		close(f.native.releaseTurnStart)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		close(stop)
+		cancels.Wait()
+		op, err := f.store.Operation(testOperation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if op.State == journal.StateCancelled {
+			t.Fatalf("operation with turn %q was fenced: entries=%s", op.TurnID, strings.Join(entryKinds(t, f), ","))
+		}
+	}
+}
+
 func interruptedTurn() appserver.Message {
 	return appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}`)}
 }

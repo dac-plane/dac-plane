@@ -350,6 +350,45 @@ func TestStopOfUnknownCreateWaitsOutTheSandboxLifetime(t *testing.T) {
 	}
 }
 
+// A create journaled before the expiry existed still resolves, a full lifetime
+// after its stop first looks, and not from its original CreatedAt.
+func TestStopOfUnknownCreateFromAnOlderJournalFinishes(t *testing.T) {
+	fake := &fakeE2B{sandboxes: map[string]sandbox{}, hideList: true, rejectCreateStatus: http.StatusBadGateway}
+	a, store := newTestAdapter(t, fake)
+	raw, _ := json.Marshal(struct{}{})
+	if reply, err := a.Send(context.Background(), wire.Request{Operation: "create", Delivery: "d", Tenant: "tenant-1", Attempt: "attempt-1", Role: wire.RoleEnvironment, Method: "provision", Arguments: raw}); err == nil {
+		t.Fatalf("provision = %+v, want an unknown outcome", reply)
+	}
+	if err := store.Update("create", func(o *journal.Operation) error {
+		o.CreateExpires = time.Time{}
+		o.CreatedAt = o.CreatedAt.Add(-24 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := a.Send(context.Background(), taskStopRequest("create", "stop")); err == nil {
+		t.Fatalf("stop = %+v, want an unknown outcome", reply)
+	}
+	op, err := store.Operation("create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := a.cfg.Now().Add(a.cfg.SandboxTimeout + createOutcomeMargin); !op.CreateExpires.Equal(want) {
+		t.Fatalf("expiry = %s, want %s", op.CreateExpires, want)
+	}
+	expires := op.CreateExpires
+	a.cfg.Now = func() time.Time { return expires }
+	a.retryPendingStops(context.Background())
+	if got := stopObservations(t, store, "stop"); len(got) != 0 {
+		t.Fatalf("observations = %+v, want none before the expiry", got)
+	}
+	a.cfg.Now = func() time.Time { return expires.Add(time.Second) }
+	a.retryPendingStops(context.Background())
+	if got := stopObservations(t, store, "stop"); len(got) != 1 || got[0].State != "absent" {
+		t.Fatalf("observations = %+v, want the operation observed absent", got)
+	}
+}
+
 // A repeated stop of a provision that was fenced before it started stays clean.
 func TestStopAfterCancelledProvisionStaysAbsent(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{}, rejectCreateStatus: http.StatusBadRequest}

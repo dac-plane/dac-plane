@@ -543,9 +543,20 @@ func (a *Adapter) stopResource(ctx context.Context, operation string) (string, e
 	if found != nil {
 		return "sandbox:" + found.SandboxID, nil
 	}
+	if provision.CreateExpires.IsZero() {
+		// A journal older than this field recorded no send time, but its create
+		// was sent before now, so a full lifetime from here still covers it.
+		provision.CreateExpires = a.cfg.Now().Add(a.cfg.SandboxTimeout + createOutcomeMargin)
+		if err := a.cfg.Journal.Update(operation, func(o *journal.Operation) error {
+			o.CreateExpires = provision.CreateExpires
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	}
 	// E2B kills a sandbox at the lifetime it was created with, so an unknown
 	// create is absent once the lifetime of the last create sent has passed.
-	if !provision.CreateExpires.IsZero() && a.cfg.Now().After(provision.CreateExpires) {
+	if a.cfg.Now().After(provision.CreateExpires) {
 		return resourceRef, nil
 	}
 	return "", errors.New("E2B create outcome remains unknown during stop")

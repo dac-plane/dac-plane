@@ -179,44 +179,53 @@ func (a *Adapter) Send(ctx context.Context, request wire.Request) (wire.Reply, e
 	}
 }
 func (a *Adapter) Cancel(ctx context.Context, cancel wire.Cancel) error {
-	a.startMu.Lock()
-	op, err := a.config.Journal.Operation(cancel.Operation)
-	if errors.Is(err, os.ErrNotExist) {
-		defer a.startMu.Unlock()
-		return a.fence(cancel.Operation)
-	}
-	a.startMu.Unlock()
-	if err != nil {
+	op, settled, err := a.settleUnmapped(cancel.Operation)
+	if err != nil || settled {
 		return err
-	}
-	if op.State == journal.StateCancelled {
-		return nil
 	}
 	if op.State == "completed" || op.State == "failed" || op.State == "interrupted" {
 		// A finished turn leaves its background commands running.
 		return a.cleanTerminals(ctx, op.ThreadID)
 	}
-	if op.ThreadID != "" && op.TurnID != "" {
-		var result any
-		return a.config.Native.Call(ctx, "turn/interrupt", map[string]any{"threadId": op.ThreadID, "turnId": op.TurnID}, &result)
-	}
+	var result any
+	return a.config.Native.Call(ctx, "turn/interrupt", map[string]any{"threadId": op.ThreadID, "turnId": op.TurnID}, &result)
+}
+
+// settleUnmapped decides a cancel for an operation with no turn to reach, and
+// returns the operation otherwise. It reads starting before the journal: a start
+// clears the flag only after writing its turn, and startMu keeps a new one out.
+func (a *Adapter) settleUnmapped(operation string) (journal.Operation, bool, error) {
 	a.startMu.Lock()
 	defer a.startMu.Unlock()
-	if a.isStarting(cancel.Operation) {
-		// The turn is still being mapped; the repeated interrupt will find it.
-		return nil
+	starting := a.isStarting(operation)
+	op, err := a.config.Journal.Operation(operation)
+	if errors.Is(err, os.ErrNotExist) {
+		return op, true, a.fence(operation)
 	}
-	if a.isUncertainStart(cancel.Operation) {
+	if err != nil {
+		return op, true, err
+	}
+	if op.State == journal.StateCancelled {
+		return op, true, nil
+	}
+	if op.State == "completed" || op.State == "failed" || op.State == "interrupted" || (op.ThreadID != "" && op.TurnID != "") {
+		return op, false, nil
+	}
+	if starting {
+		// The turn is still being mapped; the repeated interrupt will find it.
+		return op, true, nil
+	}
+	if a.isUncertainStart(operation) {
 		// turn/start may have reached Codex with no reply, so only a new process
 		// can prove nothing runs. The repeated interrupt then finds it or fences.
 		select {
 		case a.fatal <- errors.New("restarting to settle a start with an unknown turn"):
 		default:
 		}
-		return nil
+		return op, true, nil
 	}
 	// A start that ended without a turn is never redelivered as a new one.
-	return a.fence(cancel.Operation)
+	return op, true, a.fence(operation)
 }
 
 // cleanTerminals ends the thread's commands. A turn's end does not:
@@ -509,13 +518,13 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if turn.Turn.ID == "" {
 		return wire.Reply{}, errors.New("Codex returned no turn id")
 	}
-	a.setUncertainStart(r.Operation, false)
 	if err = a.ensureStartEvents(journal.Operation{ID: r.Operation, ThreadID: started.Thread.ID, TurnID: turn.Turn.ID}); err != nil {
 		return wire.Reply{}, err
 	}
 	if err = a.config.Journal.UpdateOperation(r.Operation, func(op *journal.Operation) error { op.TurnID = turn.Turn.ID; op.State = "running"; return nil }); err != nil {
 		return wire.Reply{}, err
 	}
+	a.setUncertainStart(r.Operation, false)
 	a.setThreadReady(started.Thread.ID)
 	startupReady = true
 	return accepted(r, map[string]string{"session_ref": started.Thread.ID, "turn_ref": turn.Turn.ID}), nil

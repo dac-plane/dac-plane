@@ -23,6 +23,9 @@ import (
 // commandGrace bounds how long a command may outlive its interrupted turn.
 const commandGrace = 60 * time.Second
 
+// queryTimeout bounds one read of the deployed stack.
+const queryTimeout = 30 * time.Second
+
 // cancellationStack is the deployed Codex and E2B stack one scenario drives.
 type cancellationStack struct {
 	t       *testing.T
@@ -242,7 +245,7 @@ func (s *cancellationStack) requireCommandGone(t *testing.T) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	output, _ := exec.CommandContext(s.ctx, "docker", "top", s.container("codex-adapter"), "-o", "pid,ppid,stat,etime,args").CombinedOutput()
+	output, _ := s.query("top", s.container("codex-adapter"), "-o", "pid,ppid,stat,etime,args")
 	t.Fatalf("%q survived the cancellation by %s:\n%s", s.command, commandGrace, output)
 }
 
@@ -318,13 +321,21 @@ func (s *cancellationStack) sandboxExists(t *testing.T, id string) bool {
 	}
 }
 
+// query runs a read-only Docker call, bounded so a stuck daemon or database
+// fails a poll at its own deadline rather than at the end of the whole run.
+func (s *cancellationStack) query(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(s.ctx, queryTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+}
+
 func (s *cancellationStack) commandRunning(t *testing.T) bool {
 	t.Helper()
-	output, err := exec.CommandContext(s.ctx, "docker", "top", s.container("codex-adapter")).CombinedOutput()
+	output, err := s.query("top", s.container("codex-adapter"))
 	if err != nil {
 		// A stopped container has no process list, and so no running command.
 		// Any other failure proves nothing about the command.
-		state, inspectErr := exec.CommandContext(s.ctx, "docker", "inspect", "-f", "{{.State.Running}}", s.container("codex-adapter")).CombinedOutput()
+		state, inspectErr := s.query("inspect", "-f", "{{.State.Running}}", s.container("codex-adapter"))
 		if inspectErr != nil || strings.TrimSpace(string(state)) != "false" {
 			t.Fatalf("cannot inspect the command: %v: %s: %s", err, output, state)
 		}
@@ -335,7 +346,7 @@ func (s *cancellationStack) commandRunning(t *testing.T) bool {
 
 func (s *cancellationStack) sql(t *testing.T, query string) string {
 	t.Helper()
-	output, err := exec.CommandContext(s.ctx, "docker", "exec", s.container("postgres"), "psql", "-v", "ON_ERROR_STOP=1", "-U", "dac_migrate", "-d", "dac", "-tAc", query).CombinedOutput()
+	output, err := s.query("exec", s.container("postgres"), "psql", "-v", "ON_ERROR_STOP=1", "-U", "dac_migrate", "-d", "dac", "-tAc", query)
 	if err != nil {
 		t.Fatalf("sql: %v: %s", err, output)
 	}
