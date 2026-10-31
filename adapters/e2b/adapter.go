@@ -35,6 +35,9 @@ const (
 	defaultStopRetryInterval = 5 * time.Second
 	// createOutcomeMargin allows for a create that reached E2B late.
 	createOutcomeMargin = 5 * time.Minute
+	// unrecordedCreateLifetime is the Pro plan's cap, the longest a published
+	// plan lets a sandbox run, for a create that did not record its own lifetime.
+	unrecordedCreateLifetime = 24 * time.Hour
 )
 
 type Config struct {
@@ -544,9 +547,9 @@ func (a *Adapter) stopResource(ctx context.Context, operation string) (string, e
 		return "sandbox:" + found.SandboxID, nil
 	}
 	if provision.CreateExpires.IsZero() {
-		// A journal older than this field recorded no send time, but its create
-		// was sent before now, so a full lifetime from here still covers it.
-		provision.CreateExpires = a.cfg.Now().Add(a.cfg.SandboxTimeout + createOutcomeMargin)
+		// A journal older than this field recorded neither when its create was
+		// sent nor what lifetime it asked for, only that it was sent before now.
+		provision.CreateExpires = a.cfg.Now().Add(max(a.cfg.SandboxTimeout, unrecordedCreateLifetime) + createOutcomeMargin)
 		if err := a.cfg.Journal.Update(operation, func(o *journal.Operation) error {
 			o.CreateExpires = provision.CreateExpires
 			return nil

@@ -350,8 +350,9 @@ func TestStopOfUnknownCreateWaitsOutTheSandboxLifetime(t *testing.T) {
 	}
 }
 
-// A create journaled before the expiry existed still resolves, a full lifetime
-// after its stop first looks, and not from its original CreatedAt.
+// A create journaled before the expiry existed still resolves, but only after
+// the longest lifetime it could have asked for: not from its original CreatedAt,
+// and not from the current timeout, which may be shorter than the one it sent.
 func TestStopOfUnknownCreateFromAnOlderJournalFinishes(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{}, hideList: true, rejectCreateStatus: http.StatusBadGateway}
 	a, store := newTestAdapter(t, fake)
@@ -373,7 +374,7 @@ func TestStopOfUnknownCreateFromAnOlderJournalFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := a.cfg.Now().Add(a.cfg.SandboxTimeout + createOutcomeMargin); !op.CreateExpires.Equal(want) {
+	if want := a.cfg.Now().Add(unrecordedCreateLifetime + createOutcomeMargin); !op.CreateExpires.Equal(want) {
 		t.Fatalf("expiry = %s, want %s", op.CreateExpires, want)
 	}
 	expires := op.CreateExpires
