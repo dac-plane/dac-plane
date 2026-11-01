@@ -139,6 +139,20 @@ test-e2b-adapter:
 qualify-e2b-environment:
     ./adapters/e2b/qualification/run.sh
 
+# Build the sandbox template that runs Codex commands, and print its id for
+# DAC_E2B_TEMPLATE_ID. Needs E2B_API_KEY and Node 22.19 or newer.
+[doc('Build the E2B template for Codex commands (needs E2B_API_KEY)')]
+[group('test')]
+build-e2b-codex-template name='dac-codex-exec':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=".work/e2b-template"
+    mkdir -p "$work"
+    cp adapters/e2b/qualification/package.json adapters/e2b/qualification/package-lock.json adapters/e2b/template/template.mjs "$work/"
+    npm ci --prefix "$work" --ignore-scripts --no-audit --no-fund
+    cd "$work"
+    DAC_E2B_TEMPLATE_NAME={{name}} node template.mjs
+
 # Run the secret-backed Codex qualification against the deployed HTTPS and
 # ControlFrame boundaries. The disposable artifact service is a test fixture,
 # not the production store qualified by #93.
