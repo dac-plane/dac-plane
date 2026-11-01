@@ -40,7 +40,8 @@ deployment configuration on the runtime adapter, as model and provider already a
 schema. With that endpoint configured, a start without an environment is refused, and local execution is off.
 
 **A lost environment is not a finished turn.** When the link is lost and does not return, the adapter interrupts
-the turn. A turn that ended after the link was lost is never reported as completed.
+the turn and reports it failed, however it ended. The same goes for an interrupted turn found after a restart,
+because an `interrupted` nobody requested would leave the Attempt waiting.
 
 **Codex keeps its own sandbox inside the environment.** Commands run under `workspace-write` with `on-request`
 approvals, so the template carries bubblewrap. Full access would skip the approvals that #91 qualified.
@@ -65,7 +66,8 @@ Observed on 2026-11-01 with Codex 0.165.0, E2B envd 0.10.0 and a template built 
 
 ## Consequences
 
-- Stopping the environment ends the work, because the work is in it.
+- Stopping the environment ends the work, because the work is in it. The
+  [qualification](../architecture/codex-containment-108.md) observed this on the deployed stack.
 - The token is the only access control on the port. `environment/add` cannot send E2B's traffic access header,
   so `allowPublicTraffic` stays on. E2B terminates TLS and can see the token, but E2B already hosts the workload.
 - envd is reachable from outside, so sandboxes are now created with `secure: true`, which the idle sandboxes

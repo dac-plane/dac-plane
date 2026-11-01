@@ -5,8 +5,8 @@ deployed Surface API and ControlFrame boundaries. Disposition: both providers st
 
 **This does not prove that E2B stopped the work.** Codex runs in its adapter container and receives the
 sandbox reference only as opaque text, so the command and the sandbox were independent. The evidence
-proves that two independent stops converge. Running Codex inside the environment is separate work and
-must land before the #96 pilot claims containment.
+proves that two independent stops converge. [#108](codex-containment-108.md) later moved the commands into the
+sandbox and repeated these scenarios there.
 
 ## Pins
 
