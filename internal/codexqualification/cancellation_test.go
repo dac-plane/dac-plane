@@ -37,6 +37,10 @@ type cancellationStack struct {
 	tasks   int
 	// command is unique per task, so a process listing matches only that task.
 	command string
+	// inSandbox looks for the command in the task's sandbox, not the adapter.
+	inSandbox bool
+	// current is the task whose sandbox holds the command.
+	current *httpapi.SubmissionBody
 }
 
 // A cancellation scenario proves the stop rather than the request: each one
@@ -54,7 +58,7 @@ func TestTaskCancellationQualification(t *testing.T) {
 		t.Fatal("cannot read the E2B credential")
 	}
 	client := qualificationClient(t)
-	s := &cancellationStack{t: t, ctx: ctx, client: client, token: &tokenSource{t: t, ctx: ctx, client: client}, project: project, e2bKey: strings.TrimSpace(string(key))}
+	s := &cancellationStack{t: t, ctx: ctx, client: client, token: &tokenSource{t: t, ctx: ctx, client: client}, project: project, e2bKey: strings.TrimSpace(string(key)), inSandbox: os.Getenv("DAC_ENVIRONMENT_ATTACH_KEY_FILE") != ""}
 
 	t.Run("active command", func(t *testing.T) {
 		started := time.Now()
@@ -132,6 +136,7 @@ func TestTaskCancellationQualification(t *testing.T) {
 		s.command = fmt.Sprintf("sleep %d", 3170+s.tasks)
 		s.pause(t, "codex-adapter")
 		task := submit(t, ctx, client, s.token, "Use exec_command to run: "+s.command+".", "the command finishes unless DAC cancels the task")
+		s.current = &task
 		s.waitSQL(t, "uncertain start", fmt.Sprintf("select state = 'uncertain' from provider_operation where operation_id = '%s'", task.Operation.ID))
 		cancelTask(t, ctx, client, s.token, task.Task.ID)
 		s.docker(t, "kill", "codex-adapter")
@@ -164,6 +169,7 @@ func (s *cancellationStack) startActiveTask(t *testing.T) httpapi.SubmissionBody
 	task := submit(t, s.ctx, s.client, s.token,
 		"Use exec_command with sandbox_permissions require_escalated to run: "+s.command+". Wait for the command to finish.",
 		"the command finishes unless DAC cancels the task")
+	s.current = &task
 	approved := map[ids.AttentionID]bool{}
 	deadline, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
 	defer cancel()
@@ -330,6 +336,16 @@ func (s *cancellationStack) query(args ...string) ([]byte, error) {
 }
 
 func (s *cancellationStack) commandRunning(t *testing.T) bool {
+	t.Helper()
+	if !s.inSandbox {
+		return s.adapterHasCommand(t)
+	}
+	ref := s.sql(t, fmt.Sprintf("select native_ref from binding where attempt_id = '%s' and kind = 'environment_resource'", s.current.Attempt.ID))
+	id, ok := strings.CutPrefix(ref, "sandbox:")
+	return ok && s.sandboxHasCommand(t, id)
+}
+
+func (s *cancellationStack) adapterHasCommand(t *testing.T) bool {
 	t.Helper()
 	output, err := s.query("top", s.container("codex-adapter"))
 	if err != nil {
