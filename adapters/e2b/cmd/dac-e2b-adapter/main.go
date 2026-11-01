@@ -76,9 +76,17 @@ func run() error {
 			return errors.New("DAC_E2B_SANDBOX_TIMEOUT must be a duration such as 1h")
 		}
 	}
+	var attachKey []byte
+	if path := strings.TrimSpace(os.Getenv("DAC_ENVIRONMENT_ATTACH_KEY_FILE")); path != "" {
+		value, err := readSecret(path)
+		if err != nil {
+			return errors.New("cannot read environment attach key")
+		}
+		attachKey = []byte(value)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	client := &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}}
-	handler, err := e2b.New(e2b.Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, HTTPClient: client, Journal: journal, SandboxTimeout: sandboxTimeout})
+	handler, err := e2b.New(e2b.Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, HTTPClient: client, Journal: journal, SandboxTimeout: sandboxTimeout, AttachKey: attachKey})
 	if err != nil {
 		return err
 	}
