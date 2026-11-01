@@ -84,12 +84,25 @@ func run() error {
 	if err != nil {
 		return errors.New("cannot read Codex provider credential")
 	}
+	execServerURL := strings.TrimSpace(os.Getenv("DAC_CODEX_EXEC_SERVER_URL"))
+	attachKeyFile := strings.TrimSpace(os.Getenv("DAC_ENVIRONMENT_ATTACH_KEY_FILE"))
+	if (execServerURL == "") != (attachKeyFile == "") {
+		return errors.New("DAC_CODEX_EXEC_SERVER_URL and DAC_ENVIRONMENT_ATTACH_KEY_FILE must be set together")
+	}
+	var attachKey []byte
+	if attachKeyFile != "" {
+		value, err := readSecret(attachKeyFile)
+		if err != nil {
+			return errors.New("cannot read environment attach key")
+		}
+		attachKey = []byte(value)
+	}
 	version, err := exec.Command(binary, "--version").Output()
 	if err != nil || strings.TrimSpace(string(version)) != "codex-app-server "+codex.AppServerVersion {
 		return fmt.Errorf("Codex app-server must be exactly %s", codex.AppServerVersion)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	native, err := appserver.Start(ctx, appserver.Config{Binary: binary, Home: home, Provider: modelProvider, Model: model, BaseURL: baseURL, APIKeyEnv: "DAC_CODEX_PROVIDER_API_KEY", APIKey: apiKey, Logger: logger})
+	native, err := appserver.Start(ctx, appserver.Config{Binary: binary, Home: home, Provider: modelProvider, Model: model, BaseURL: baseURL, APIKeyEnv: "DAC_CODEX_PROVIDER_API_KEY", APIKey: apiKey, Logger: logger, RemoteOnly: execServerURL != ""})
 	if err != nil {
 		return err
 	}
@@ -104,7 +117,7 @@ func run() error {
 		return err
 	}
 	httpClient := clientForTLS(tlsConfig)
-	handler, err := codex.New(codex.Config{Native: native, Journal: state, Workspace: workspace, Model: model, Provider: modelProvider, ProviderID: providerID, HTTPClient: httpClient, Logger: logger})
+	handler, err := codex.New(codex.Config{Native: native, Journal: state, Workspace: workspace, Model: model, Provider: modelProvider, ProviderID: providerID, HTTPClient: httpClient, Logger: logger, ExecServerURL: execServerURL, AttachKey: attachKey})
 	if err != nil {
 		return err
 	}

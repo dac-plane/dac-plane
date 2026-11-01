@@ -23,7 +23,13 @@ import (
 type Config struct {
 	Binary, Home, Provider, Model, BaseURL, APIKeyEnv, APIKey string
 	Logger                                                    *slog.Logger
+	// RemoteOnly removes the local environment, so a command can only run in an
+	// environment the adapter added.
+	RemoteOnly bool
 }
+
+// remoteOnlyEnvironments names no environment; the adapter adds each at start.
+const remoteOnlyEnvironments = "include_local = false\n"
 
 var providerName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
@@ -76,6 +82,11 @@ func Start(ctx context.Context, config Config) (*Client, error) {
 	if err := os.MkdirAll(config.Home, 0700); err != nil {
 		return nil, fmt.Errorf("create Codex home: %w", err)
 	}
+	if config.RemoteOnly {
+		if err := os.WriteFile(filepath.Join(config.Home, "environments.toml"), []byte(remoteOnlyEnvironments), 0600); err != nil {
+			return nil, fmt.Errorf("write Codex environments: %w", err)
+		}
+	}
 	args := []string{
 		"-c", `model_provider=` + strconv.Quote(config.Provider),
 		"-c", `model=` + strconv.Quote(config.Model),
@@ -83,8 +94,11 @@ func Start(ctx context.Context, config Config) (*Client, error) {
 		"-c", `model_providers.` + config.Provider + `.base_url=` + strconv.Quote(config.BaseURL),
 		"-c", `model_providers.` + config.Provider + `.env_key=` + strconv.Quote(config.APIKeyEnv),
 		"-c", `model_providers.` + config.Provider + `.wire_api="responses"`,
-		"--listen", "stdio://",
 	}
+	if config.RemoteOnly {
+		args = append(args, "-c", `shell_environment_policy.inherit="core"`)
+	}
+	args = append(args, "--listen", "stdio://")
 	cmd := exec.CommandContext(ctx, config.Binary, args...)
 	cmd.Env = append(withoutEnv(os.Environ(), "CODEX_HOME", config.APIKeyEnv), "CODEX_HOME="+config.Home, config.APIKeyEnv+"="+config.APIKey)
 	stdin, err := cmd.StdinPipe()

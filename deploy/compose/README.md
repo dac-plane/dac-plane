@@ -108,3 +108,7 @@ production deployment.
 The tagged next-release binary, schema-16 probe migration, pinned-old image and simulator evidence
 listener exist only for this operations suite. They do not extend the release migration set or
 qualify a real provider.
+
+`compose.containment.yaml` layers over `compose.codex.yaml` and `compose.e2b.yaml` so Codex's commands run in the
+task's sandbox. `just qualify-codex-containment` uses it. See
+[ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md).

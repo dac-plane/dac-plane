@@ -36,6 +36,10 @@ Creates set `autoPause=false`, so an expired sandbox is killed. A paused sandbox
 | `DAC_E2B_TEMPLATE_ID` | E2B Cloud template ID; qualification defaults to `base` |
 | `DAC_E2B_STATE` | persistent bbolt state path |
 | `DAC_E2B_SANDBOX_TIMEOUT` | sandbox lifetime as a Go duration such as `1h`; defaults to `1h` |
+| `DAC_ENVIRONMENT_ATTACH_KEY_FILE` | key shared with the runtime adapter; set, each task sandbox starts exec-server, which needs the template below |
+
+`just build-e2b-codex-template` builds [`template/e2b.Dockerfile`](template/e2b.Dockerfile) with the pinned CLI. See
+[ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md).
 
 ## Verification
 

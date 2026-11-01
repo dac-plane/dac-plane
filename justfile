@@ -132,12 +132,26 @@ test-e2b-adapter:
     cd {{ e2b_adapter_dir }} && go test ./...
     cd {{ e2b_adapter_dir }} && go test -race ./...
     cd {{ e2b_adapter_dir }} && go test -tags=e2bqualification -run '^$' ./...
+    grep -q "CODEX_VERSION=$(sed -n 's/^const AppServerVersion = "\(.*\)"/\1/p' {{ codex_adapter_dir }}/version.go)$" {{ e2b_adapter_dir }}/template/e2b.Dockerfile
 
 # Run the real E2B Cloud qualification with a bounded, secret-backed sandbox probe.
 [doc('Qualify managed E2B Cloud (requires APIKEY_E2B and incurs sandbox usage)')]
 [group('test')]
 qualify-e2b-environment:
     ./adapters/e2b/qualification/run.sh
+
+# Build the sandbox template that runs Codex commands with the pinned E2B CLI,
+# and print its name for DAC_E2B_TEMPLATE_ID. Needs Node 22.19 or newer.
+[doc('Build the E2B template for Codex commands (needs E2B_API_KEY)')]
+[group('test')]
+build-e2b-codex-template name='dac-codex-exec':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=.work/e2b-template
+    mkdir -p "$work"
+    cp adapters/e2b/qualification/package.json adapters/e2b/qualification/package-lock.json "$work/"
+    npm ci --prefix "$work" --ignore-scripts --no-audit --no-fund
+    env HOME="$PWD/$work/home" XDG_CONFIG_HOME="$PWD/$work/home/.config" "$work/node_modules/.bin/e2b" template create {{ name }} --path adapters/e2b/template --dockerfile e2b.Dockerfile --cpu-count 2 --memory-mb 2048
 
 # Run the secret-backed Codex qualification against the deployed HTTPS and
 # ControlFrame boundaries. The disposable artifact service is a test fixture,
@@ -189,6 +203,42 @@ qualify-task-cancellation: stack-certs
     source .work/stack/compose.env
     set +a
     go test -count=1 -v -timeout=45m -tags=codexqualification -run "${DAC_CANCELLATION_QUALIFICATION_TEST:-TestTaskCancellationQualification}" ./internal/codexqualification/ 2>&1 | tee .work/cancellation-qualification/test.txt
+
+# The containment overlay is only deployed by a secret-backed gate, so CI checks
+# that it still composes with the stack.
+[group('test')]
+check-containment-compose: stack-certs
+    DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null DAC_ENVIRONMENT_ATTACH_KEY_FILE=/dev/null DAC_E2B_TEMPLATE_ID=template docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification config -q
+
+# Run the secret-backed containment qualification: Codex's commands run in the
+# task's sandbox, and every proof reads that sandbox directly through E2B.
+[doc('Qualify Codex running in its E2B sandbox (needs Docker, DAC_CODEX_API_KEY_FILE, DAC_E2B_API_KEY_FILE and DAC_E2B_TEMPLATE_ID; incurs usage)')]
+[group('test')]
+qualify-codex-containment: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    if [[ -z "${DAC_E2B_API_KEY_FILE:-}" || ! -s "$DAC_E2B_API_KEY_FILE" ]]; then echo "DAC_E2B_API_KEY_FILE must name a non-empty E2B credential file" >&2; exit 2; fi
+    if [[ -z "${DAC_E2B_TEMPLATE_ID:-}" ]]; then echo "DAC_E2B_TEMPLATE_ID must name a template from just build-e2b-codex-template" >&2; exit 2; fi
+    work=.work/containment-qualification
+    mkdir -p "$work"
+    export DAC_ENVIRONMENT_ATTACH_KEY_FILE="$PWD/$work/attach.key"
+    openssl rand -hex 32 >"$DAC_ENVIRONMENT_ATTACH_KEY_FILE"
+    chmod 0644 "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"
+    export DAC_QUALIFICATION_PROJECT=dac-cancellation-qualification
+    compose=(docker compose -p "$DAC_QUALIFICATION_PROJECT" --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >"$work/compose.log" 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" "$DAC_E2B_API_KEY_FILE" "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" "$work/compose.log"; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; done; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -f "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
+    for image in dac-codex-adapter:qualification dac-e2b-adapter:qualification; do docker image inspect "$image" | jq -r '.[0].Id'; done | tee "$work/image-ids.txt"
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -v -timeout=75m -tags=codexqualification -run "${DAC_CONTAINMENT_QUALIFICATION_TEST:-TestContainmentQualification|TestTaskCancellationQualification}" ./internal/codexqualification/ 2>&1 | tee "$work/test.txt"
 
 # The conformance suite runs the simulator adapter as a separate OS process,
 # the way a real provider adapter runs outside the control plane.
