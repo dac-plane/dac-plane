@@ -48,7 +48,7 @@ approvals, so the template carries bubblewrap. Full access would skip the approv
 ## Observations
 
 Observed on 2026-11-01 with Codex 0.165.0, E2B envd 0.10.0 and a template built from
-[`template.mjs`](../../adapters/e2b/template/template.mjs), with `allow_internet_access: false` and
+[`e2b.Dockerfile`](../../adapters/e2b/template/e2b.Dockerfile), with `allow_internet_access: false` and
 `denyOut: ["0.0.0.0/0"]` active.
 
 | Question | Observed |
