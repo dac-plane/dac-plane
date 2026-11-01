@@ -204,6 +204,12 @@ qualify-task-cancellation: stack-certs
     set +a
     go test -count=1 -v -timeout=45m -tags=codexqualification -run "${DAC_CANCELLATION_QUALIFICATION_TEST:-TestTaskCancellationQualification}" ./internal/codexqualification/ 2>&1 | tee .work/cancellation-qualification/test.txt
 
+# The containment overlay is only deployed by a secret-backed gate, so CI checks
+# that it still composes with the stack.
+[group('test')]
+check-containment-compose: stack-certs
+    DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null DAC_ENVIRONMENT_ATTACH_KEY_FILE=/dev/null DAC_E2B_TEMPLATE_ID=template docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification config -q
+
 # Run the secret-backed containment qualification: Codex's commands run in the
 # task's sandbox, and every proof reads that sandbox directly through E2B.
 [doc('Qualify Codex running in its E2B sandbox (needs Docker, DAC_CODEX_API_KEY_FILE, DAC_E2B_API_KEY_FILE and DAC_E2B_TEMPLATE_ID; incurs usage)')]
