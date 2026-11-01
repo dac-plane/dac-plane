@@ -289,6 +289,10 @@ func (s *cancellationStack) trySandboxRun(t *testing.T, id, command string) (str
 		t.Fatal("envd request failed")
 	}
 	defer process.Body.Close()
+	if process.StatusCode == http.StatusBadGateway {
+		// The port host answers this once the sandbox is being deleted.
+		return "", false
+	}
 	if process.StatusCode != http.StatusOK {
 		t.Fatalf("envd = %d", process.StatusCode)
 	}
