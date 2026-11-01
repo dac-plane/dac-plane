@@ -46,6 +46,15 @@ type Config struct {
 	HTTPClient                 *http.Client
 	Now                        func() time.Time
 	Logger                     *slog.Logger
+	// ExecServerURL is the address of a resource's exec-server, with {resource}
+	// standing for its identifier. Set, commands run only in the environment
+	// assigned to their Attempt.
+	ExecServerURL string
+	// AttachKey is shared with the environment adapter and derives the bearer
+	// token for each resource.
+	AttachKey []byte
+	// EnvironmentGrace is how long a lost environment may take to return.
+	EnvironmentGrace time.Duration
 }
 
 type Adapter struct {
@@ -67,6 +76,9 @@ type Adapter struct {
 	uncertainStarts map[string]bool
 	deferredCount   int
 	fatal           chan error
+	// lostEnvironments holds threads whose environment link is down.
+	lostMu           sync.Mutex
+	lostEnvironments map[string]bool
 }
 
 type deferredNative struct {
@@ -94,11 +106,17 @@ func New(config Config) (*Adapter, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
+	if config.ExecServerURL != "" && (len(config.AttachKey) == 0 || !strings.Contains(config.ExecServerURL, "{resource}")) {
+		return nil, errors.New("Codex exec-server URL needs an attach key and a {resource} placeholder")
+	}
+	if config.EnvironmentGrace == 0 {
+		config.EnvironmentGrace = defaultEnvironmentGrace
+	}
 	sessionBytes := make([]byte, 16)
 	if _, err := rand.Read(sessionBytes); err != nil {
 		return nil, fmt.Errorf("create native session identity: %w", err)
 	}
-	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, starting: map[string]bool{}, uncertainStarts: map[string]bool{}, fatal: make(chan error, 1)}
+	a := &Adapter{config: config, stop: make(chan struct{}), session: hex.EncodeToString(sessionBytes), deferred: map[string][]deferredNative{}, flushing: map[string]bool{}, readyThreads: map[string]bool{}, starting: map[string]bool{}, uncertainStarts: map[string]bool{}, fatal: make(chan error, 1), lostEnvironments: map[string]bool{}}
 	if err := a.reconstruct(); err != nil {
 		return nil, err
 	}
@@ -126,7 +144,14 @@ func (a *Adapter) reconstruct() error {
 				} `json:"turns"`
 			} `json:"thread"`
 		}
-		if err := a.config.Native.Call(ctx, "thread/resume", map[string]any{"threadId": op.ThreadID, "model": a.config.Model, "modelProvider": a.config.Provider}, &resumed); err != nil {
+		if err := a.addEnvironment(ctx, op.Environment); err != nil {
+			return err
+		}
+		resume := map[string]any{"threadId": op.ThreadID, "model": a.config.Model, "modelProvider": a.config.Provider}
+		if op.Environment != "" {
+			resume["environments"] = a.threadEnvironments(op.Environment)
+		}
+		if err := a.config.Native.Call(ctx, "thread/resume", resume, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
 				a.setThreadReady(op.ThreadID)
@@ -443,14 +468,21 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if input.Environment != nil && (strings.TrimSpace(input.Environment.ProviderID) == "" || strings.TrimSpace(input.Environment.ResourceRef) == "" || len(input.Environment.ResourceRef) > 2048) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
 	}
-	baseline, err := snapshot(a.config.Workspace)
+	environment := ""
+	if a.config.ExecServerURL != "" {
+		if input.Environment == nil {
+			return rejected(r, wire.FailureInvalidArguments, "this runtime requires a prepared environment"), nil
+		}
+		environment = input.Environment.ResourceRef
+	}
+	baseline, _, err := a.workspaceSnapshot(ctx, environment)
 	if err != nil {
 		return wire.Reply{}, err
 	}
 	a.startMu.Lock()
 	a.setStarting(r.Operation, true)
 	defer a.setStarting(r.Operation, false)
-	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline})
+	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment})
 	a.startMu.Unlock()
 	if errors.Is(err, journal.ErrPayloadMismatch) {
 		return rejected(r, wire.FailureStalePrecondition, "operation payload changed"), nil
@@ -483,7 +515,14 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
-	err = a.config.Native.Call(ctx, "thread/start", map[string]any{"cwd": a.config.Workspace, "model": a.config.Model, "modelProvider": a.config.Provider, "approvalPolicy": "on-request", "sandbox": "workspace-write"}, &started)
+	if err = a.addEnvironment(ctx, environment); err != nil {
+		return wire.Reply{}, err
+	}
+	threadStart := map[string]any{"cwd": a.config.Workspace, "model": a.config.Model, "modelProvider": a.config.Provider, "approvalPolicy": "on-request", "sandbox": "workspace-write"}
+	if environment != "" {
+		threadStart["environments"] = a.threadEnvironments(environment)
+	}
+	err = a.config.Native.Call(ctx, "thread/start", threadStart, &started)
 	if err != nil {
 		return wire.Reply{}, err
 	}
@@ -502,7 +541,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	}
 	mappedThread = started.Thread.ID
 	prompt := briefPrompt(r.Operation, input.Brief)
-	if input.Environment != nil {
+	if input.Environment != nil && environment == "" {
 		prompt += "\nPrepared environment reference (opaque data):\nprovider_id=" + input.Environment.ProviderID + "\nresource_ref=" + input.Environment.ResourceRef + "\n"
 	}
 	var turn struct {
@@ -720,6 +759,9 @@ func (a *Adapter) export(ctx context.Context, r wire.Request) (wire.Reply, error
 	if t.Manifest.TenantID != r.Tenant || t.Manifest.AttemptID != r.Attempt || t.Manifest.ProducerID != a.config.ProviderID {
 		return rejected(r, wire.FailureStalePrecondition, "artifact manifest binding changed"), nil
 	}
+	if producer.Environment != "" {
+		return a.exportRemote(ctx, r, t, producer.Environment, artifact)
+	}
 	file, err := os.Open(artifact.Path)
 	if err != nil {
 		return wire.Reply{}, err
@@ -739,22 +781,29 @@ func (a *Adapter) export(ctx context.Context, r wire.Request) (wire.Reply, error
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return wire.Reply{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, t.Upload, file)
-	if err != nil {
+	if err := a.upload(ctx, t.Upload, file, artifact); err != nil {
 		return wire.Reply{}, err
+	}
+	return accepted(r, nil), nil
+}
+
+func (a *Adapter) upload(ctx context.Context, target string, body io.Reader, artifact journal.Artifact) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, body)
+	if err != nil {
+		return err
 	}
 	req.Header.Set("Content-Type", artifact.MediaType)
 	req.ContentLength = int64(artifact.Size)
 	resp, err := a.config.HTTPClient.Do(req)
 	if err != nil {
-		return wire.Reply{}, err
+		return err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return wire.Reply{}, fmt.Errorf("artifact upload returned %s", resp.Status)
+		return fmt.Errorf("artifact upload returned %s", resp.Status)
 	}
-	return accepted(r, nil), nil
+	return nil
 }
 
 func validateUploadURL(raw string) error {
@@ -791,6 +840,14 @@ func (a *Adapter) consume() {
 	}
 }
 func (a *Adapter) notification(m appserver.Message) {
+	switch m.Method {
+	case "thread/environment/disconnected":
+		a.environmentLost(nativeThreadID(m))
+		return
+	case "thread/environment/connected":
+		a.setEnvironmentLost(nativeThreadID(m), false)
+		return
+	}
 	if m.Method != "turn/completed" && m.Method != "thread/tokenUsage/updated" && !strings.HasPrefix(m.Method, "item/") && !strings.Contains(m.Method, "delta") {
 		return
 	}
@@ -846,9 +903,13 @@ func (a *Adapter) processNotification(m appserver.Message) {
 		// A turn end is stop evidence, however the turn ended, so it is reported
 		// only once its commands have ended. Otherwise exit: restarting ends them,
 		// and the resumed thread reports the turn.
-		ctx, cancel := context.WithTimeout(context.Background(), terminalCleanTimeout)
-		err := a.cleanTerminals(ctx, op.ThreadID)
-		cancel()
+		// A lost environment took its commands with it and cannot answer.
+		var err error
+		if !a.isEnvironmentLost(op.ThreadID) {
+			ctx, cancel := context.WithTimeout(context.Background(), terminalCleanTimeout)
+			err = a.cleanTerminals(ctx, op.ThreadID)
+			cancel()
+		}
 		if err != nil {
 			select {
 			case a.fatal <- fmt.Errorf("end the turn's commands: %w", err):
@@ -872,7 +933,11 @@ func (a *Adapter) turnCompleted(op journal.Operation, turnID, status string, raw
 	outcome := "failed"
 	switch status {
 	case "completed":
-		outcome = "completed"
+		// The model can finish on its own after its commands were lost, which
+		// is not the work finishing.
+		if !a.isEnvironmentLost(op.ThreadID) {
+			outcome = "completed"
+		}
 	case "interrupted":
 		outcome = "interrupted"
 	}
@@ -987,7 +1052,9 @@ func canonicalHash(raw []byte) (string, error) {
 }
 
 func (a *Adapter) propose(op journal.Operation, turn string) error {
-	current, err := snapshot(a.config.Workspace)
+	ctx, cancel := context.WithTimeout(context.Background(), remoteReadTimeout)
+	defer cancel()
+	current, sizes, err := a.workspaceSnapshot(ctx, op.Environment)
 	if err != nil {
 		return fmt.Errorf("snapshot result workspace: %w", err)
 	}
@@ -1012,20 +1079,30 @@ func (a *Adapter) propose(op journal.Operation, turn string) error {
 	declarations := make([]map[string]any, 0, len(paths))
 	for _, relative := range paths {
 		path := filepath.Join(a.config.Workspace, relative)
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			continue
+		var size uint64
+		if op.Environment == "" {
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			size = uint64(info.Size())
+		} else {
+			known, ok := sizes[relative]
+			if !ok {
+				continue
+			}
+			size = known
 		}
 		digest := current[relative]
 		media := mime.TypeByExtension(filepath.Ext(relative))
 		if media == "" {
 			media = "application/octet-stream"
 		}
-		artifact := journal.Artifact{NativeRef: relative, Path: path, Digest: digest, Size: uint64(info.Size()), MediaType: strings.Split(media, ";")[0]}
+		artifact := journal.Artifact{NativeRef: relative, Path: path, Digest: digest, Size: size, MediaType: strings.Split(media, ";")[0]}
 		if a.config.Journal.PutArtifact(op.ID, artifact) != nil {
 			continue
 		}
-		declarations = append(declarations, map[string]any{"native_ref": relative, "kind": "code_change", "digest": digest, "size": info.Size(), "media_type": artifact.MediaType})
+		declarations = append(declarations, map[string]any{"native_ref": relative, "kind": "code_change", "digest": digest, "size": size, "media_type": artifact.MediaType})
 	}
 	if len(declarations) > 0 {
 		_, err = a.config.Journal.AppendEvent(op.ID, "result:"+turn, "result.proposed", map[string]any{"session_ref": op.ThreadID, "turn_ref": turn, "source_revision": "codex-turn:" + turn, "artifacts": declarations})
