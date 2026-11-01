@@ -170,6 +170,15 @@ func (s *cancellationStack) startActiveTask(t *testing.T) httpapi.SubmissionBody
 		"Use exec_command with sandbox_permissions require_escalated to run: "+s.command+". Wait for the command to finish.",
 		"the command finishes unless DAC cancels the task")
 	s.current = &task
+	if s.inSandbox {
+		s.explainFailure(t)
+		// A scenario that fails here must not leave its command running.
+		t.Cleanup(func() {
+			if t.Failed() {
+				cancelTask(t, s.ctx, s.client, s.token, task.Task.ID)
+			}
+		})
+	}
 	approved := map[ids.AttentionID]bool{}
 	deadline, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
 	defer cancel()

@@ -392,7 +392,11 @@ func TestTaskFollowsAttempt(t *testing.T) {
 	if event, ok := TaskFollowsAttempt(AttemptFailed, TaskRunning); !ok || event != TaskExecutionFailed {
 		t.Fatalf("failed attempt on running task = %s, %v", event, ok)
 	}
-	for _, task := range []TaskState{TaskQueued, TaskWaitingInput, TaskFailed} {
+	// The input is moot once its Attempt failed, and nothing else ends the wait.
+	if event, ok := TaskFollowsAttempt(AttemptFailed, TaskWaitingInput); !ok || event != TaskExecutionFailed {
+		t.Fatalf("failed attempt on waiting task = %s, %v", event, ok)
+	}
+	for _, task := range []TaskState{TaskQueued, TaskFailed} {
 		if _, ok := TaskFollowsAttempt(AttemptFailed, task); ok {
 			t.Errorf("failed attempt moves a %s task", task)
 		}

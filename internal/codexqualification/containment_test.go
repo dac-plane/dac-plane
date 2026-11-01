@@ -82,7 +82,7 @@ func TestContainmentQualification(t *testing.T) {
 		// The secrets are searched for here rather than sent in, because a search
 		// run in the sandbox would have to carry them there. Root sees every
 		// process, including the workload's own command.
-		dump := s.sandboxDump(t, sandbox)
+		dump := bytes.ReplaceAll(s.sandboxDump(t, sandbox), []byte{0}, []byte{' '})
 		if !bytes.Contains(dump, []byte(hash)) {
 			t.Fatalf("the dump of %d bytes missed exec-server's command line, so it proves nothing", len(dump))
 		}
@@ -133,16 +133,22 @@ func TestContainmentQualification(t *testing.T) {
 		s.docker(t, "kill", "codex-adapter")
 		s.start(t, "codex-adapter")
 		s.requireSettled(t, task)
-		if s.sandboxHasCommand(t, sandbox) {
-			t.Fatalf("%q outlived the settled task", s.command)
+		// ADR-0014 stops the environment after the failure, not with it.
+		s.requireCommandGone(t)
+		if s.sandboxExists(t, sandbox) {
+			t.Fatal("the sandbox survived the failed Attempt")
 		}
 		t.Logf("settled after restart\n%s", s.taskEvidence(t, task))
 	})
 
 	t.Run("a result is read from the sandbox", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
 		submitted := submit(t, ctx, s.client, s.token,
 			"Use exec_command exactly once with sandbox_permissions require_escalated to run: printf 'contained\\n' > result.txt. Do not use another file-writing tool.",
 			"result.txt contains exactly contained followed by one newline")
+		s.current = &submitted
+		s.explainFailure(t)
 		for approvals := 0; approvals < 4; approvals++ {
 			attention, ready := waitAttentionOrReady(t, ctx, s.client, s.token, submitted.Task.ID)
 			if ready {
@@ -163,6 +169,23 @@ func TestContainmentQualification(t *testing.T) {
 		}
 		review(t, ctx, s.client, s.token, ready, lifecycle.DispositionAccept)
 		_ = waitTask(t, ctx, s.client, s.token, submitted.Task.ID, lifecycle.TaskSucceeded)
+	})
+}
+
+// explainFailure records where a task stood, because a failed run's stack and
+// database are removed with it.
+func (s *cancellationStack) explainFailure(t *testing.T) {
+	t.Helper()
+	task := *s.current
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		t.Logf("failed at:\n%s\n%s", s.sql(t, fmt.Sprintf("select a.state, a.runtime_stopped, a.environment_stopped, t.state from attempt a join task t on t.task_id = a.task_id where a.attempt_id = '%s'", task.Attempt.ID)), s.taskEvidence(t, task))
+		t.Logf("operations:\n%s", s.sql(t, fmt.Sprintf("select p.operation_id, p.state, x.status, x.lease_epoch, x.payload->>'method' from provider_operation p left join outbox x on x.record_id = p.operation_id where p.attempt_id = '%s'", task.Attempt.ID)))
+		if output, err := s.query("logs", "--tail", "12", s.container("codex-adapter")); err == nil {
+			t.Logf("runtime adapter:\n%s", output)
+		}
 	})
 }
 

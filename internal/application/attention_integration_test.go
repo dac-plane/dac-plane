@@ -149,6 +149,23 @@ func TestAttentionRequestedCreatesRequestAndWaits(t *testing.T) {
 	}
 }
 
+// A runtime can lose its environment with an approval open. The question is moot
+// then, and nothing else would end the wait.
+func TestFailedTurnEndsATaskWaitingOnInput(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
+	f.ingestNow(t, f.event(rt, s, 1, simulator.RowsFrame(false,
+		row(3, contracts.EntryTurnFinished, failedTurn("s-1", "t-1", f.at)))))
+	if task, attempt := f.states(t, s); task != lifecycle.TaskFailed || attempt != lifecycle.AttemptFailed {
+		t.Fatalf("states = %s/%s, want failed/failed", task, attempt)
+	}
+	if got := f.attention(t, s); got.State != lifecycle.AttentionSuperseded {
+		t.Fatalf("request = %s, want superseded", got.State)
+	}
+}
+
 func TestAttentionRequestedSecondBlockingRefused(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
