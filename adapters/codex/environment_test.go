@@ -107,6 +107,20 @@ func TestStartWithoutAnEnvironmentIsRefused(t *testing.T) {
 	}
 }
 
+func TestReferenceThatCouldChangeTheHostIsRefused(t *testing.T) {
+	for _, ref := range []string{"sandbox:evil.example/", "sandbox:a@evil.example", "sandbox:a.b", "sandbox:a?b", "sandbox:"} {
+		f := setupRemote(t)
+		arguments := strings.Replace(validStart, "sandbox:fixture", ref, 1)
+		reply, err := f.adapter.Send(context.Background(), startRequest(arguments))
+		if err != nil || reply.Durability != wire.DurabilityRejected || reply.Failure.Code != wire.FailureInvalidArguments {
+			t.Fatalf("%s: start=%+v err=%v", ref, reply, err)
+		}
+		if got := f.native.count("environment/add"); got != 0 {
+			t.Fatalf("%s: environment/add calls=%d", ref, got)
+		}
+	}
+}
+
 func TestLocalModeAddsNoEnvironment(t *testing.T) {
 	f := setup(t)
 	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
@@ -135,6 +149,34 @@ func TestRestartAddsTheEnvironmentBeforeResuming(t *testing.T) {
 	}
 	if !strings.Contains(string(restarted.last("thread/resume")), environmentID("sandbox:fixture")) {
 		t.Fatalf("thread/resume = %s", restarted.last("thread/resume"))
+	}
+}
+
+func TestLostEnvironmentFailsAnInterruptedTurn(t *testing.T) {
+	f := setupRemote(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.notifications <- environmentEvent("thread/environment/disconnected")
+	waitFor(t, func() bool { return f.native.count("turn/interrupt") == 1 })
+	f.native.notifications <- interruptedTurn()
+	waitFor(t, func() bool {
+		op, err := f.store.OperationByThread("thread-1")
+		return err == nil && op.State == "failed"
+	})
+}
+
+func TestRestartReportsAnInterruptedTurnAsFailed(t *testing.T) {
+	f := setupRemote(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newFakeNative()
+	restarted.resumedStatus = "interrupted"
+	remoteOn(t, restarted, f.store, f.exec)
+	op, err := f.store.OperationByThread("thread-1")
+	if err != nil || op.State != "failed" {
+		t.Fatalf("operation=%+v err=%v", op, err)
 	}
 }
 

@@ -177,7 +177,14 @@ func (a *Adapter) reconstruct() error {
 				if err := a.ensureStartEvents(op); err != nil {
 					return err
 				}
-				a.turnCompleted(op, last.ID, last.Status, nil)
+				status := last.Status
+				if op.Environment != "" && status == "interrupted" {
+					// Only this adapter's death interrupted it: left as interrupted, an
+					// Attempt nobody cancelled would wait forever. A cancelled one takes
+					// any turn end as its runtime stop.
+					status = "failed"
+				}
+				a.turnCompleted(op, last.ID, status, nil)
 			}
 		}
 		if err := a.ensureStartEvents(op); err != nil {
@@ -474,6 +481,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 			return rejected(r, wire.FailureInvalidArguments, "this runtime requires a prepared environment"), nil
 		}
 		environment = input.Environment.ResourceRef
+		if !resourceIdentifier.MatchString(resourceID(environment)) {
+			return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
+		}
 	}
 	baseline, _, err := a.workspaceSnapshot(ctx, environment)
 	if err != nil {
@@ -933,13 +943,15 @@ func (a *Adapter) turnCompleted(op journal.Operation, turnID, status string, raw
 	outcome := "failed"
 	switch status {
 	case "completed":
-		// The model can finish on its own after its commands were lost, which
-		// is not the work finishing.
-		if !a.isEnvironmentLost(op.ThreadID) {
-			outcome = "completed"
-		}
+		outcome = "completed"
 	case "interrupted":
 		outcome = "interrupted"
+	}
+	if a.isEnvironmentLost(op.ThreadID) {
+		// The model can finish on its own after its commands were lost, which is
+		// not the work finishing. An interrupted turn alone would leave an Attempt
+		// nobody cancelled waiting, so losing the environment is a failure.
+		outcome = "failed"
 	}
 	var resultErr error
 	if outcome == "completed" {

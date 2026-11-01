@@ -15,7 +15,7 @@ func TestSnapshotWalksTheWorkspaceAndSkipsToolDirectories(t *testing.T) {
 		"/workspace/.git/config":  "skipped",
 		"/workspace/.codex/state": "skipped",
 	}).URL
-	client, err := Dial(context.Background(), endpoint, "token", nil)
+	client, err := Dial(context.Background(), endpoint, "token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,14 +35,14 @@ func TestSnapshotWalksTheWorkspaceAndSkipsToolDirectories(t *testing.T) {
 
 func TestDialRefusesTheWrongToken(t *testing.T) {
 	endpoint := exectest.New(t, "token", nil).URL
-	if _, err := Dial(context.Background(), endpoint, "wrong", nil); err == nil {
+	if _, err := Dial(context.Background(), endpoint, "wrong"); err == nil {
 		t.Fatal("wrong token connected")
 	}
 }
 
 func TestReadFileReportsAMissingFile(t *testing.T) {
 	endpoint := exectest.New(t, "token", nil).URL
-	client, err := Dial(context.Background(), endpoint, "token", nil)
+	client, err := Dial(context.Background(), endpoint, "token")
 	if err != nil {
 		t.Fatal(err)
 	}

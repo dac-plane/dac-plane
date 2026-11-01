@@ -40,9 +40,11 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// Dial connects and completes exec-server's handshake.
-func Dial(ctx context.Context, endpoint, token string, client *http.Client) (*Client, error) {
-	conn, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPClient: client, HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}})
+// Dial connects and completes exec-server's handshake. It trusts the system
+// roots, unlike the adapter's own client, because the endpoint is the provider's
+// public port host rather than the control plane.
+func Dial(ctx context.Context, endpoint, token string) (*Client, error) {
+	conn, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}})
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}

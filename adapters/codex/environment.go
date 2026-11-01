@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,12 @@ const (
 	attachTokenLabel = "dac-exec-server-v1\x00"
 )
 
+// resourceIdentifier is what may enter the exec-server address. A reference that
+// could reach another host would be handed that host's bearer token.
+var resourceIdentifier = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+func resourceID(ref string) string { return ref[strings.LastIndexByte(ref, ':')+1:] }
+
 // attachToken derives a resource's bearer token. The environment adapter derives
 // the same value from the shared key, so no secret crosses the control plane.
 func attachToken(key []byte, ref string) string {
@@ -44,7 +51,7 @@ func environmentID(ref string) string {
 // execServerURL fills the deployment's address with the part of the opaque
 // reference after its last colon.
 func (a *Adapter) execServerURL(ref string) string {
-	return strings.ReplaceAll(a.config.ExecServerURL, "{resource}", ref[strings.LastIndexByte(ref, ':')+1:])
+	return strings.ReplaceAll(a.config.ExecServerURL, "{resource}", resourceID(ref))
 }
 
 // addEnvironment registers a resource with Codex, which does not persist it
@@ -66,7 +73,7 @@ func (a *Adapter) threadEnvironments(ref string) []map[string]any {
 }
 
 func (a *Adapter) dialEnvironment(ctx context.Context, ref string) (*execclient.Client, error) {
-	return execclient.Dial(ctx, a.execServerURL(ref), attachToken(a.config.AttachKey, ref), a.config.HTTPClient)
+	return execclient.Dial(ctx, a.execServerURL(ref), attachToken(a.config.AttachKey, ref))
 }
 
 // workspaceSnapshot digests the workspace where the commands run. Sizes are
