@@ -1,7 +1,6 @@
 # Release evidence: v0.1.0
 
 Evidence for [#95](https://github.com/dac-plane/dac-plane/issues/95). It records what was observed, including failures.
-The release section is still empty because no final tag has been pushed.
 
 ## Live provider runs before the first tag
 
@@ -57,6 +56,7 @@ Both runs built on GitHub's amd64 and arm64 runners and published to `ghcr.io/da
 |---|---|---|---|
 | `v0.1.0-rc.1` | `d4f7fd7` | [41695145795](https://github.com/dac-plane/dac-plane/actions/runs/41695145795) | CI, security, reproducible builds, scans, push and attestations passed. The clean room failed when its stack started, and no draft was created. |
 | `v0.1.0-rc.2` | `87a8023` | [41700882873](https://github.com/dac-plane/dac-plane/actions/runs/41700882873) | Every job passed: 25 of 25, ending in a draft prerelease. |
+| `v0.1.0-rc.3` | `be81512` | [41703255687](https://github.com/dac-plane/dac-plane/actions/runs/41703255687) | Every job passed, with the storage record turned off and no warning about it. |
 
 The rc.1 failure was a bug in the clean room, which passed `--scale sim-adapter=0` for a service that the stack left
 disabled. Running its later stages locally then found that the module proxy's first fetch of a new kit version can
@@ -76,4 +76,23 @@ Dropped by decision of the project owner, to save time:
 
 ## Release
 
-Not yet run. To record: the workflow run, image digests, and `just release-verify` with no registry login.
+`v0.1.0` and `adapterkit/v0.1.0` are signed tags on `be81512`, the commit rc.3 ran on. [Run 41706377887](https://github.com/dac-plane/dac-plane/actions/runs/41706377887)
+passed all 25 jobs, and the [GitHub Release](https://github.com/dac-plane/dac-plane/releases/tag/v0.1.0) is published and
+immutable.
+
+| Image, under `ghcr.io/dac-plane/` | Digest |
+|---|---|
+| `dac-plane` | `sha256:ad1721deb432feb600783711ed164c8c51cb8540ad26d16dc83c871dede5d8c1` |
+| `dac-codex-adapter` | `sha256:929ece501f0e59b0f82b916623d14a182e357ec7a9bfc9143fdaefc1b6315e30` |
+| `dac-e2b-adapter` | `sha256:2ffc7072681904e2042ce14859440a0af2b2477767f5578482116c213f41e171` |
+| `dac-s3-adapter` | `sha256:0d5a69516b24067c416eb40709da77be8e9a29cb0d324dd1b19168c246810188` |
+
+With no registry login, `scripts/release/verify-release.sh` then passed against the published release, in about 20
+minutes on one arm64 machine. It pulled and verified all four images, started the stack, built the external adapter
+and passed conformance against the published kit, and built every in-tree module without the `replace`. Its first
+attempt failed because the script's empty Docker config also hid the `buildx` plugin, a script bug since fixed.
+
+Afterwards, the release's approval and draft were removed by [ADR-0019](../adr/0019-publish-a-final-release-from-its-tag.md).
+That publishing path has not yet run. The packages are linked to the repository and listed on its
+[Packages page](https://github.com/dac-plane/dac-plane/packages), but the home page sidebar did not show them, with its
+Packages option ticked. The cause was not established.

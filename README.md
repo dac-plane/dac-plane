@@ -1,56 +1,43 @@
-# dac-plane
+# Open Source Control Plane for Delegated Agent Work
 
-`dac-plane` is a provider-neutral control plane for delegated agent work. It owns the durable product
-lifecycle—tasks, attempts, attention, decisions, budgets, artifacts, audit, result revisions and
-reviews—while agent runtimes and execution environments remain replaceable integrations.
+dac-plane keeps the durable record of work you delegate to AI agents: tasks, attempts, approvals, budgets, artifacts, audit, results and reviews. The agent runtime and the environment it runs in stay replaceable.
 
-The repository implements the lifecycle through an authenticated Surface API, the adapter-initiated
-ControlFrame transport, PostgreSQL persistence, fenced workers and deterministic provider simulators.
-The control plane is packaged as a non-root distroless image with an explicit migration step and a
-reference Compose stack. No production provider is qualified yet. The reviewed implementation baseline is in
-[`docs/architecture/`](docs/architecture/README.md). The earlier candidate research, experiments and
-TypeScript/PostgreSQL prototypes are retained under [`architecture-explore/`](architecture-explore/README.md)
-as evidence, not as the active product implementation.
+It currently runs Codex in E2B sandboxes with S3-compatible artifact storage, and other providers can connect through the [adapter kit](adapterkit/README.md). It is ready for self-hosted pilots. See the [known limits](docs/releases/v0.1.0.md#known-limits) before you rely on it.
 
-The first milestone culminates in the
-[contract-freeze gate](docs/architecture/review-2026-10-15.md#contract-freeze-gate): authoritative
-contracts and migrations for all nine product records, exercised by a deterministic runtime simulator
-through one end-to-end lifecycle slice.
+## Documentation
 
-Start with:
+* [Deployment guide](deploy/compose/README.md) - configuring, upgrading and rolling back a deployment
+* [Surface API](contracts/openapi/surface-v1.json) - the OpenAPI document for the public API
+* [Adapter kit](adapterkit/README.md) - connecting a new runtime, environment or artifact store
+* [Architecture](docs/architecture/README.md) - how the system is built, and the [decisions](docs/adr) behind it
+* [Releases](RELEASES.md) - versioning, compatibility and how to verify a release
 
-- [Architecture baseline](docs/architecture/README.md)
-- [Pre-implementation architecture review](docs/architecture/review-2026-10-15.md)
-- [ADR-0001: Go backend](docs/adr/0001-control-plane-language.md)
-- [ADR-0002: modular-monolith control plane](docs/adr/0002-initial-application-boundary.md)
-- [ADR-0003: provider-neutral execution contract semantics](docs/adr/0003-provider-contract-semantics.md)
+## Reporting security vulnerabilities
 
-Contribution conventions (commits, PR titles, review rules) are in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+If you have found a security vulnerability, follow the [instructions on how to report it](SECURITY.md). Do not open a public issue.
 
-## Development
+## Reporting an issue
 
-The foundation requires Go 1.26.9 or a newer Go 1.26 patch release. Unit tests do not require
-external services; integration tests use Docker to start a pinned PostgreSQL 16 container.
+If you believe you have found a defect, open [an issue](https://github.com/dac-plane/dac-plane/issues) with a summary, what you expected and the steps to reproduce it.
+
+## Getting started
+
+Each [release](https://github.com/dac-plane/dac-plane/releases/latest) lists its images by digest in `release-manifest.json`, and the images are published as [packages](https://github.com/dac-plane/dac-plane/packages). To deploy them, follow the [deployment guide](deploy/compose/README.md).
+
+To try it from source against simulated providers, with no provider accounts:
 
 ```sh
-just        # list every check
-just ci     # run what CI runs
+just stack-up
 ```
 
-Checks are recipes in the root `justfile`, which CI also calls; it needs
-[just](https://just.systems) 1.57 or newer.
+## Building from source
 
-`dac-plane serve` exposes the Surface API and adapter endpoint over TLS and a local operations
-listener for container health checks. `dac-plane migrate` owns schema rollout, `dac-plane provision`
-owns trusted bootstrap changes, and secret-bearing settings accept mounted files. See the
-[reference deployment guide](deploy/compose/README.md) for configuration, database privileges,
-upgrade/rollback rules and the simulator-backed development profile.
+To build the project and run its tests, refer to the [development guide](docs/development.md).
 
-```sh
-just test-stack  # clean TLS Compose stack and full public-API lifecycle smoke
-```
+## Contributing
+
+Before contributing, read the [contributing guidelines](CONTRIBUTING.md). Work starts from an [issue](https://github.com/dac-plane/dac-plane/issues), and a change to the architecture gets a new [decision record](docs/adr).
 
 ## License
 
-[Apache-2.0](LICENSE). Third-party notices are in [third_party](third_party) and in `/licenses` in each published image.
+[Apache License, Version 2.0](LICENSE). Third-party notices are in [third_party](third_party) and in `/licenses` in each published image.
