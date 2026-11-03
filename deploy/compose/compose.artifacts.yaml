@@ -1,6 +1,6 @@
-# Layered over compose.codex.yaml and compose.e2b.yaml: the artifact store is a
-# pinned, self-hosted SeaweedFS behind the S3 adapter (ADR-0017), replacing the
-# simulator's byte store. The operator owns the store's volume and backups, as
+# Layered over compose.dev.yaml, or over compose.codex.yaml and compose.e2b.yaml:
+# the artifact store is a pinned, self-hosted SeaweedFS behind the S3 adapter
+# (ADR-0017), replacing the simulator's byte store. The operator owns the store's volume and backups, as
 # with PostgreSQL. Commit evidence is read from the store by version.
 services:
   # The proxy owns the network identity and SeaweedFS joins its namespace, so a
@@ -115,8 +115,17 @@ services:
       - s3_adapter_secret
     ports: !reset []
     depends_on:
+      dac-plane:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
       artifact-store-provision:
         condition: service_completed_successfully
+    profiles: ["qualification"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
 
 configs:
   artifact_store_proxy:

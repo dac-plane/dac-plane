@@ -57,6 +57,8 @@ import (
 // identities are generated at submission: its rows stream on subscribe and
 // its after_decision rows follow once a decision was delivered. An artifact
 // store, when present, receives the runtime's exports of the named fixtures.
+// An artifact export instead uploads them through each transfer's HTTPS
+// capability, to a separate artifact store adapter.
 // An environment, when present, accepts every provision and stop.
 // Everything the adapter answers comes from this file; an unscripted
 // operation fails loudly, never inventing a success.
@@ -80,6 +82,12 @@ type scenarioFile struct {
 		Provider string            `json:"provider_id"`
 		Fixtures map[string]string `json:"fixtures"`
 	} `json:"artifact_store"`
+	// ArtifactExport uploads the named fixtures through each transfer's HTTPS
+	// capability, for a separate artifact store adapter. It excludes
+	// artifact_store.
+	ArtifactExport *struct {
+		Fixtures map[string]string `json:"fixtures"`
+	} `json:"artifact_export"`
 	Environment *struct {
 		Provider string `json:"provider_id"`
 	} `json:"environment"`
@@ -271,6 +279,18 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simul
 		set.runtime = runtime
 		set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay}}}
 	}
+	if s.ArtifactExport != nil {
+		if s.ArtifactStore != nil {
+			return nil, errors.New("scenario: artifact_export and artifact_store are exclusive")
+		}
+		if set.runtime != nil {
+			fixtures := map[string][]byte{}
+			for ref, text := range s.ArtifactExport.Fixtures {
+				fixtures[ref] = []byte(text)
+			}
+			set.runtime.WithArtifactUploader(httpsUploader(tlsConfig), fixtures)
+		}
+	}
 	// The environment is independent of the runtime: an artifact-only process
 	// beside a real runtime still serves it.
 	if s.Environment != nil {
@@ -373,6 +393,9 @@ func (s scenarioFile) runtimeScenario() (simulator.RuntimeScenario, error) {
 	fixtures := map[string]string{}
 	if s.ArtifactStore != nil {
 		fixtures = s.ArtifactStore.Fixtures
+	}
+	if s.ArtifactExport != nil {
+		fixtures = s.ArtifactExport.Fixtures
 	}
 	rows, err := scriptRows(s.Default.Rows, 1, fixtures)
 	if err != nil {

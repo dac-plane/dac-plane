@@ -135,7 +135,14 @@ Keys:
 Deleting a committed artifact is an operator procedure. The steps are in
 [`adapters/s3/README.md`](../../adapters/s3/README.md#buckets-and-keys).
 
-`just test-artifact-store-stack` needs no provider secret. It deploys this profile and checks:
+`compose.artifacts.dev.yaml` layers this profile over the development profile. The simulated runtime then
+uses `scenario.artifacts.dev.json`, which uploads its fixture through the S3 adapter's presigned HTTPS
+capability, exactly as the Codex adapter uploads a real artifact.
+
+`just test-artifact-store-stack` needs no provider secret. It deploys that combination and checks:
 - that the adapter is connected
 - that only HTTPS S3 is exposed
+- that the deployed lifecycle reaches `succeeded`, with its result committed through the store
+- that the store holds exactly one frozen version with the fixture's bytes
 - that the store recovers from a crash behind the same proxy
+- that the profile still composes over the Codex and E2B overlays

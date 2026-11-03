@@ -201,8 +201,9 @@ The adapter keeps no local state. Everything it needs after a restart lives in t
   - `just ci-fast`, which passed.
 - **Also done:** step 4, Compose wiring (`compose.artifacts.yaml`, `just test-artifact-store-stack` in CI).
 - **Open:**
-  - The end-to-end run through the control plane. It needs the Camer key, and the Codex qualification must
-    read evidence from the store rather than the simulator.
+  - A live Codex run on the profile. It needs the Camer key, and the Codex qualification must read evidence
+    from the store rather than the simulator. The simulator path through the control plane is done
+    (`just test-artifact-store-stack`).
   - A rerun from a committed revision.
   - The disposition, and `just ci`.
 

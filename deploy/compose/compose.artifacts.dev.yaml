@@ -1,0 +1,17 @@
+# Layered over compose.dev.yaml and compose.artifacts.yaml: the simulated
+# runtime uploads its fixture through the S3 adapter's presigned HTTPS
+# capability, so the deployed lifecycle exercises the real byte store.
+services:
+  sim-adapter:
+    configs: !override
+      - source: dev_ca
+        target: /run/config/ca.crt
+      - source: sim_artifacts_scenario
+        target: /run/config/scenario.json
+    depends_on:
+      artifact-adapter:
+        condition: service_started
+
+configs:
+  sim_artifacts_scenario:
+    file: ./scenario.artifacts.dev.json

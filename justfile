@@ -232,30 +232,38 @@ qualify-task-cancellation: stack-certs
 check-containment-compose: stack-certs
     DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null DAC_ENVIRONMENT_ATTACH_KEY_FILE=/dev/null DAC_E2B_TEMPLATE_ID=template docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification config -q
 
-# The artifact store profile needs no provider secret: this brings up the
-# control plane, SeaweedFS, its TLS proxy, bucket provisioning and the S3
-# adapter, checks that the adapter is connected and only HTTPS is exposed, and
-# that the store recovers from a crash behind the same proxy.
-[doc('Deploy the artifact store profile and check its connection and exposure (needs Docker)')]
+# The artifact store profile needs no provider secret. The simulated runtime
+# uploads through the S3 adapter's presigned HTTPS capability, so the deployed
+# lifecycle commits real bytes to SeaweedFS. It also checks that only HTTPS is
+# exposed, that the store recovers from a crash behind the same proxy, and that
+# the profile still composes over the Codex and E2B overlays.
+[doc('Deploy the artifact store profile and run the lifecycle through it (needs Docker)')]
 [group('test')]
 test-artifact-store-stack: stack-certs
     #!/usr/bin/env bash
     set -euo pipefail
-    export DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null
-    compose=(docker compose -p dac-artifact-store-stack --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification)
+    DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification config -q
+    compose=(docker compose -p dac-artifact-store-stack --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.dev.yaml --profile dev --profile qualification)
     cleanup() { code=$?; if (( code != 0 )); then "${compose[@]}" logs --no-color --tail=200; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
     trap cleanup EXIT
     "${compose[@]}" down -v --remove-orphans
-    "${compose[@]}" up -d --build --wait artifact-adapter
-    for _ in $(seq 1 60); do if "${compose[@]}" logs --no-color dac-plane | grep -q '"msg":"adapter connected".*"role":"artifact_store"'; then connected=1; break; fi; sleep 1; done
-    if [[ -z "${connected:-}" ]]; then echo "artifact store adapter did not connect" >&2; exit 1; fi
+    "${compose[@]}" up -d --build --wait
+    if ! "${compose[@]}" logs --no-color dac-plane | grep -q '"msg":"adapter connected".*"role":"artifact_store"'; then echo "artifact store adapter did not connect" >&2; exit 1; fi
     exposed="$("${compose[@]}" exec -T artifact-store-seaweedfs netstat -tln | awk 'NR > 2 && $4 !~ /^127\./ { print $4 }')"
     if [[ "$exposed" != "0.0.0.0:8443" ]]; then echo "artifact store exposes more than HTTPS S3: $exposed" >&2; exit 1; fi
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -tags=stack ./internal/stacktest/
+    # Read the frozen bytes back through SeaweedFS's loopback filer: exactly
+    # one committed version, holding the simulator's fixture.
+    stored="$("${compose[@]}" exec -T artifact-store-seaweedfs sh -c 'list() { curl -sf -H "Accept: application/json" "http://127.0.0.1:8888$1/" | grep -o "\"FullPath\":\"[^\"]*\"" | cut -d\" -f4; }; for d in $(list /buckets/dac-objects/01a167fd-51d9-76ba-b563-496e2bd89646); do for f in $(list "$d"); do curl -sf "http://127.0.0.1:8888$f"; echo "--"; done; done')"
+    if [[ "$(grep -c '^--$' <<<"$stored")" != 1 ]] || ! grep -q '^+delegated result$' <<<"$stored"; then echo "store does not hold exactly the committed fixture: $stored" >&2; exit 1; fi
     # A store crash must not strand the proxy: SeaweedFS rejoins its namespace.
     docker kill --signal KILL "$("${compose[@]}" ps -q artifact-store-seaweedfs)" >/dev/null
     "${compose[@]}" up -d --wait artifact-store-seaweedfs
     "${compose[@]}" run --rm --no-deps artifact-store-provision
-    echo "artifact store profile deployed, connected, and provisioned again after a store crash"
+    echo "lifecycle committed through the S3 store; profile recovered from a store crash"
 
 # Run the secret-backed containment qualification: Codex's commands run in the
 # task's sandbox, and every proof reads that sandbox directly through E2B.

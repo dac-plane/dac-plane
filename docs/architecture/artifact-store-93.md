@@ -4,8 +4,10 @@ Status:
 - **Done:** the spike; the adapter ([`adapters/s3`](../../adapters/s3/README.md)); its live
   qualification against SeaweedFS, which passed.
 - **Done since:** the Compose profile (`compose.artifacts.yaml`), deployed by `just test-artifact-store-stack`.
+- **Also done:** the deployed lifecycle through the control plane, the S3 adapter and SeaweedFS, with the
+  simulated runtime uploading over HTTPS.
 - **Not done:**
-  - an end-to-end run through the control plane
+  - a run with live Codex
   - the GitHub CI run
   - the final live, shadow or off decision
 
@@ -13,8 +15,25 @@ Decision: [ADR-0017](../adr/0017-qualify-an-s3-api-artifact-store.md).
 
 ## Compose profile
 
-Observed on 2026-11-03 with `just test-artifact-store-stack`, which needs no provider secret and finished in
-63 seconds:
+### Lifecycle through the store
+
+Observed on 2026-11-03 with `just test-artifact-store-stack`, which finished in 81 seconds. This run
+layered the profile over the development stack.
+
+The simulated runtime had no in-process store. Its scenario names an `artifact_export`, so it uploaded its
+fixture with a plain HTTPS PUT to the presigned capability, carrying `Content-Type` and `Content-Length`
+only. The control plane logged a single `artifact_store` connection, from `dac-s3-adapter`.
+
+`TestDevelopmentStackLifecycle` then passed in 16.6 seconds:
+- The task reached `ready_for_review` with one artifact and one integrity verification.
+- After the owner accepted, it reached `succeeded`.
+
+Read back through SeaweedFS's loopback filer, the objects bucket held exactly one version for the tenant,
+and its bytes were the fixture's.
+
+### Deployment over Codex and E2B
+
+Observed earlier the same day, with the profile layered over the Codex and E2B overlays, in 63 seconds:
 - The control plane logged `adapter connected` for the `artifact_store` role.
 - `netstat` in the store's namespace listed one listener off loopback: `0.0.0.0:8443`.
 - SeaweedFS was killed with `SIGKILL`. It came back healthy behind the same proxy, and `provision` passed
