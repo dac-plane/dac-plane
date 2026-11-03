@@ -6,18 +6,18 @@ Status:
 - **Done since:** the Compose profile (`compose.artifacts.yaml`), deployed by `just test-artifact-store-stack`.
 - **Also done:** the deployed lifecycle through the control plane, the S3 adapter and SeaweedFS, with the
   simulated runtime uploading over HTTPS.
-- **Not done:**
-  - a run with live Codex
-  - the GitHub CI run
-  - the final live, shadow or off decision
+- **Not done:** a run with live Codex.
 
 Decision: [ADR-0017](../adr/0017-qualify-an-s3-api-artifact-store.md).
+
+Disposition: **live** for the bundled SeaweedFS profile, within the limits recorded below. Every other store
+stays off until its own qualification passes.
 
 ## Compose profile
 
 ### Lifecycle through the store
 
-Observed on 2026-11-03 with `just test-artifact-store-stack`, which finished in 81 seconds. This run
+Observed on 2026-11-03 at `52d8f5b` with `just test-artifact-store-stack`, which finished in 98 seconds. This run
 layered the profile over the development stack.
 
 The simulated runtime had no in-process store. Its scenario names an `artifact_export`, so it uploaded its
@@ -49,30 +49,30 @@ Two things the deployment changed:
 
 ## Live qualification
 
-Observed on 2026-11-03 at 12:09:27 UTC with `just qualify-artifact-store`.
+Observed on 2026-11-03 at 13:09:37 UTC with `just qualify-artifact-store`, on a clean tree at `52d8f5b`.
 
 Versions:
 - SeaweedFS `chrislusf/seaweedfs:4.51@sha256:f7a49e3f…134b8`; `weed version` reported
   `30GB 4.51 ffa87c25f linux arm64`.
 - aws-sdk-go-v2 `1.47.5`, `service/s3` `1.114.6`, `smithy-go` `1.28.7`.
 - Go `go1.26.10 darwin/arm64`, Docker `29.8.2`.
-- Adapter: uncommitted tree on `67d078a`. A rerun from the committed revision is still owed.
+- Adapter: `52d8f5b`, with no uncommitted change under `adapters/s3`.
 
-The run took 24 seconds, with the test itself taking 21.97 seconds. All 11 checks passed:
+The run took 37 seconds, with the test itself taking 35.44 seconds. All 11 checks passed:
 
 | Check | Observed | Time |
 |---|---|---|
-| `provision` twice in a row | Both succeeded and verified. | 0.05 s |
+| `provision` twice in a row | Both succeeded and verified. Most of the time was the store's lock warm-up, described below, which `provision` now waits for. | 10.35 s |
 | Adapter key preflight | Versioning and the staging expiry rule were read. | 0.00 s |
-| Commit freezes the uploaded bytes | `missing_bytes`, then `digest_mismatch` after a wrong upload, then `committed` with the exact bytes readable by version. Most of the time was the store's lock warm-up, described below. | 9.54 s |
-| Replay and restart | The same receipt after a replay, from a new adapter, after a late upload through the same capability, and after an unconditional overwrite with the adapter key. The committed bytes did not change. | 0.03 s |
-| Capability scope | 403 for another artifact, another attempt, another tenant, another content type, another length, and an expired capability. | 3.02 s |
+| Commit freezes the uploaded bytes | `missing_bytes`, then `digest_mismatch` after a wrong upload, then `committed` with the exact bytes readable by version. | 0.27 s |
+| Replay and restart | The same receipt after a replay, from a new adapter, after a late upload through the same capability, and after an unconditional overwrite with the adapter key. The committed bytes did not change. | 0.05 s |
+| Capability scope | 403 for another artifact, another attempt, another tenant, another content type, another length, and an expired capability. | 3.04 s |
 | Stale writer | Epoch 1 was `fenced` before and after epoch 2 committed. | 0.06 s |
-| Four concurrent replicas | One identical receipt each, and exactly one frozen version. | 1.05 s |
+| Four concurrent replicas | One identical receipt each, and exactly one frozen version. | 1.04 s |
 | Lost commit reply | The freeze was applied and the reply dropped. A new adapter replayed to `committed`. | 0.03 s |
 | Adapter key deletes | Both a delete marker and a bypass delete of the locked version were refused. The receipt was unchanged. | 0.00 s |
-| Store restart (`docker restart`) | The same receipt from a new adapter after the store came back. | 8.12 s |
-| Operator deletion | Refused while the policy held. After the policy was removed, a bypass delete removed the version. A replay then failed with "committed object has no valid receipt" instead of inventing one. `provision` restored the policy. | 0.05 s |
+| Store restart (`docker restart`) | The same receipt from a new adapter after the store came back. | 6.24 s |
+| Operator deletion | Refused while the policy held. After the policy was removed, a bypass delete removed the version. A replay then failed with "committed object has no valid receipt" instead of inventing one, because an earlier overwrite remained. With a fresh artifact whose only version was deleted, a replay failed with "committed object was deleted" and no new version appeared. `provision` restored the policy. | 14.35 s |
 
 Observed limits:
 - **Conditional-write warm-up.** For about 9 seconds after the S3 listener first answered, and again
@@ -81,11 +81,23 @@ Observed limits:
   write.
 - **Deletion breaks replay.** After an operator deletion, the commit's replay can no longer answer.
   Deletion is for retention and tenant removal only.
+- **The deletion guard expires.** The commit marker expires with the staged bytes it protects, after
+  `DAC_S3_STAGING_DAYS`. By then the staged bytes are gone too, so a replay cannot freeze them again.
 - **Not observed:**
   - lifecycle expiry actually running
-  - an upload signed for a Compose service name
-  - the path through the control plane
-  - an amd64 host
+  - zero-byte artifacts
+  - this live qualification on an amd64 host; on amd64, GitHub CI runs the deterministic adapter suite and
+    the deployed stack
+
+Failures on the way to this run:
+- Review of the first revision found that a replay recreated a commit whose only version had been deleted.
+  The earlier qualification missed it because an overwrite was still there. It also found that an
+  authorization accepted changed arguments, that a fenced reply followed a late upload, and that startup
+  accepted an expiry rule for another prefix. `52d8f5b` fixes all four.
+- The first live run of that fix failed: the 32-byte read limit on fence objects refused the new digest and
+  marker. The fake store had not enforced the limit. It does now, and the limit is 128 bytes.
+- A local `just ci` lost `test-operations` to a host port clash with a concurrent qualification on port
+  28443. The recipe then passed alone in 150 seconds. The port clash was in the run, not the code.
 
 ## Spike
 
@@ -148,4 +160,5 @@ state, so a kill loses nothing more.
 
 Still open:
 - **Lifecycle expiry running.** It is day-granular and was not waited for.
-- **Upload links signed for a Compose service name.**
+
+The deployed stack has since exercised upload links signed for the `artifact-store` Compose service name.
