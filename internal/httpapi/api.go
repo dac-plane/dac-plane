@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -246,7 +247,7 @@ func ifMatch(header string) (uint64, error) {
 		return 0, errMalformedHeader
 	}
 	version, err := strconv.ParseUint(header[1:len(header)-1], 10, 64)
-	if err != nil || version == 0 {
+	if err != nil || version == 0 || version > math.MaxInt64 {
 		return 0, errMalformedHeader
 	}
 	return version, nil
@@ -333,7 +334,7 @@ func parseCursor(text string) (application.EventCursor, error) {
 	}
 	g, gErr := strconv.ParseUint(parts[0], 10, 64)
 	p, pErr := strconv.ParseInt(parts[1], 10, 64)
-	if gErr != nil || pErr != nil || g == 0 || p < 0 || strconv.FormatUint(g, 10) != parts[0] || strconv.FormatInt(p, 10) != parts[1] {
+	if gErr != nil || pErr != nil || g == 0 || g > math.MaxInt64 || p < 0 || strconv.FormatUint(g, 10) != parts[0] || strconv.FormatInt(p, 10) != parts[1] {
 		return application.EventCursor{}, invalid
 	}
 	return application.EventCursor{Generation: g, Position: p, Stream: parts[2]}, nil

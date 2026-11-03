@@ -815,6 +815,45 @@ func TestFailedRuntimeStopsPreparedEnvironment(t *testing.T) {
 // An environment stop that expires unsent proves nothing: the provision it
 // would stop reached the provider, so the environment may be live even though
 // no resource observation has arrived yet.
+// A provision whose reply is lost is never sent again, so its task waits in
+// provisioning. Cancelling is the way out: the stop is still dispatched, and its
+// observation alone ends the attempt because no runtime ever started.
+func TestCancelConvergesAfterUncertainProvision(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s := f.submit(t, f.submitCommand("n-1"))
+	lost, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{
+		Operations: map[ids.OperationID]simulator.EnvironmentOp{
+			s.Attempt.EnvironmentOperation: {Reply: simulator.Unknown(&contracts.Failure{Code: contracts.FailureProviderFailed, Message: "lost reply"})},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "test-environment-worker",
+		wiretest.Ports(t, f.pool, f.tenant, map[ids.ProviderID]contracts.Port{f.environmentProvider: lost}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if op, err := store.GetOperation(f.ctx, f.pool, f.tenant, s.Attempt.EnvironmentOperation); err != nil || op.State != lifecycle.OperationUncertain {
+		t.Fatalf("provision = %s, %v; want uncertain", op.State, err)
+	}
+	f.cancel(t, s, "c-1")
+	if task, _ := f.states(t, s); task != lifecycle.TaskCancelling {
+		t.Fatalf("task = %s, want cancelling until the environment is observed", task)
+	}
+	f.dispatchPendingEnvironments(t)
+	if task, attempt := f.states(t, s); task != lifecycle.TaskCancelled || attempt != lifecycle.AttemptTerminated {
+		t.Fatalf("states = %s/%s, want cancelled/terminated", task, attempt)
+	}
+	if got := f.reservation(t, s); got.State != lifecycle.ReservationReleased {
+		t.Fatalf("reservation = %s, want released", got.State)
+	}
+}
+
 func TestCancelUnsentEnvironmentStopDoesNotProveStop(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, lifecycle.HarnessLive)
