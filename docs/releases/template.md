@@ -1,26 +1,24 @@
 # dac-plane vX.Y.Z
 
-<!-- One or two sentences: who this release is for, and any claim it does not make. -->
+<!-- Headline-worthy changes only. Anyone upgrading also reads the Upgrading section. -->
 
-## Highlights
+This release ... The highlights of this release are:
 
-<!-- Headline changes only. Everything an upgrader must act on goes under Upgrading. -->
+- <A sentence about what a user can now do>
 
-## Compatibility set
+<!-- Group features by what the reader is doing, and keep the groups stable between releases. -->
 
-`release-manifest.json`, attached to this release, is the authoritative list of image digests. Deploy by digest.
+## Delegating work
 
-| Component | Version |
-|---|---|
-| Control plane image | |
-| Adapter images | |
-| Adapter kit | |
-| Database schema | |
-| Surface API | |
-| ControlFrame protocol | |
-| PostgreSQL | |
-| Providers | |
-| Architectures | |
+### <Heading naming the change>
+
+<!-- The problem, what changed, and how to use it. Link further reading. No internal issue history. -->
+
+## Running agents
+
+## Building on dac-plane
+
+## Running dac-plane
 
 ## Upgrading
 
@@ -41,3 +39,18 @@ Follow ADR-0011. State the order and the rollback limits if they differ.
 ## Known limits
 
 <!-- What was not observed, and what can still go wrong. Link the evidence. -->
+
+## Compatibility
+
+`release-manifest.json`, attached to this release, is the authoritative list of image digests. Deploy by digest.
+
+| Component | Version |
+|---|---|
+| Images | |
+| Architectures | |
+| Adapter kit | |
+| Database schema | |
+| Surface API | |
+| ControlFrame protocol | |
+| PostgreSQL | |
+| Providers | |
