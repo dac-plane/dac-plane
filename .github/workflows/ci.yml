@@ -87,6 +87,9 @@ jobs:
       - name: Run deterministic E2B adapter tests
         run: just test-e2b-adapter
 
+      - name: Run deterministic S3 artifact store adapter tests
+        run: just test-s3-adapter
+
       - name: Run adapter protocol conformance
         run: just test-conformance
 

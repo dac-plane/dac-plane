@@ -86,6 +86,27 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-e2b-adapter ./cmd/dac-e2b-adapter
 
+FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS s3-adapter-build
+
+WORKDIR /src
+COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
+COPY adapters/s3/go.mod adapters/s3/go.sum ./adapters/s3/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    cd adapters/s3 && go mod download
+
+COPY adapterkit ./adapterkit
+COPY adapters/s3 ./adapters/s3
+
+ARG TARGETOS
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    test "${TARGETOS}" = linux && \
+    cd adapters/s3 && \
+    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
+    -o /out/dac-s3-adapter ./cmd/dac-s3-adapter
+
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-plane
 
 COPY --from=build --chown=nonroot:nonroot /out/dac-plane /dac-plane
@@ -118,3 +139,9 @@ COPY --from=e2b-adapter-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=e2b-adapter-build --chown=65532:65532 /out/dac-e2b-adapter /dac-e2b-adapter
 USER 65532:65532
 ENTRYPOINT ["/dac-e2b-adapter"]
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-s3-adapter
+
+COPY --from=s3-adapter-build --chown=nonroot:nonroot /out/dac-s3-adapter /dac-s3-adapter
+USER nonroot:nonroot
+ENTRYPOINT ["/dac-s3-adapter"]
