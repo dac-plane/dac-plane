@@ -222,12 +222,13 @@ qualify-codex-containment: stack-certs
     if [[ -z "${DAC_E2B_TEMPLATE_ID:-}" ]]; then echo "DAC_E2B_TEMPLATE_ID must name a template from just build-e2b-codex-template" >&2; exit 2; fi
     work=.work/containment-qualification
     mkdir -p "$work"
-    export DAC_ENVIRONMENT_ATTACH_KEY_FILE="$PWD/$work/attach.key"
+    keydir=$(mktemp -d "$PWD/$work/attach-key.XXXXXXXX")
+    export DAC_ENVIRONMENT_ATTACH_KEY_FILE="$keydir/attach.key"
     openssl rand -hex 32 >"$DAC_ENVIRONMENT_ATTACH_KEY_FILE"
     chmod 0644 "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"
     export DAC_QUALIFICATION_PROJECT=dac-cancellation-qualification
     compose=(docker compose -p "$DAC_QUALIFICATION_PROJECT" --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification)
-    cleanup() { code=$?; "${compose[@]}" logs --no-color >"$work/compose.log" 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" "$DAC_E2B_API_KEY_FILE" "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" "$work/compose.log"; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; done; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -f "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; exit "$code"; }
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >"$work/compose.log" 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" "$DAC_E2B_API_KEY_FILE" "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" "$work/compose.log"; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; done; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -f "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; rmdir "$keydir"; exit "$code"; }
     trap cleanup EXIT
     "${compose[@]}" down -v --remove-orphans
     "${compose[@]}" up -d --build --scale sim-adapter=0
