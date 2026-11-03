@@ -113,6 +113,9 @@ qualify a real provider.
 task's sandbox. `just qualify-codex-containment` uses it. See
 [ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md).
 
+`just qualify-providers` adds the artifact store profile below, so Codex, E2B and SeaweedFS run together with no
+simulator. See [the evidence note](../../docs/architecture/provider-qualification-75.md).
+
 ## Artifact store profile
 
 `compose.artifacts.yaml` layers over `compose.codex.yaml` and `compose.e2b.yaml`. It replaces the simulator's

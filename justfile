@@ -224,7 +224,9 @@ qualify-codex-artifact-store: stack-certs
     source .work/stack/compose.env
     set +a
     DAC_QUALIFICATION_ARTIFACT_STORE="$("${compose[@]}" ps -q artifact-store-seaweedfs)" go test -count=1 -v -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/ 2>&1 | tee .work/codex-store-qualification/test.txt
-    if ! "${compose[@]}" logs --no-color dac-plane | grep -q '"msg":"adapter connected".*"role":"artifact_store"'; then echo "artifact store adapter did not connect" >&2; exit 1; fi
+    # Read the logs first: grep -q closing the pipe would fail it under pipefail.
+    logs=$("${compose[@]}" logs --no-color dac-plane)
+    if ! grep -q '"msg":"adapter connected".*"role":"artifact_store"' <<<"$logs"; then echo "artifact store adapter did not connect" >&2; exit 1; fi
 
 # Run the secret-backed joint qualification: DAC cancels a live Codex turn with
 # the E2B adapter bound to the attempt. E2B is the only environment connection.
@@ -269,6 +271,7 @@ test-artifact-store-stack: stack-certs
     set -euo pipefail
     DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification config -q
     DAC_CODEX_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.codex.yaml --profile dev --profile qualification config -q
+    DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null DAC_ENVIRONMENT_ATTACH_KEY_FILE=/dev/null DAC_E2B_TEMPLATE_ID=template docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification config -q
     compose=(docker compose -p dac-artifact-store-stack --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.dev.yaml --profile dev --profile qualification)
     cleanup() { code=$?; if (( code != 0 )); then "${compose[@]}" logs --no-color --tail=200; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
     trap cleanup EXIT
@@ -321,6 +324,41 @@ qualify-codex-containment: stack-certs
     source .work/stack/compose.env
     set +a
     go test -count=1 -v -timeout=75m -tags=codexqualification -run "${DAC_CONTAINMENT_QUALIFICATION_TEST:-TestContainmentQualification|TestTaskCancellationQualification}" ./internal/codexqualification/ 2>&1 | tee "$work/test.txt"
+
+# Run the first providers together through the deployed lifecycle: Codex, E2B
+# Cloud and SeaweedFS, with no simulator process in the stack.
+[doc('Qualify Codex, E2B Cloud and SeaweedFS together (needs Docker, DAC_CODEX_API_KEY_FILE, DAC_E2B_API_KEY_FILE and DAC_E2B_TEMPLATE_ID; incurs usage)')]
+[group('test')]
+qualify-providers: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    if [[ -z "${DAC_E2B_API_KEY_FILE:-}" || ! -s "$DAC_E2B_API_KEY_FILE" ]]; then echo "DAC_E2B_API_KEY_FILE must name a non-empty E2B credential file" >&2; exit 2; fi
+    if [[ -z "${DAC_E2B_TEMPLATE_ID:-}" ]]; then echo "DAC_E2B_TEMPLATE_ID must name a template from just build-e2b-codex-template" >&2; exit 2; fi
+    work=.work/provider-qualification
+    mkdir -p "$work"
+    keydir=$(mktemp -d "$PWD/$work/attach-key.XXXXXXXX")
+    export DAC_ENVIRONMENT_ATTACH_KEY_FILE="$keydir/attach.key"
+    openssl rand -hex 32 >"$DAC_ENVIRONMENT_ATTACH_KEY_FILE"
+    chmod 0644 "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"
+    export DAC_QUALIFICATION_PROJECT=dac-provider-qualification
+    compose=(docker compose -p "$DAC_QUALIFICATION_PROJECT" --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >"$work/compose.log" 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" "$DAC_E2B_API_KEY_FILE" "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" "$work/compose.log"; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; done; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -f "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; rmdir "$keydir"; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
+    for image in "${DAC_PLANE_IMAGE:-dac-plane:dev}" dac-codex-adapter:qualification dac-e2b-adapter:qualification dac-s3-adapter:qualification; do printf '%s %s\n' "$image" "$(docker image inspect "$image" | jq -r '.[0].Id')"; done | tee "$work/image-ids.txt"
+    if docker ps --filter "label=com.docker.compose.project=$DAC_QUALIFICATION_PROJECT" --format '{{{{.Image}}' | grep -q sim-adapter; then echo "a simulator process is running" >&2; exit 1; fi
+    set -a
+    source .work/stack/compose.env
+    set +a
+    DAC_QUALIFICATION_ARTIFACT_STORE="$("${compose[@]}" ps -q artifact-store-seaweedfs)" go test -count=1 -v -timeout=75m -tags=codexqualification -run "${DAC_PROVIDER_QUALIFICATION_TEST:-TestContainmentQualification|TestTaskCancellationQualification}" ./internal/codexqualification/ 2>&1 | tee "$work/test.txt"
+    # Read the logs first: grep -q closing the pipe would fail it under pipefail.
+    logs=$("${compose[@]}" logs --no-color dac-plane)
+    for role in runtime environment artifact_store; do if ! grep -q "\"msg\":\"adapter connected\".*\"role\":\"$role\"" <<<"$logs"; then echo "$role adapter did not connect" >&2; exit 1; fi; done
 
 # The conformance suite runs the simulator adapter as a separate OS process,
 # the way a real provider adapter runs outside the control plane.

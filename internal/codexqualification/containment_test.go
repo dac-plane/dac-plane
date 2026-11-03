@@ -149,27 +149,80 @@ func TestContainmentQualification(t *testing.T) {
 			"result.txt contains exactly contained followed by one newline")
 		s.current = &submitted
 		s.explainFailure(t)
-		for approvals := 0; approvals < 4; approvals++ {
-			attention, ready := waitAttentionOrReady(t, ctx, s.client, s.token, submitted.Task.ID)
-			if ready {
-				break
-			}
-			decide(t, ctx, s.client, s.token, attention, lifecycle.DecisionApproveOnce)
-			waitDecisionConsumed(t, ctx, s.client, s.token, submitted.Task.ID, attention.ID)
-		}
-		ready := waitTask(t, ctx, s.client, s.token, submitted.Task.ID, lifecycle.TaskReadyForReview)
-		if len(ready.value.Revisions) != 1 || len(ready.value.Revisions[0].Revision.Artifacts) != 1 {
-			t.Fatalf("revisions=%+v", ready.value.Revisions)
-		}
-		if got := artifactEvidence(t, ctx, s.client, ready.value.Revisions[0].Revision.Artifacts[0]); string(got) != "contained\n" {
-			t.Fatalf("artifact bytes=%q", got)
-		}
+		s.acceptResult(t, ctx, submitted, "contained\n")
 		if _, err := os.Stat("result.txt"); err == nil {
 			t.Fatal("the result appeared on the host")
 		}
-		review(t, ctx, s.client, s.token, ready, lifecycle.DispositionAccept)
-		_ = waitTask(t, ctx, s.client, s.token, submitted.Task.ID, lifecycle.TaskSucceeded)
 	})
+
+	t.Run("an open approval survives a control plane restart", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		submitted := submit(t, ctx, s.client, s.token,
+			"Use exec_command exactly once with sandbox_permissions require_escalated to run: printf 'recovered\\n' > recovered.txt. Do not use another file-writing tool.",
+			"recovered.txt contains exactly recovered followed by one newline")
+		s.current = &submitted
+		s.explainFailure(t)
+		_ = waitAttention(t, ctx, s.client, s.token, submitted.Task.ID)
+		s.restart(t, "dac-plane")
+		waitSurface(t, ctx, s.client, s.token, submitted.Task.ID)
+		s.acceptResult(t, ctx, submitted, "recovered\n")
+	})
+
+	// Codex 0.165.0 does not reissue an approval after its app-server restarts, so
+	// the Attempt must fail, and the owner's approval must not run the action.
+	t.Run("a runtime restart ends an open approval", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		submitted := submit(t, ctx, s.client, s.token,
+			"Use exec_command exactly once with sandbox_permissions require_escalated to run: printf 'unapproved\\n' > unapproved.txt. Do not use another file-writing tool.",
+			"unapproved.txt contains exactly unapproved followed by one newline")
+		s.current = &submitted
+		s.explainFailure(t)
+		attention := waitAttention(t, ctx, s.client, s.token, submitted.Task.ID)
+		sandbox := s.sandbox(t, submitted)
+		// A paused environment adapter keeps the sandbox for the check below.
+		s.pause(t, "e2b-adapter")
+		s.docker(t, "kill", "codex-adapter")
+		decide(t, ctx, s.client, s.token, attention, lifecycle.DecisionApproveOnce)
+		s.start(t, "codex-adapter")
+		poll(t, ctx, "failed attempt", func() (struct{}, bool) {
+			return struct{}{}, s.view(t, submitted).Attempt.State == lifecycle.AttemptFailed
+		})
+		if found := s.sandboxRun(t, sandbox, "find / -name unapproved.txt -not -path '/proc/*' 2>/dev/null; true"); strings.TrimSpace(found) != "" {
+			t.Fatalf("the action ran after its approval was lost: %s", found)
+		}
+		s.docker(t, "kill", "e2b-adapter")
+		s.start(t, "e2b-adapter")
+		s.requireSettled(t, submitted)
+		if open := s.view(t, submitted).OpenAttention; len(open) != 0 {
+			t.Fatalf("attention stayed open on a failed task: %+v", open)
+		}
+		t.Logf("settled with the approval lost\n%s", s.taskEvidence(t, submitted))
+	})
+}
+
+// acceptResult approves until the result is ready, checks its exact bytes and
+// accepts it.
+func (s *cancellationStack) acceptResult(t *testing.T, ctx context.Context, submitted httpapi.SubmissionBody, want string) {
+	t.Helper()
+	for approvals := 0; approvals < 4; approvals++ {
+		attention, ready := waitAttentionOrReady(t, ctx, s.client, s.token, submitted.Task.ID)
+		if ready {
+			break
+		}
+		decide(t, ctx, s.client, s.token, attention, lifecycle.DecisionApproveOnce)
+		waitDecisionConsumed(t, ctx, s.client, s.token, submitted.Task.ID, attention.ID)
+	}
+	ready := waitTask(t, ctx, s.client, s.token, submitted.Task.ID, lifecycle.TaskReadyForReview)
+	if len(ready.value.Revisions) != 1 || len(ready.value.Revisions[0].Revision.Artifacts) != 1 {
+		t.Fatalf("revisions=%+v", ready.value.Revisions)
+	}
+	if got := artifactEvidence(t, ctx, s.client, ready.value.Revisions[0].Revision.Artifacts[0]); string(got) != want {
+		t.Fatalf("artifact bytes=%q", got)
+	}
+	review(t, ctx, s.client, s.token, ready, lifecycle.DispositionAccept)
+	_ = waitTask(t, ctx, s.client, s.token, submitted.Task.ID, lifecycle.TaskSucceeded)
 }
 
 // explainFailure records where a task stood, because a failed run's stack and

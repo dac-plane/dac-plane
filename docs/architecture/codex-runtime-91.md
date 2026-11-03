@@ -111,6 +111,8 @@ production artifact store owned by #93. The deployed qualification still lacks r
 across an unresolved native approval. Issue #101 covers the later joint task-environment and runtime
 cancellation boundary. Promotion to `shadow` and then `live` requires all mandatory deployed
 scenarios, recorded artifact hashes and a registry image digest.
+[#75](provider-qualification-75.md) later recorded the disposition, moved the digest to #95 and added the
+unresolved-approval evidence.
 No availability, throughput, cost, RPO, RTO, provider-wide production, environment-isolation or
 workspace-containment claim follows from the observations in this note.
 

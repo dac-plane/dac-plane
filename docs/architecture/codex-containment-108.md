@@ -2,7 +2,8 @@
 
 Date: 2026-11-01. Host: Darwin arm64 with Docker under OrbStack. Result: PASS for the bounded scenarios below on the
 deployed Surface API and ControlFrame boundaries. Disposition: both providers stay `off`; this note does not
-change a provider's mode.
+change a provider's mode. [#75](provider-qualification-75.md) later set the disposition, and found that a change
+merged after this run stopped live provisioning.
 
 Codex's commands now run in the sandbox assigned to their Attempt, and stopping that sandbox ends the work. The
 design and its spike observations are in [ADR-0016](../adr/0016-run-agent-commands-inside-the-environment.md).

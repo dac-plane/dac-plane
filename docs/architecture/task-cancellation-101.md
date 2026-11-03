@@ -2,6 +2,7 @@
 
 Dates: 2026-10-30 and 2026-10-31. Host architecture: Darwin arm64. Result: PASS for the bounded scenarios below on the
 deployed Surface API and ControlFrame boundaries. Disposition: both providers stay `off`.
+[#75](provider-qualification-75.md) later set the disposition.
 
 **This does not prove that E2B stopped the work.** Codex runs in its adapter container and receives the
 sandbox reference only as opaque text, so the command and the sandbox were independent. The evidence
