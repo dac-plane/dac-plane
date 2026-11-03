@@ -86,7 +86,7 @@ func run() error {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	client := &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}}
-	handler, err := e2b.New(e2b.Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, HTTPClient: client, Journal: journal, SandboxTimeout: sandboxTimeout, AttachKey: attachKey})
+	handler, err := e2b.New(e2b.Config{BaseURL: base, APIKey: key, TemplateID: template, ProviderID: provider, HTTPClient: client, Journal: journal, SandboxTimeout: sandboxTimeout, AttachKey: attachKey, Logger: logger})
 	if err != nil {
 		return err
 	}

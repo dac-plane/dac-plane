@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -45,6 +46,8 @@ type Config struct {
 	HTTPClient                              *http.Client
 	Journal                                 *journal.Store
 	Now                                     func() time.Time
+	// Logger records failures. E2B's errors quote its URLs, which carry no secret.
+	Logger *slog.Logger
 	// SandboxTimeout is how long a sandbox may run before E2B kills it. It bounds
 	// a sandbox whose stop never lands, so it should exceed the longest Attempt.
 	SandboxTimeout time.Duration
@@ -134,6 +137,9 @@ func New(cfg Config) (*Adapter, error) {
 	}
 	if cfg.StopRetryInterval == 0 {
 		cfg.StopRetryInterval = defaultStopRetryInterval
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 	if cfg.SandboxTimeout == 0 {
 		cfg.SandboxTimeout = defaultSandboxTimeout
@@ -447,6 +453,7 @@ func (a *Adapter) attach(ctx context.Context, req wire.Request, sbx sandbox) err
 	if deleteErr := a.doJSON(ctx, http.MethodDelete, "/sandboxes/"+url.PathEscape(sbx.SandboxID), nil, "", nil); deleteErr != nil && !(errors.As(deleteErr, &status) && status.status == http.StatusNotFound) {
 		return fmt.Errorf("%w; deleting the sandbox also failed: %w", err, deleteErr)
 	}
+	a.cfg.Logger.Warn("sandbox could not serve commands", "operation", req.Operation, "sandbox", sbx.SandboxID, "error", err)
 	if resetErr := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
 		return resetErr
 	}

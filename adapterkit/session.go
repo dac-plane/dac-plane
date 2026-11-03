@@ -196,8 +196,10 @@ func (s *session) handleRequest(ctx context.Context, request wire.Request) {
 	case reply.Operation != request.Operation || reply.Delivery != request.Delivery:
 		reply = failedReply(request, wire.DurabilityUnknown, wire.FailureProviderFailed, "handler answered another delivery")
 	}
+	// A handler's message is not logged: it can quote a provider error, and the
+	// kit cannot tell what that error carries.
 	if reply.Failure != nil {
-		s.config.Logger.Warn("request failed", "operation", reply.Operation, "method", request.Method, "durability", reply.Durability, "code", reply.Failure.Code, "message", reply.Failure.Message)
+		s.config.Logger.Warn("request failed", "operation", reply.Operation, "method", request.Method, "durability", reply.Durability, "code", reply.Failure.Code)
 	}
 	s.reply(ctx, reply)
 }

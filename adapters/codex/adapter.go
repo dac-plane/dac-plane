@@ -800,13 +800,13 @@ func (a *Adapter) export(ctx context.Context, r wire.Request) (wire.Reply, error
 func (a *Adapter) upload(ctx context.Context, target string, body io.Reader, artifact journal.Artifact) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, body)
 	if err != nil {
-		return err
+		return withoutUploadURL(err)
 	}
 	req.Header.Set("Content-Type", artifact.MediaType)
 	req.ContentLength = int64(artifact.Size)
 	resp, err := a.config.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return withoutUploadURL(err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
@@ -814,6 +814,16 @@ func (a *Adapter) upload(ctx context.Context, target string, body io.Reader, art
 		return fmt.Errorf("artifact upload returned %s", resp.Status)
 	}
 	return nil
+}
+
+// withoutUploadURL drops the URL that net/http and net/url quote in their errors.
+// An upload URL is a capability, and these errors reach replies and logs.
+func withoutUploadURL(err error) error {
+	var quoted *url.Error
+	if errors.As(err, &quoted) {
+		return fmt.Errorf("artifact upload failed: %w", quoted.Err)
+	}
+	return err
 }
 
 func validateUploadURL(raw string) error {

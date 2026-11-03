@@ -81,7 +81,10 @@ approval. The search for `unapproved.txt` covered the sandbox except `/proc`, an
   plane's 30-second send timeout, and its error reply meant an unknown outcome. The control plane never dispatches
   an uncertain operation again, so the task stayed in `provisioning`, and the adapter logged nothing. The wait is
   now 20 seconds, and a sandbox known to be deleted is answered as rejected. In run 4 the task failed with the
-  reason recorded, and the adapter kit now logs every failed reply.
+  reason in the E2B adapter's log. The adapter kit logs every failed reply's code, not its message.
+- **An upload failure could expose its capability.** Go's HTTP errors quote the URL, so a failed upload returned
+  the presigned URL in the Codex adapter's reply to the control plane, and for a short time in its log. The adapter
+  now drops the URL from those errors.
 - **A recipe check failed falsely.** `compose logs | grep -q` fails under `pipefail` when `grep` closes the pipe
   first. `qualify-providers` and `qualify-codex-artifact-store` now read the logs before searching them.
 
