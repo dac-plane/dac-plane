@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories: ["/", "/adapterkit", "/adapters/codex", "/adapters/e2b", "/adapters/s3"]
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/setup"]
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directories: ["/", "/deploy/compose"]
+    schedule:
+      interval: weekly
+    groups:
+      images:
+        patterns: ["*"]
