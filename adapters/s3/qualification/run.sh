@@ -40,7 +40,7 @@ chmod 644 "$work/secrets/s3.json"
   date -u '+observed_at=%Y-%m-%dT%H:%M:%SZ'
   printf 'store_image=%s\n' "$image"
   printf 'adapter_revision=%s\n' "$(git -C "$root" rev-parse HEAD)"
-  printf 'adapter_tree_dirty=%s\n' "$(test -z "$(git -C "$root" status --porcelain -- adapters/s3)" && echo false || echo true)"
+  printf 'adapter_tree_dirty=%s\n' "$([[ -z "$(git -C "$root" status --porcelain -- adapters/s3)" ]] && echo false || echo true)"
   go version
   docker version --format 'docker_client={{.Client.Version}} docker_server={{.Server.Version}}'
   (cd "$root/adapters/s3" && go list -m github.com/aws/aws-sdk-go-v2 github.com/aws/aws-sdk-go-v2/service/s3 github.com/aws/smithy-go)

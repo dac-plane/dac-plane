@@ -353,7 +353,8 @@ func TestAuthorizationIsBoundToItsFirstArguments(t *testing.T) {
 	a := newAdapter(t, store)
 	const operation = "019a0d5b-f74c-7000-8000-000000000110"
 	m := manifestFor([]byte("artifact"), 1)
-	if authorize(t, a, m, operation) == "" || authorize(t, a, m, operation) == "" {
+	authorize(t, a, m, operation)
+	if authorize(t, a, m, operation) == "" {
 		t.Fatal("a replay must renew the capability")
 	}
 	changedManifest := manifestFor([]byte("other bytes"), 1)

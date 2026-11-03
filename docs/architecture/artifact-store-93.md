@@ -6,7 +6,7 @@ Status:
 - **Done since:** the Compose profile (`compose.artifacts.yaml`), deployed by `just test-artifact-store-stack`.
 - **Also done:** the deployed lifecycle through the control plane, the S3 adapter and SeaweedFS, with the
   simulated runtime uploading over HTTPS.
-- **Not done:** a run with live Codex.
+- **Also done:** live Codex committing its result through the store.
 
 Decision: [ADR-0017](../adr/0017-qualify-an-s3-api-artifact-store.md).
 
@@ -14,6 +14,21 @@ Disposition: **live** for the bundled SeaweedFS profile, within the limits recor
 stays off until its own qualification passes.
 
 ## Compose profile
+
+### Live Codex through the store
+
+Observed on 2026-11-03 at about 13:22 UTC with `just qualify-codex-artifact-store`, which finished in 253 seconds.
+It used Codex app-server 0.165.0 against Camer's `deepseek-v4-flash-0731`, on the tree committed with this
+paragraph. The environment role was simulated, in its own process.
+
+`TestCodexRuntimeQualification` passed in 79.74 seconds:
+- **Approval, restart and exact artifact (26.93 s).** Codex wrote its result after approval. The test read
+  the bytes back through SeaweedFS's loopback filer, found exactly one version holding `qualified\n`, restarted
+  the Codex adapter and the control plane, and the owner's acceptance reached `succeeded`.
+- **Denial (52.81 s).** Two denied actions left no file in the workspace.
+
+The control plane logged the `artifact_store` connection from the S3 adapter, and the key did not appear in the
+Compose logs.
 
 ### Lifecycle through the store
 

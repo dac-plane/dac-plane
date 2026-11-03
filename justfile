@@ -201,6 +201,31 @@ qualify-codex-runtime: stack-certs
     set +a
     go test -count=1 -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/
 
+# Run the same live Codex qualification with the bundled SeaweedFS as the artifact
+# store: Codex's result is uploaded through the S3 adapter and read back from the store.
+[doc('Qualify Codex committing through the S3 artifact store (needs Docker and DAC_CODEX_API_KEY_FILE)')]
+[group('test')]
+qualify-codex-artifact-store: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    mkdir -p .work/codex-store-qualification
+    compose=(docker compose -p dac-codex-qualification --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.codex.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >.work/codex-store-qualification/compose.log 2>&1 || true; if credential=$(tr -d '\r\n' <"$DAC_CODEX_API_KEY_FILE") && [[ -n "$credential" ]] && grep -Fq -- "$credential" .work/codex-store-qualification/compose.log; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    # A live harness needs an explicit tenant policy before approval-once can
+    # issue a grant. Keep this qualification-only policy out of product setup.
+    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/codex-store-qualification/version.txt
+    set -a
+    source .work/stack/compose.env
+    set +a
+    DAC_QUALIFICATION_ARTIFACT_STORE="$("${compose[@]}" ps -q artifact-store-seaweedfs)" go test -count=1 -v -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/ 2>&1 | tee .work/codex-store-qualification/test.txt
+    if ! "${compose[@]}" logs --no-color dac-plane | grep -q '"msg":"adapter connected".*"role":"artifact_store"'; then echo "artifact store adapter did not connect" >&2; exit 1; fi
+
 # Run the secret-backed joint qualification: DAC cancels a live Codex turn with
 # the E2B adapter bound to the attempt. E2B is the only environment connection.
 [doc('Qualify task cancellation across Codex and E2B Cloud (needs Docker, DAC_CODEX_API_KEY_FILE and DAC_E2B_API_KEY_FILE; incurs usage)')]
@@ -243,6 +268,7 @@ test-artifact-store-stack: stack-certs
     #!/usr/bin/env bash
     set -euo pipefail
     DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification config -q
+    DAC_CODEX_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.codex.yaml --profile dev --profile qualification config -q
     compose=(docker compose -p dac-artifact-store-stack --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.dev.yaml --profile dev --profile qualification)
     cleanup() { code=$?; if (( code != 0 )); then "${compose[@]}" logs --no-color --tail=200; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
     trap cleanup EXIT

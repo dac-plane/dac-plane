@@ -19,6 +19,7 @@
 //	DAC_ARTIFACT_STORE_CLIENT_ID and DAC_ARTIFACT_STORE_CLIENT_SECRET_FILE
 //	DAC_SIM_CONTROL_ADDR            optional simulator evidence listener (tests only)
 //	DAC_SIM_ARTIFACT_ONLY           serve only the scenario's artifact store (tests only)
+//	DAC_SIM_ENVIRONMENT_ONLY        serve only the scenario's environment (tests only)
 //	DAC_SIM_ARTIFACT_ADDR           HTTPS byte-upload listener used with artifact-only mode
 //	DAC_SIM_ARTIFACT_PUBLIC_URL     listener URL reachable by the runtime adapter
 //	DAC_SIM_ARTIFACT_CERT_FILE      upload-listener certificate
@@ -140,7 +141,8 @@ func run(args []string, stderr io.Writer) int {
 		return fail(2, err)
 	}
 	artifactOnly := strings.EqualFold(strings.TrimSpace(os.Getenv("DAC_SIM_ARTIFACT_ONLY")), "true")
-	set, err := scenario.adapters(tlsConfig, artifactOnly)
+	environmentOnly := strings.EqualFold(strings.TrimSpace(os.Getenv("DAC_SIM_ENVIRONMENT_ONLY")), "true")
+	set, err := scenario.adapters(tlsConfig, artifactOnly || environmentOnly)
 	if err != nil {
 		return fail(2, err)
 	}

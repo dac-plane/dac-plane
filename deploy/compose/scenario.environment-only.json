@@ -1,0 +1,8 @@
+{
+  "tenant_id": "01a167fd-51d9-76ba-b563-496e2bd89646",
+  "provider_id": "01a167fd-51d9-7d22-8a3b-6c5d4e3f2a10",
+  "role": "runtime",
+  "environment": {
+    "provider_id": "01a167fd-51d9-7d44-8a3b-6c5d4e3f2a12"
+  }
+}
