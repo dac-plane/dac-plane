@@ -121,6 +121,7 @@ jobs:
           subject-name: ${{ env.REPOSITORY }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Attest the SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -129,6 +130,7 @@ jobs:
           subject-digest: ${{ steps.digest.outputs.digest }}
           sbom-path: ${{ env.WORK }}/sbom.cdx.json
           push-to-registry: true
+          create-storage-record: false
 
       - name: Keep the provenance bundle
         env:
@@ -197,6 +199,7 @@ jobs:
           subject-name: ${{ env.REPOSITORY }}
           subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Upload the index digest
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

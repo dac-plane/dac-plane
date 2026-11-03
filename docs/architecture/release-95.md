@@ -1,7 +1,7 @@
 # Release evidence: v0.1.0
 
 Evidence for [#95](https://github.com/dac-plane/dac-plane/issues/95). It records what was observed, including failures.
-The rehearsal and release sections are still empty because no tag has been pushed.
+The release section is still empty because no final tag has been pushed.
 
 ## Live provider runs before the first tag
 
@@ -51,8 +51,28 @@ Not tested: a create that E2B accepts after the adapter has given up, with the s
 
 ## Rehearsal
 
-Not yet run. To record: the rc tag, its workflow run, the failures injected (unsigned tag, mismatched kit version,
-vulnerable dependency, planted fake secret) and the full `just release-qualify` result against rc digests.
+Both runs built on GitHub's amd64 and arm64 runners and published to `ghcr.io/dac-plane/dry-run`.
+
+| Tag | Commit | Run | Result |
+|---|---|---|---|
+| `v0.1.0-rc.1` | `d4f7fd7` | [41695145795](https://github.com/dac-plane/dac-plane/actions/runs/41695145795) | CI, security, reproducible builds, scans, push and attestations passed. The clean room failed when its stack started, and no draft was created. |
+| `v0.1.0-rc.2` | `87a8023` | [41700882873](https://github.com/dac-plane/dac-plane/actions/runs/41700882873) | Every job passed: 25 of 25, ending in a draft prerelease. |
+
+The rc.1 failure was a bug in the clean room, which passed `--scale sim-adapter=0` for a service that the stack left
+disabled. Running its later stages locally then found that the module proxy's first fetch of a new kit version can
+time out, so the clean room now retries it. The job's time limit was also raised to 45 minutes as a precaution; in CI
+the clean room took about 2 minutes.
+
+Both tags were signed, and GitHub reported them verified. The attest action warned that it could not create a storage
+record, an optional metadata entry nothing here uses. The attestations were created and verified regardless, and
+that step is now turned off.
+
+Dropped by decision of the project owner, to save time:
+
+- The injected failures (unsigned tag, mismatched kit version, vulnerable dependency, planted fake secret). The gate's
+  stops on those conditions have not been seen to fire.
+- `just release-qualify` against the rehearsal's digests. Published images have passed the clean room but have not run
+  against live providers. The live runs above used local arm64 builds of an earlier commit.
 
 ## Release
 
