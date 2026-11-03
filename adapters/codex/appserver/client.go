@@ -82,10 +82,8 @@ func Start(ctx context.Context, config Config) (*Client, error) {
 	if err := os.MkdirAll(config.Home, 0700); err != nil {
 		return nil, fmt.Errorf("create Codex home: %w", err)
 	}
-	if config.RemoteOnly {
-		if err := os.WriteFile(filepath.Join(config.Home, "environments.toml"), []byte(remoteOnlyEnvironments), 0600); err != nil {
-			return nil, fmt.Errorf("write Codex environments: %w", err)
-		}
+	if err := configureEnvironments(config.Home, config.RemoteOnly); err != nil {
+		return nil, err
 	}
 	args := []string{
 		"-c", `model_provider=` + strconv.Quote(config.Provider),
@@ -129,6 +127,30 @@ func Start(ctx context.Context, config Config) (*Client, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// Remove only the exact file we wrote, leaving operator configuration intact.
+func configureEnvironments(home string, remoteOnly bool) error {
+	path := filepath.Join(home, "environments.toml")
+	if remoteOnly {
+		if err := os.WriteFile(path, []byte(remoteOnlyEnvironments), 0600); err != nil {
+			return fmt.Errorf("write Codex environments: %w", err)
+		}
+		return nil
+	}
+	contents, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Codex environments: %w", err)
+	}
+	if string(contents) == remoteOnlyEnvironments {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove Codex environments: %w", err)
+		}
+	}
+	return nil
 }
 
 // IsLoopback reports whether host names the local machine. The adapter uses
