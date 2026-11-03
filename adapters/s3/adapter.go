@@ -135,7 +135,7 @@ func (a *Adapter) Send(ctx context.Context, r wire.Request) (wire.Reply, error) 
 	defer unlock()
 	switch r.Method {
 	case "authorize_upload":
-		return a.authorize(ctx, r, t.Manifest)
+		return a.authorize(ctx, r, t)
 	case "stat_object":
 		observed, _, err := a.observe(ctx, stagingKey(t.Manifest))
 		if err != nil {
@@ -159,7 +159,15 @@ func (a *Adapter) Subscribe(context.Context, wire.Cursor) (adapterkit.Stream, er
 	return nil, errors.New("the artifact store serves no streams")
 }
 
-func (a *Adapter) authorize(ctx context.Context, r wire.Request, m manifest) (wire.Reply, error) {
+func (a *Adapter) authorize(ctx context.Context, r wire.Request, t transfer) (wire.Reply, error) {
+	m := t.Manifest
+	same, err := a.bindAuthorization(ctx, r.Operation, t)
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	if !same {
+		return rejected(r, wire.FailureInvalidArguments, "authorize operation was replayed with other arguments"), nil
+	}
 	if err := a.raiseFence(ctx, m); err != nil {
 		return wire.Reply{}, err
 	}
@@ -172,6 +180,39 @@ func (a *Adapter) authorize(ctx context.Context, r wire.Request, m manifest) (wi
 		return wire.Reply{}, errors.New("presigned upload does not fit the capability limit")
 	}
 	return accepted(r, map[string]string{"upload": upload}), nil
+}
+
+// bindAuthorization records the first arguments of an authorize operation and
+// reports whether this delivery carries the same ones.
+func (a *Adapter) bindAuthorization(ctx context.Context, operation string, t transfer) (bool, error) {
+	raw, err := json.Marshal(struct {
+		Manifest  manifest `json:"manifest"`
+		NativeRef string   `json:"native_ref"`
+	}{t.Manifest, t.NativeRef})
+	if err != nil {
+		return false, err
+	}
+	sum := sha256.Sum256(raw)
+	digest := []byte(hex.EncodeToString(sum[:]))
+	key := authorizationKey(t.Manifest, operation)
+	for range writeAttempts {
+		err := a.cfg.Store.PutFence(ctx, key, digest, Write{Create: true})
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, ErrPrecondition) {
+			return false, err
+		}
+		current, _, err := a.cfg.Store.GetFence(ctx, key)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		return bytes.Equal(current, digest), nil
+	}
+	return false, errors.New("artifact authorization stayed contended")
 }
 
 // raiseFence moves the artifact's fence up to the writer's epoch. A stale
@@ -226,10 +267,26 @@ func (a *Adapter) commit(ctx context.Context, r wire.Request, m manifest) (wire.
 				return wire.Reply{}, err
 			}
 			if receipt.Manifest == m {
+				// A crash can separate the freeze from its marker.
+				if err := a.markCommitted(ctx, m); err != nil {
+					return wire.Reply{}, err
+				}
 				return accepted(r, receipt), nil
 			}
-			return a.fenced(ctx, r, m)
+			return a.fenced(r, m), nil
 		case !errors.Is(err, ErrNotFound):
+			return wire.Reply{}, err
+		}
+		// A marker without an object means an operator deleted the commit,
+		// unless another replica froze it after the read above.
+		_, _, err = a.cfg.Store.GetFence(ctx, commitKey(m))
+		if err == nil {
+			if _, err := a.cfg.Store.FirstObject(ctx, objectKey(m)); errors.Is(err, ErrNotFound) {
+				return wire.Reply{}, errors.New("committed object was deleted")
+			}
+			continue
+		}
+		if !errors.Is(err, ErrNotFound) {
 			return wire.Reply{}, err
 		}
 		epoch, err := a.fence(ctx, m)
@@ -237,7 +294,7 @@ func (a *Adapter) commit(ctx context.Context, r wire.Request, m manifest) (wire.
 			return wire.Reply{}, err
 		}
 		if epoch != m.WriterEpoch {
-			return a.fenced(ctx, r, m)
+			return a.fenced(r, m), nil
 		}
 		observed, version, err := a.observe(ctx, stagingKey(m))
 		if err != nil {
@@ -261,17 +318,29 @@ func (a *Adapter) commit(ctx context.Context, r wire.Request, m manifest) (wire.
 		if err != nil {
 			return wire.Reply{}, err
 		}
+		if err := a.markCommitted(ctx, m); err != nil {
+			return wire.Reply{}, err
+		}
 		return accepted(r, committed{Manifest: m, Outcome: "committed", ObjectVersion: object.Version, Observed: observed, CommittedAt: at}), nil
 	}
 	return wire.Reply{}, errors.New("artifact commit stayed contended")
 }
 
-func (a *Adapter) fenced(ctx context.Context, r wire.Request, m manifest) (wire.Reply, error) {
-	observed, _, err := a.observe(ctx, stagingKey(m))
-	if err != nil {
-		return wire.Reply{}, err
+// markCommitted records that the artifact has a commit, so a replay can tell a
+// deleted object from one that was never frozen. The marker expires with the
+// staged bytes it protects.
+func (a *Adapter) markCommitted(ctx context.Context, m manifest) error {
+	err := a.cfg.Store.PutFence(ctx, commitKey(m), []byte(m.OperationID), Write{Create: true})
+	if errors.Is(err, ErrPrecondition) {
+		return nil
 	}
-	return accepted(r, committed{Manifest: m, Outcome: "fenced", Observed: observed}), nil
+	return err
+}
+
+// fenced reports no observation: fenced is final, and a stale writer's upload
+// capability could otherwise change the reply to a later delivery.
+func (a *Adapter) fenced(r wire.Request, m manifest) wire.Reply {
+	return accepted(r, committed{Manifest: m, Outcome: "fenced"})
 }
 
 // observe hashes the current staging version and returns that version, so a
@@ -374,6 +443,10 @@ func stagingKey(m manifest) string {
 	return fmt.Sprintf("staging/%s/%s/%s/%d", m.TenantID, m.AttemptID, m.ArtifactID, m.WriterEpoch)
 }
 func fenceKey(m manifest) string  { return fmt.Sprintf("fences/%s/%s", m.TenantID, m.ArtifactID) }
+func commitKey(m manifest) string { return fmt.Sprintf("commits/%s/%s", m.TenantID, m.ArtifactID) }
+func authorizationKey(m manifest, operation string) string {
+	return fmt.Sprintf("authorizations/%s/%s", m.TenantID, operation)
+}
 func objectKey(m manifest) string { return fmt.Sprintf("%s/%s", m.TenantID, m.ArtifactID) }
 
 func validate(t transfer) error {

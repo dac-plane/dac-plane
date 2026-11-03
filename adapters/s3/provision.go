@@ -86,6 +86,9 @@ func (s *S3Store) Verify(ctx context.Context, r Retention) error {
 	if err := s.Preflight(ctx); err != nil {
 		return err
 	}
+	if err := s.expires(ctx, r.StagingDays); err != nil {
+		return err
+	}
 	lock, err := s.client.GetObjectLockConfiguration(ctx, &s3.GetObjectLockConfigurationInput{Bucket: aws.String(s.cfg.ObjectsBucket)})
 	if err != nil {
 		return fmt.Errorf("read object lock of %s: %w", s.cfg.ObjectsBucket, err)

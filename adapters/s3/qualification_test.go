@@ -344,6 +344,25 @@ func TestQualifyArtifactStore(t *testing.T) {
 		// Record, not assert: what a replay of the deleted commit answers.
 		reply, err := a.Send(ctx, request(t, "commit_manifest", m.OperationID, m))
 		t.Logf("replay after operator deletion: outcome=%s err=%v result=%s", reply.Outcome, err, reply.Result)
+		// A fresh artifact has no overwrite to fall back on: its one version
+		// goes, while its staged bytes and fence remain.
+		sole := liveManifest(data, 1, 8)
+		if status := q.put(t, authorize(t, a, sole, authorizeOp(sole)), sole.MediaType, data); status != http.StatusOK {
+			t.Fatalf("upload returned %d", status)
+		}
+		committedSole := commitReply(t, a, sole)
+		if committedSole.Outcome != "committed" {
+			t.Fatalf("sole commit: %+v", committedSole)
+		}
+		if _, err := q.rawOp.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(q.cfg.ObjectsBucket), Key: aws.String(objectKey(sole)), VersionId: aws.String(committedSole.ObjectVersion), BypassGovernanceRetention: aws.Bool(true)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.Send(ctx, request(t, "commit_manifest", sole.OperationID, sole)); err == nil || !strings.Contains(err.Error(), "deleted") {
+			t.Fatalf("replay of the deleted commit: %v", err)
+		}
+		if _, err := q.store.FirstObject(ctx, objectKey(sole)); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the replay recreated the deleted commit: %v", err)
+		}
 		if err := q.opStore.Provision(ctx, retention); err != nil {
 			t.Fatal(err)
 		}

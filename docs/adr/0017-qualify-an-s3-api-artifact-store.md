@@ -69,7 +69,7 @@ unsupported until its own qualification passes.
 - Deleting a committed object is an operator procedure, done with a credential the adapter never holds:
   remove the policy, then delete with governance bypass.
 
-**No local state.** The fence, the authorization digest and the commit receipt all live in the store.
+**No local state.** The fence, the authorization digest, the commit marker and the commit receipt all live in the store.
 After a restart, the adapter returns the same outcome from the same store. It offers `operation.replay`
 (ADR-0012) and serializes deliveries per operation.
 

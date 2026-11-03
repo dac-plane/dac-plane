@@ -18,8 +18,9 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// maxFenceBytes bounds a fence object, which holds one decimal epoch.
-const maxFenceBytes = 32
+// maxFenceBytes bounds a fence, marker or authorization object, which holds one
+// decimal epoch, operation identifier or hex digest.
+const maxFenceBytes = 128
 
 // S3Config names the store, its two buckets and the adapter's own key.
 type S3Config struct {
@@ -180,7 +181,7 @@ func (s *S3Store) Preflight(ctx context.Context) error {
 			return err
 		}
 	}
-	return s.expires(ctx)
+	return s.expires(ctx, 0)
 }
 
 func (s *S3Store) versioned(ctx context.Context, bucket string) error {
@@ -194,18 +195,33 @@ func (s *S3Store) versioned(ctx context.Context, bucket string) error {
 	return nil
 }
 
-func (s *S3Store) expires(ctx context.Context) error {
+// expires requires a rule over the whole staging bucket. Days of zero accepts
+// any positive expiry, for the adapter key, which does not know the retention.
+func (s *S3Store) expires(ctx context.Context, days int32) error {
 	life, err := s.client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: aws.String(s.cfg.StagingBucket)})
 	if err != nil {
 		return fmt.Errorf("read lifecycle of %s: %w", s.cfg.StagingBucket, err)
 	}
 	for _, rule := range life.Rules {
-		if rule.Status == types.ExpirationStatusEnabled && rule.Expiration != nil && aws.ToInt32(rule.Expiration.Days) > 0 &&
-			rule.NoncurrentVersionExpiration != nil && aws.ToInt32(rule.NoncurrentVersionExpiration.NoncurrentDays) > 0 {
+		if expiresEverything(rule, days) {
 			return nil
 		}
 	}
 	return fmt.Errorf("bucket %s has no expiry rule for current and noncurrent versions", s.cfg.StagingBucket)
+}
+
+func expiresEverything(rule types.LifecycleRule, days int32) bool {
+	if rule.Status != types.ExpirationStatusEnabled || rule.Expiration == nil || rule.NoncurrentVersionExpiration == nil || aws.ToString(rule.Prefix) != "" {
+		return false
+	}
+	if f := rule.Filter; f != nil && (aws.ToString(f.Prefix) != "" || f.Tag != nil || f.And != nil || f.ObjectSizeGreaterThan != nil || f.ObjectSizeLessThan != nil) {
+		return false
+	}
+	current, noncurrent := aws.ToInt32(rule.Expiration.Days), aws.ToInt32(rule.NoncurrentVersionExpiration.NoncurrentDays)
+	if days != 0 {
+		return current == days && noncurrent == days
+	}
+	return current > 0 && noncurrent > 0
 }
 
 // classify maps the store's refusals onto the adapter's errors. A 409

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -343,6 +345,132 @@ func TestCorruptReceiptIsNotTrusted(t *testing.T) {
 	store.objects[objectKey(m)] = []fakeVersion{{id: "v9999", body: data, metadata: map[string]string{metadataOperation: m.OperationID}}}
 	if _, err := a.Send(context.Background(), request(t, "commit_manifest", m.OperationID, m)); err == nil {
 		t.Fatal("an object without a valid receipt must not answer the commit")
+	}
+}
+
+func TestAuthorizationIsBoundToItsFirstArguments(t *testing.T) {
+	store := newFakeStore()
+	a := newAdapter(t, store)
+	const operation = "019a0d5b-f74c-7000-8000-000000000110"
+	m := manifestFor([]byte("artifact"), 1)
+	if authorize(t, a, m, operation) == "" || authorize(t, a, m, operation) == "" {
+		t.Fatal("a replay must renew the capability")
+	}
+	changedManifest := manifestFor([]byte("other bytes"), 1)
+	if reply := send(t, a, "authorize_upload", operation, changedManifest); reply.Outcome != wire.OutcomeFailed {
+		t.Fatalf("changed manifest: %+v", reply)
+	}
+	changedRef := request(t, "authorize_upload", operation, m)
+	raw, err := json.Marshal(transfer{Manifest: m, NativeRef: "other.diff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedRef.Arguments = raw
+	reply, err := a.Send(context.Background(), changedRef)
+	if err != nil || reply.Outcome != wire.OutcomeFailed {
+		t.Fatalf("changed native ref: %+v, %v", reply, err)
+	}
+}
+
+func TestFencedReplyIgnoresLateUploads(t *testing.T) {
+	store := newFakeStore()
+	a := newAdapter(t, store)
+	data := []byte("artifact")
+	stale, current := manifestFor(data, 1), manifestFor(data, 2)
+	authorize(t, a, stale, "019a0d5b-f74c-7000-8000-000000000111")
+	authorize(t, a, current, "019a0d5b-f74c-7000-8000-000000000112")
+	store.upload(stagingKey(stale), data)
+	first := commitReply(t, a, stale)
+	if first.Outcome != "fenced" {
+		t.Fatalf("stale writer: %+v", first)
+	}
+	store.upload(stagingKey(stale), []byte("a late replacement"))
+	if got := commitReply(t, a, stale); got != first {
+		t.Fatalf("fenced reply changed: %+v, then %+v", first, got)
+	}
+}
+
+func TestDeletedCommitIsNotRecreated(t *testing.T) {
+	store := newFakeStore()
+	a := newAdapter(t, store)
+	data := []byte("artifact")
+	m := manifestFor(data, 1)
+	authorize(t, a, m, "019a0d5b-f74c-7000-8000-000000000111")
+	store.upload(stagingKey(m), data)
+	if got := commitReply(t, a, m); got.Outcome != "committed" {
+		t.Fatalf("commit: %+v", got)
+	}
+	delete(store.objects, objectKey(m))
+	_, err := a.Send(context.Background(), request(t, "commit_manifest", m.OperationID, m))
+	if err == nil || !strings.Contains(err.Error(), "deleted") {
+		t.Fatalf("replay of a deleted commit: %v", err)
+	}
+	if len(store.objects[objectKey(m)]) != 0 {
+		t.Fatal("the replay recreated the deleted commit")
+	}
+}
+
+func TestCommitMarkerIsRestoredByReplay(t *testing.T) {
+	store := &lostCommitMarker{fakeStore: newFakeStore()}
+	a := newAdapter(t, store)
+	data := []byte("artifact")
+	m := manifestFor(data, 1)
+	authorize(t, a, m, "019a0d5b-f74c-7000-8000-000000000111")
+	store.upload(stagingKey(m), data)
+	store.lose = true
+	if _, err := a.Send(context.Background(), request(t, "commit_manifest", m.OperationID, m)); err == nil {
+		t.Fatal("a lost marker write must fail the delivery")
+	}
+	store.lose = false
+	if got := commitReply(t, a, m); got.Outcome != "committed" {
+		t.Fatalf("replay: %+v", got)
+	}
+	delete(store.objects, objectKey(m))
+	if _, err := a.Send(context.Background(), request(t, "commit_manifest", m.OperationID, m)); err == nil {
+		t.Fatal("the replay did not restore the marker")
+	}
+}
+
+type lostCommitMarker struct {
+	*fakeStore
+	lose bool
+}
+
+func (l *lostCommitMarker) PutFence(ctx context.Context, key string, body []byte, w Write) error {
+	if l.lose && strings.HasPrefix(key, "commits/") {
+		return errors.New("store unavailable")
+	}
+	return l.fakeStore.PutFence(ctx, key, body, w)
+}
+
+func TestExpiryRuleMustCoverTheWholeBucket(t *testing.T) {
+	rule := func(filter *types.LifecycleRuleFilter, current, noncurrent int32) types.LifecycleRule {
+		return types.LifecycleRule{Status: types.ExpirationStatusEnabled, Filter: filter,
+			Expiration:                  &types.LifecycleExpiration{Days: aws.Int32(current)},
+			NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(noncurrent)}}
+	}
+	whole := &types.LifecycleRuleFilter{Prefix: aws.String("")}
+	for _, c := range []struct {
+		name string
+		rule types.LifecycleRule
+		days int32
+		want bool
+	}{
+		{"whole bucket", rule(whole, 2, 2), 0, true},
+		{"no filter", rule(nil, 2, 2), 0, true},
+		{"requested days", rule(whole, 2, 2), 2, true},
+		{"other days", rule(whole, 3, 2), 2, false},
+		{"other noncurrent days", rule(whole, 2, 3), 2, false},
+		{"no days", rule(whole, 0, 0), 0, false},
+		{"prefix", rule(&types.LifecycleRuleFilter{Prefix: aws.String("readiness/")}, 2, 2), 0, false},
+		{"tag", rule(&types.LifecycleRuleFilter{Tag: &types.Tag{Key: aws.String("k"), Value: aws.String("v")}}, 2, 2), 0, false},
+		{"and", rule(&types.LifecycleRuleFilter{And: &types.LifecycleRuleAndOperator{Prefix: aws.String("x/")}}, 2, 2), 0, false},
+		{"size", rule(&types.LifecycleRuleFilter{ObjectSizeGreaterThan: aws.Int64(1)}, 2, 2), 0, false},
+		{"disabled", types.LifecycleRule{Status: types.ExpirationStatusDisabled}, 0, false},
+	} {
+		if got := expiresEverything(c.rule, c.days); got != c.want {
+			t.Errorf("%s: got %v", c.name, got)
+		}
 	}
 }
 

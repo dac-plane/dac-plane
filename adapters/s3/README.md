@@ -16,7 +16,8 @@ Qualified store: SeaweedFS `4.51`, pinned by digest in [`qualification/run.sh`](
      `fences/{tenant}/{artifact}`.
    - Returns a presigned PUT for `staging/{tenant}/{attempt}/{artifact}/{epoch}`. The signature covers
      the host, the manifest's media type and its exact length. It expires after `DAC_S3_UPLOAD_TTL`.
-   - A replay presigns the same key again.
+   - A replay presigns the same key again. The same operation with other arguments is rejected, compared
+     through a digest at `authorizations/{tenant}/{operation}`.
 2. **The runtime uploads directly to the staging bucket.** Bytes never pass through the control plane or
    this adapter.
 3. **`stat_object`** hashes the current staging version. It is diagnostic only.
@@ -27,7 +28,10 @@ Qualified store: SeaweedFS `4.51`, pinned by digest in [`qualification/run.sh`](
      metadata carries the receipt.
    - The committed object is the oldest version of `{tenant}/{artifact}`. Replays, and restarts of the
      adapter or the store, rebuild the same receipt from it.
-   - A different manifest or a stale epoch is `fenced`.
+   - A marker at `commits/{tenant}/{artifact}` stops a replay from recreating a deleted commit while its
+     staged bytes remain. It expires with them.
+   - A different manifest or a stale epoch is `fenced`. The reply carries no observation, so a late upload
+     cannot change it.
 
 The adapter keeps no local state and offers `operation.replay`.
 

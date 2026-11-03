@@ -3,6 +3,7 @@ package s3adapter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -94,6 +95,9 @@ func (f *fakeStore) GetFence(_ context.Context, key string) ([]byte, string, err
 }
 
 func (f *fakeStore) PutFence(_ context.Context, key string, body []byte, w Write) error {
+	if len(body) > maxFenceBytes {
+		return errors.New("fence exceeds what the store reads back")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	current, ok := f.fences[key]
