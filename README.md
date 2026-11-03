@@ -1,4 +1,4 @@
-# Open Source Control Plane for Delegated Agent Work
+# Open Source Agent Control Plane
 
 dac-plane keeps the durable record of work you delegate to AI agents: tasks, attempts, approvals, budgets, artifacts, audit, results and reviews. The agent runtime and the environment it runs in stay replaceable.
 
