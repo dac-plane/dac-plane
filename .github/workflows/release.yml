@@ -303,7 +303,10 @@ jobs:
           flags=(--draft --verify-tag --title "$VERSION")
           if [[ "$FINAL" == true ]]; then
             since="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .published_at 2>/dev/null || true)"
-            { cat "docs/releases/$VERSION.md"; echo; scripts/release/resolved-issues.sh "$since"; } >notes.md
+            {
+              printf '## Upgrading\n\nBefore upgrading refer to [the release notes](https://github.com/%s/blob/%s/docs/releases/%s.md) for compatibility, upgrade steps and known limits.\n\n' "$GITHUB_REPOSITORY" "$VERSION" "$VERSION"
+              scripts/release/resolved-issues.sh "$since"
+            } >notes.md
             flags+=(--notes-file notes.md)
           else
             flags+=(--prerelease --notes "Rehearsal. Not a supported release.")
