@@ -10,7 +10,7 @@ ARG CODEX_ARCHIVE=codex-x86_64-unknown-linux-musl
 ARG CODEX_SHA256=be635d3486a5bd060d0fff582ae6d30160280c31344dd85719707fa920e187f0
 
 USER root
-RUN apt-get update -qq && apt-get install -y -qq bubblewrap && bwrap --version
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends bubblewrap && bwrap --version
 RUN set -e; \
     curl --proto '=https' --proto-redir '=https' -fL --retry 3 -o /tmp/codex.tar.gz \
       "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/${CODEX_ARCHIVE}.tar.gz"; \
