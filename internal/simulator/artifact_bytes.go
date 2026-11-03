@@ -211,16 +211,26 @@ func decodeArtifactRequest(raw []byte, target any) error {
 }
 
 type artifactExport struct {
-	store     *ByteArtifactStore
+	upload    ArtifactUploader
 	fixtures  map[string][]byte
 	mu        sync.Mutex
 	manifests map[ids.OperationID]contracts.ArtifactTransfer
 }
 
+// ArtifactUploader delivers one fixture through the transfer's upload
+// capability, as a real runtime would.
+type ArtifactUploader func(ctx context.Context, t contracts.ArtifactTransfer, data []byte) error
+
 // WithArtifactExport configures the runtime's deterministic evidence fixtures.
 // Configure before driving the runtime; fixtures are copied, never aliased.
 func (r *Runtime) WithArtifactExport(store *ByteArtifactStore, fixtures map[string][]byte) *Runtime {
-	e := &artifactExport{store: store, fixtures: map[string][]byte{}, manifests: map[ids.OperationID]contracts.ArtifactTransfer{}}
+	return r.WithArtifactUploader(func(_ context.Context, t contracts.ArtifactTransfer, data []byte) error { return store.Upload(t, data) }, fixtures)
+}
+
+// WithArtifactUploader exports fixtures through upload instead of an
+// in-process store, so a separate artifact store adapter receives them.
+func (r *Runtime) WithArtifactUploader(upload ArtifactUploader, fixtures map[string][]byte) *Runtime {
+	e := &artifactExport{upload: upload, fixtures: map[string][]byte{}, manifests: map[ids.OperationID]contracts.ArtifactTransfer{}}
 	for ref, data := range fixtures {
 		e.fixtures[ref] = append([]byte(nil), data...)
 	}
@@ -253,7 +263,7 @@ func (r *Runtime) exportArtifact(ctx context.Context, request contracts.Request)
 			e.mu.Unlock()
 			return contracts.Reply{}, fmt.Errorf("%w: no artifact fixture", ErrUnscripted)
 		}
-		if err := e.store.Upload(t, data); err != nil {
+		if err := e.upload(ctx, t, data); err != nil {
 			e.mu.Unlock()
 			return contracts.Reply{}, err
 		}

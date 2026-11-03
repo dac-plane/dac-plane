@@ -112,3 +112,37 @@ qualify a real provider.
 `compose.containment.yaml` layers over `compose.codex.yaml` and `compose.e2b.yaml` so Codex's commands run in the
 task's sandbox. `just qualify-codex-containment` uses it. See
 [ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md).
+
+## Artifact store profile
+
+`compose.artifacts.yaml` layers over `compose.codex.yaml` and `compose.e2b.yaml`. It replaces the simulator's
+byte store with self-hosted SeaweedFS behind `dac-s3-adapter`
+([ADR-0017](../../docs/adr/0017-qualify-an-s3-api-artifact-store.md)). As with PostgreSQL, the operator owns
+the `artifact-data` volume, its backups and its capacity.
+
+| Service | Role |
+|---|---|
+| `artifact-store` | HAProxy, pinned by digest. It owns the network identity and passes TLS through on `8443`. It is the only listener off loopback. |
+| `artifact-store-seaweedfs` | SeaweedFS `4.51`, pinned by digest, in the proxy's network namespace. Every listener binds loopback, because its plaintext S3, filer, master, volume and IAM gRPC ports cannot be turned off. Joining the proxy's namespace lets a store restart rejoin a live namespace. |
+| `artifact-store-provision` | `dac-s3-adapter provision` with the operator key. It creates or completes both buckets, verifies them, and waits for a conditional write, which SeaweedFS holds until its lock ring forms. Safe to run again. |
+| `artifact-adapter` | `dac-s3-adapter` with the adapter key, which is not an admin. It checks the buckets at start and refuses to serve if they are wrong. |
+
+Keys:
+- `just stack-certs` generates the operator and adapter keys and the SeaweedFS identity file under
+  `.work/stack/secrets/`.
+- Never create the buckets with `weed shell`. Use `provision`, which goes through the S3 API.
+
+Deleting a committed artifact is an operator procedure. The steps are in
+[`adapters/s3/README.md`](../../adapters/s3/README.md#buckets-and-keys).
+
+`compose.artifacts.dev.yaml` layers this profile over the development profile. The simulated runtime then
+uses `scenario.artifacts.dev.json`, which uploads its fixture through the S3 adapter's presigned HTTPS
+capability, exactly as the Codex adapter uploads a real artifact.
+
+`just test-artifact-store-stack` needs no provider secret. It deploys that combination and checks:
+- that the adapter is connected
+- that only HTTPS S3 is exposed
+- that the deployed lifecycle reaches `succeeded`, with its result committed through the store
+- that the store holds exactly one frozen version with the fixture's bytes
+- that the store recovers from a crash behind the same proxy
+- that the profile still composes over the Codex and E2B overlays

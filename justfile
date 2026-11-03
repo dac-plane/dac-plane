@@ -8,6 +8,7 @@ go_dirs := "cmd internal"
 adapterkit_dirs := "adapterkit"
 codex_adapter_dir := "adapters/codex"
 e2b_adapter_dir := "adapters/e2b"
+s3_adapter_dir := "adapters/s3"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
@@ -27,7 +28,7 @@ default:
 
 # Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci-fast: fmt-check mod-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-conformance vuln lint-workflows
+ci-fast: fmt-check mod-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-conformance vuln lint-workflows
 
 # Full local equivalent of the parallel GitHub PR checks. This is intentionally
 # slower and is best used for final local verification or CI diagnosis.
@@ -40,6 +41,7 @@ fmt:
     gofmt -w {{ go_dirs }}
     cd {{ codex_adapter_dir }} && gofmt -w .
     cd {{ e2b_adapter_dir }} && gofmt -w .
+    cd {{ s3_adapter_dir }} && gofmt -w .
 
 # Fail if any Go file or this justfile is not formatted, listing the files
 [group('check')]
@@ -47,6 +49,7 @@ fmt-check:
     unformatted="$(gofmt -l {{ go_dirs }})"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
     unformatted="$(cd {{ codex_adapter_dir }} && gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
     unformatted="$(cd {{ e2b_adapter_dir }} && gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+    unformatted="$(cd {{ s3_adapter_dir }} && gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
     {{ just_executable() }} --unstable --fmt --check
 
 # Verify module checksums and that go.mod and go.sum are tidy
@@ -57,6 +60,7 @@ mod-check:
     cd adapterkit && go mod verify && go mod tidy -diff
     cd {{ codex_adapter_dir }} && go mod verify && go mod tidy -diff
     cd {{ e2b_adapter_dir }} && go mod verify && go mod tidy -diff
+    cd {{ s3_adapter_dir }} && go mod verify && go mod tidy -diff
 
 # Run go vet on every package
 [group('check')]
@@ -65,6 +69,8 @@ vet:
     cd adapterkit && go vet ./...
     cd {{ codex_adapter_dir }} && go vet ./...
     cd {{ e2b_adapter_dir }} && go vet ./...
+    cd {{ s3_adapter_dir }} && go vet ./...
+    cd {{ s3_adapter_dir }} && go vet -tags=s3qualification ./...
 
 # Unit files build without tags; integration files only build behind the
 # integration tag, so they need their own vet pass.
@@ -78,6 +84,7 @@ deps-check:
     go list -deps ./cmd/dac-plane | while IFS= read -r dep; do case "$dep" in */internal/simulator|*/internal/testsupport|*/internal/testsupport/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "release binary imports forbidden package: $dep"; exit 1;; esac; done
     cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "Codex adapter imports control-plane internal package: $dep"; exit 1;; esac; done
     cd {{ e2b_adapter_dir }} && go list -deps ./cmd/dac-e2b-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "E2B adapter imports control-plane internal package: $dep"; exit 1;; esac; done
+    cd {{ s3_adapter_dir }} && go list -deps ./cmd/dac-s3-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "S3 adapter imports a forbidden package: $dep"; exit 1;; esac; done
 
 # Run unit tests, including the JSON Schema contract conformance suites
 [group('test')]
@@ -134,6 +141,21 @@ test-e2b-adapter:
     cd {{ e2b_adapter_dir }} && go test -tags=e2bqualification -run '^$' ./...
     grep -q "CODEX_VERSION=$(sed -n 's/^const AppServerVersion = "\(.*\)"/\1/p' {{ codex_adapter_dir }}/version.go)$" {{ e2b_adapter_dir }}/template/e2b.Dockerfile
 
+# The S3 artifact store adapter uses an in-memory fake store and the published
+# ControlFrame conformance suite here; `qualify-artifact-store` runs it against
+# a real store. Reply payloads are checked against contracts/jsonschema.
+[group('test')]
+test-s3-adapter:
+    cd {{ s3_adapter_dir }} && go test ./...
+    cd {{ s3_adapter_dir }} && go test -race ./...
+    cd {{ s3_adapter_dir }} && go test -tags=s3qualification -run '^$' ./...
+
+# Qualify the S3 adapter against a throwaway SeaweedFS pinned by digest (needs Docker).
+[doc('Qualify the artifact store against pinned SeaweedFS (needs Docker)')]
+[group('test')]
+qualify-artifact-store:
+    ./adapters/s3/qualification/run.sh
+
 # Run the real E2B Cloud qualification with a bounded, secret-backed sandbox probe.
 [doc('Qualify managed E2B Cloud (requires APIKEY_E2B and incurs sandbox usage)')]
 [group('test')]
@@ -179,6 +201,31 @@ qualify-codex-runtime: stack-certs
     set +a
     go test -count=1 -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/
 
+# Run the same live Codex qualification with the bundled SeaweedFS as the artifact
+# store: Codex's result is uploaded through the S3 adapter and read back from the store.
+[doc('Qualify Codex committing through the S3 artifact store (needs Docker and DAC_CODEX_API_KEY_FILE)')]
+[group('test')]
+qualify-codex-artifact-store: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    mkdir -p .work/codex-store-qualification
+    compose=(docker compose -p dac-codex-qualification --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.codex.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >.work/codex-store-qualification/compose.log 2>&1 || true; if credential=$(tr -d '\r\n' <"$DAC_CODEX_API_KEY_FILE") && [[ -n "$credential" ]] && grep -Fq -- "$credential" .work/codex-store-qualification/compose.log; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    # A live harness needs an explicit tenant policy before approval-once can
+    # issue a grant. Keep this qualification-only policy out of product setup.
+    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/codex-store-qualification/version.txt
+    set -a
+    source .work/stack/compose.env
+    set +a
+    DAC_QUALIFICATION_ARTIFACT_STORE="$("${compose[@]}" ps -q artifact-store-seaweedfs)" go test -count=1 -v -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/ 2>&1 | tee .work/codex-store-qualification/test.txt
+    if ! "${compose[@]}" logs --no-color dac-plane | grep -q '"msg":"adapter connected".*"role":"artifact_store"'; then echo "artifact store adapter did not connect" >&2; exit 1; fi
+
 # Run the secret-backed joint qualification: DAC cancels a live Codex turn with
 # the E2B adapter bound to the attempt. E2B is the only environment connection.
 [doc('Qualify task cancellation across Codex and E2B Cloud (needs Docker, DAC_CODEX_API_KEY_FILE and DAC_E2B_API_KEY_FILE; incurs usage)')]
@@ -209,6 +256,40 @@ qualify-task-cancellation: stack-certs
 [group('test')]
 check-containment-compose: stack-certs
     DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null DAC_ENVIRONMENT_ATTACH_KEY_FILE=/dev/null DAC_E2B_TEMPLATE_ID=template docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification config -q
+
+# The artifact store profile needs no provider secret. The simulated runtime
+# uploads through the S3 adapter's presigned HTTPS capability, so the deployed
+# lifecycle commits real bytes to SeaweedFS. It also checks that only HTTPS is
+# exposed, that the store recovers from a crash behind the same proxy, and that
+# the profile still composes over the Codex and E2B overlays.
+[doc('Deploy the artifact store profile and run the lifecycle through it (needs Docker)')]
+[group('test')]
+test-artifact-store-stack: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.artifacts.yaml --profile dev --profile qualification config -q
+    DAC_CODEX_API_KEY_FILE=/dev/null docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.codex.yaml --profile dev --profile qualification config -q
+    compose=(docker compose -p dac-artifact-store-stack --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.artifacts.yaml -f deploy/compose/compose.artifacts.dev.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; if (( code != 0 )); then "${compose[@]}" logs --no-color --tail=200; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --wait
+    if ! "${compose[@]}" logs --no-color dac-plane | grep -q '"msg":"adapter connected".*"role":"artifact_store"'; then echo "artifact store adapter did not connect" >&2; exit 1; fi
+    exposed="$("${compose[@]}" exec -T artifact-store-seaweedfs netstat -tln | awk 'NR > 2 && $4 !~ /^127\./ { print $4 }')"
+    if [[ "$exposed" != "0.0.0.0:8443" ]]; then echo "artifact store exposes more than HTTPS S3: $exposed" >&2; exit 1; fi
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -tags=stack ./internal/stacktest/
+    # Read the frozen bytes back through SeaweedFS's loopback filer: exactly
+    # one committed version, holding the simulator's fixture.
+    stored="$("${compose[@]}" exec -T artifact-store-seaweedfs sh -c 'list() { curl -sf -H "Accept: application/json" "http://127.0.0.1:8888$1/" | grep -o "\"FullPath\":\"[^\"]*\"" | cut -d\" -f4; }; for d in $(list /buckets/dac-objects/01a167fd-51d9-76ba-b563-496e2bd89646); do for f in $(list "$d"); do curl -sf "http://127.0.0.1:8888$f"; echo "--"; done; done')"
+    if [[ "$(grep -c '^--$' <<<"$stored")" != 1 ]] || ! grep -q '^+delegated result$' <<<"$stored"; then echo "store does not hold exactly the committed fixture: $stored" >&2; exit 1; fi
+    # A store crash must not strand the proxy: SeaweedFS rejoins its namespace.
+    docker kill --signal KILL "$("${compose[@]}" ps -q artifact-store-seaweedfs)" >/dev/null
+    "${compose[@]}" up -d --wait artifact-store-seaweedfs
+    "${compose[@]}" run --rm --no-deps artifact-store-provision
+    echo "lifecycle committed through the S3 store; profile recovered from a store crash"
 
 # Run the secret-backed containment qualification: Codex's commands run in the
 # task's sandbox, and every proof reads that sandbox directly through E2B.
@@ -330,7 +411,7 @@ image-build:
 [group('image')]
 image-repro:
     mkdir -p .work/image-repro
-    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter dac-codex-adapter dac-e2b-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
+    epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter dac-codex-adapter dac-e2b-adapter dac-s3-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
 
 # Generate throwaway development certificates and credentials under .work/.
 [group('stack')]
@@ -430,6 +511,7 @@ vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_versi
     cd adapterkit && ../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ codex_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ e2b_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
+    cd {{ s3_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
 
 # Lint GitHub Actions workflows
 [group('check')]

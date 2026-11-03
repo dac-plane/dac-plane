@@ -87,6 +87,9 @@ jobs:
       - name: Run deterministic E2B adapter tests
         run: just test-e2b-adapter
 
+      - name: Run deterministic S3 artifact store adapter tests
+        run: just test-s3-adapter
+
       - name: Run adapter protocol conformance
         run: just test-conformance
 
@@ -207,6 +210,9 @@ jobs:
 
       - name: Containment overlay
         run: just check-containment-compose
+
+      - name: Artifact store profile
+        run: just test-artifact-store-stack
 
       - name: Run deployed lifecycle smoke test
         run: just test-stack

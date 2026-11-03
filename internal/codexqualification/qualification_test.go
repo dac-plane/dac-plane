@@ -257,6 +257,9 @@ func review(t *testing.T, ctx context.Context, client *http.Client, token *token
 
 func artifactEvidence(t *testing.T, ctx context.Context, client *http.Client, artifact ids.ArtifactID) []byte {
 	t.Helper()
+	if store := os.Getenv("DAC_QUALIFICATION_ARTIFACT_STORE"); store != "" {
+		return storedEvidence(t, ctx, store, artifact)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://artifact-adapter:8082/v1/evidence/"+artifact.String(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -271,6 +274,20 @@ func artifactEvidence(t *testing.T, ctx context.Context, client *http.Client, ar
 		t.Fatalf("artifact evidence status=%d body=%s err=%v", res.StatusCode, data, err)
 	}
 	return data
+}
+
+// storedEvidence reads the frozen bytes through SeaweedFS's loopback filer and
+// requires exactly one committed version of the artifact.
+func storedEvidence(t *testing.T, ctx context.Context, store string, artifact ids.ArtifactID) []byte {
+	t.Helper()
+	const script = `list() { curl -sf -H "Accept: application/json" "http://127.0.0.1:8888$1/" | grep -o "\"FullPath\":\"[^\"]*\"" | cut -d\" -f4; }
+versions=$(for d in $(list "/buckets/dac-objects/$0" | grep "$1"); do list "$d"; done)
+test "$(printf '%s\n' "$versions" | wc -l)" -eq 1 && test -n "$versions" && curl -sf "http://127.0.0.1:8888$versions"`
+	output, err := exec.CommandContext(ctx, "docker", "exec", store, "sh", "-c", script, tenantID, artifact.String()).Output()
+	if err != nil {
+		t.Fatalf("store does not hold exactly one version of artifact %s: %v", artifact, err)
+	}
+	return output
 }
 
 func workspaceAbsent(t *testing.T, ctx context.Context, name string) {

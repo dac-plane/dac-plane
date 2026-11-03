@@ -1,0 +1,39 @@
+# Layered over compose.codex.yaml and compose.artifacts.yaml: the S3 adapter
+# replaces the process that also served the simulated environment, so that role
+# gets its own simulator process for the live Codex qualification.
+services:
+  environment-adapter:
+    image: ${DAC_SIM_ADAPTER_IMAGE:-dac-sim-adapter:qualification}
+    build:
+      context: ../..
+      target: dac-sim-adapter
+    command: ["/run/config/scenario.json"]
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ENVIRONMENT_CLIENT_ID: environment-adapter
+      DAC_ENVIRONMENT_CLIENT_SECRET_FILE: /run/secrets/environment_client_secret
+      DAC_SIM_ENVIRONMENT_ONLY: "true"
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+      - source: sim_environment_scenario
+        target: /run/config/scenario.json
+    secrets:
+      - environment_client_secret
+    depends_on:
+      dac-plane:
+        condition: service_healthy
+      provision-qualify:
+        condition: service_completed_successfully
+    profiles: ["qualification"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+configs:
+  sim_environment_scenario:
+    file: ./scenario.environment-only.json
