@@ -1,6 +1,7 @@
 # dac-plane vX.Y.Z
 
-<!-- Headline-worthy changes only. Anyone upgrading also reads the Upgrading section. -->
+<!-- Headline-worthy changes only. Anyone upgrading also reads the Upgrading section. Keep each paragraph on one line:
+     a GitHub Release shows every line break. -->
 
 This release ... The highlights of this release are:
 
