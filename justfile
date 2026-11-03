@@ -512,6 +512,50 @@ release-push target platform version kit repository:
     docker buildx build --target {{ target }} --platform {{ platform }} --provenance=false --sbom=false --build-arg VERSION={{ version }} --build-arg REVISION="$(git rev-parse HEAD)" --build-arg KIT_VERSION={{ kit }} --output "type=registry,name={{ repository }},push-by-digest=true,rewrite-timestamp=true" --metadata-file "$work/push.json" .
     test "$(cat "$work/digest")" = "$(jq -r '."containerimage.digest"' "$work/push.json")"
 
+# Sign and push a release's tags from this commit, reusing a kit tag that already exists.
+[group('release')]
+release-tag version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "$(git status --porcelain)" ]]; then echo "commit or stash your changes first" >&2; exit 1; fi
+    base="{{ version }}"; base="${base%%-*}"
+    suffix="{{ version }}"; suffix="${suffix#"$base"}"
+    required="$(go mod edit -json | jq -r '.Require[] | select(.Path == "github.com/dac-plane/dac-plane/adapterkit") | .Version')"
+    kit="adapterkit/$required$suffix"
+    tags=("{{ version }}")
+    git tag -s "{{ version }}" -m "dac-plane {{ version }}"
+    if [[ -z "$(git ls-remote --tags origin "refs/tags/$kit")" ]]; then
+      git tag -s "$kit" -m "adapterkit $required$suffix"
+      tags+=("$kit")
+    fi
+    git push origin "${tags[@]}"
+
+# Run live qualification against a release's published digests, with no local build.
+[group('release')]
+release-qualify tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=".work/release/{{ tag }}"
+    mkdir -p "$work"
+    gh release download "{{ tag }}" --clobber -p release-manifest.json -D "$work"
+    image() { jq -er --arg target "$1" '.images[$target]' "$work/release-manifest.json"; }
+    export DAC_PROVIDER_PUBLISHED_IMAGES=1
+    export DAC_PLANE_IMAGE="$(image dac-plane)"
+    export DAC_CODEX_ADAPTER_IMAGE="$(image dac-codex-adapter)"
+    export DAC_E2B_ADAPTER_IMAGE="$(image dac-e2b-adapter)"
+    export DAC_S3_ADAPTER_IMAGE="$(image dac-s3-adapter)"
+    just qualify-providers
+
+# Repeat the clean room against a published release, with no registry login.
+[group('release')]
+release-verify tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=".work/release/{{ tag }}"
+    mkdir -p "$work"
+    gh release download "{{ tag }}" --clobber -p release-manifest.json -D "$work"
+    DAC_RELEASE_ANONYMOUS=1 scripts/release/verify-release.sh "$work/release-manifest.json"
+
 # Install the pinned scanner from its release, checking the published checksum.
 [private]
 _trivy:

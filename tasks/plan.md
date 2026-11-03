@@ -98,14 +98,16 @@ version permanently, so all rehearsal uses `-rc.N` tags.
 
 ## Layout checked against established projects
 
-Compared on 2026-11-03 with containerd, Prometheus, cert-manager, dex, cosign, the OpenTelemetry Collector, Tempo and
-Temporal, and with OpenSSF Scorecard's checks. Scripts moved to `scripts/release`, the external adapter became a kit
-example, and `SECURITY.md`, `RELEASE.md`, `CHANGELOG.md`, `CODEOWNERS`, Dependabot and Scorecard were added.
+Compared on 2026-11-03 with containerd, Prometheus, cert-manager, dex, cosign, the OpenTelemetry Collector, Tempo,
+Temporal and Keycloak, and with OpenSSF Scorecard's checks. Scripts moved to `scripts/release`, the external adapter
+became a kit example, and `SECURITY.md`, `RELEASES.md`, `CODEOWNERS`, Dependabot and Scorecard were added. Following
+Keycloak, `RELEASES.md` states policy for users, and the procedure and note template live in `docs/releases`.
 
 ## Owner-only actions
 
 Choosing the license, signing and pushing the final tags, approving the `release` environment, making the packages
-public, and creating tag rulesets (the current token may lack admin rights).
+public, and turning on private vulnerability reporting and Dependabot alerts. The environments, tag ruleset and
+immutable releases were applied on 2026-11-03.
 
 ## Out of scope
 

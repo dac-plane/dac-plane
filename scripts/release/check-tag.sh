@@ -17,6 +17,12 @@ if [[ "$tag" == *-rc.* ]]; then
 	final=false
 fi
 
+# The draft needs these notes; a rehearsal finds out before a final tag does.
+if [[ ! -f "docs/releases/${tag%%-*}.md" ]]; then
+	echo "docs/releases/${tag%%-*}.md is missing" >&2
+	exit 1
+fi
+
 # Every module in the tree must require the same kit version.
 required=$(for module in . adapters/codex adapters/e2b adapters/s3; do
 	(cd "$module" && go mod edit -json | jq -r --arg kit "$kit_module" '.Require[] | select(.Path == $kit) | .Version')

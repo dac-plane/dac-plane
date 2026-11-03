@@ -9,4 +9,4 @@ No response time or support objective has been established yet.
 
 ## Supported versions
 
-Only the latest release receives fixes. See [RELEASE.md](RELEASE.md) for what a release contains and how to verify it.
+Only the latest release receives fixes. See [RELEASES.md](RELEASES.md) for what a release contains and how to verify it.
