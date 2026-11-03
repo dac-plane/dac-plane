@@ -102,8 +102,7 @@ func (a *Adapter) startProcess(ctx context.Context, sbx sandbox, command string)
 	return nil
 }
 
-// waitForExecServer treats any answer but the port host's 502 as listening. A
-// request without a token is enough, since exec-server answers it with 401.
+// waitForExecServer waits for the unauthenticated response from exec-server.
 func (a *Adapter) waitForExecServer(ctx context.Context, sandboxID string) error {
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.sandboxURL(a.cfg.ExecServerPort, sandboxID), nil)
@@ -113,7 +112,7 @@ func (a *Adapter) waitForExecServer(ctx context.Context, sandboxID string) error
 		resp, err := a.cfg.HTTPClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusBadGateway {
+			if resp.StatusCode == http.StatusUnauthorized {
 				return nil
 			}
 		}

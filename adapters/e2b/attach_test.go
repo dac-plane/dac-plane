@@ -185,3 +185,18 @@ func TestExecServerThatNeverListensFailsWithinItsBound(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestExecServerRejectsPortHostErrorsAsReadiness(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusTooManyRequests, http.StatusOK} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+			defer server.Close()
+			a := &Adapter{cfg: Config{HTTPClient: server.Client(), SandboxURL: func(int, string) string { return server.URL }}}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			if err := a.waitForExecServer(ctx, "sandbox-1"); err == nil {
+				t.Fatalf("HTTP %d accepted as ready", status)
+			}
+		})
+	}
+}
