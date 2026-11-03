@@ -22,6 +22,8 @@ write_secret "$secrets/surface-client-secret"
 write_secret "$secrets/runtime-client-secret"
 write_secret "$secrets/artifact-client-secret"
 write_secret "$secrets/environment-client-secret"
+write_secret "$secrets/s3-operator-secret"
+write_secret "$secrets/s3-adapter-secret"
 
 if [ ! -s "$output/ca.crt" ] || [ ! -s "$output/ca.key" ]; then
   openssl req -x509 -newkey rsa:3072 -nodes -days 30 \
@@ -47,7 +49,7 @@ issue_certificate() {
 # Operations evidence addresses two replicas directly; both names remain
 # development-only identities under the same throwaway CA.
 rm -f "$output/server.crt" "$output/server.key" "$output/server.csr"
-issue_certificate server dac-plane "DNS:dac-plane,DNS:replica-a,DNS:replica-b,DNS:artifact-adapter,DNS:localhost,IP:127.0.0.1"
+issue_certificate server dac-plane "DNS:dac-plane,DNS:replica-a,DNS:replica-b,DNS:artifact-adapter,DNS:artifact-store,DNS:localhost,IP:127.0.0.1"
 issue_certificate issuer issuer "DNS:issuer,DNS:localhost,IP:127.0.0.1"
 
 if [ -e "$output/issuer.p12" ]; then
@@ -68,6 +70,14 @@ printf 'postgres://dac_migrate:%s@postgres:5432/dac?sslmode=disable\n' "$migrate
 printf 'postgres://dac_serve:%s@postgres:5432/dac?sslmode=disable\n' "$serve_password" >"$secrets/serve-database-url"
 printf 'postgres://dac_migrate:%s@postgres:5432/dac_out_of_range?sslmode=disable\n' "$migrate_password" >"$secrets/out-of-range-database-url"
 
+# SeaweedFS identities for the artifact store profile. The adapter identity is
+# never an admin, because SeaweedFS admins bypass governance retention.
+if [ -e "$secrets/s3-identities.json" ]; then
+  chmod 0600 "$secrets/s3-identities.json"
+fi
+printf '{"identities":[{"name":"operator","credentials":[{"accessKey":"dac-operator","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]},{"name":"adapter","credentials":[{"accessKey":"dac-adapter","secretKey":"%s"}],"actions":["Read:dac-staging","Write:dac-staging","List:dac-staging","Read:dac-objects","Write:dac-objects","List:dac-objects"]}]}\n' \
+  "$(cat "$secrets/s3-operator-secret")" "$(cat "$secrets/s3-adapter-secret")" >"$secrets/s3-identities.json"
+
 cat >"$output/compose.env" <<EOF
 DAC_DEPLOYMENT=development
 DAC_SURFACE_PORT=18443
@@ -86,6 +96,9 @@ DAC_RUNTIME_CLIENT_SECRET_FILE=$secrets/runtime-client-secret
 DAC_ARTIFACT_CLIENT_SECRET_FILE=$secrets/artifact-client-secret
 DAC_ENVIRONMENT_CLIENT_SECRET_FILE=$secrets/environment-client-secret
 DAC_STACK_SURFACE_CLIENT_SECRET_FILE=$secrets/surface-client-secret
+DAC_S3_OPERATOR_SECRET_FILE=$secrets/s3-operator-secret
+DAC_S3_ADAPTER_SECRET_FILE=$secrets/s3-adapter-secret
+DAC_S3_IDENTITIES_FILE=$secrets/s3-identities.json
 EOF
 
 # Local Compose implements file-backed configs and secrets as bind mounts, so
@@ -104,4 +117,7 @@ chmod 0444 \
   "$secrets/surface-client-secret" \
   "$secrets/runtime-client-secret" \
   "$secrets/artifact-client-secret" \
-  "$secrets/environment-client-secret"
+  "$secrets/environment-client-secret" \
+  "$secrets/s3-operator-secret" \
+  "$secrets/s3-adapter-secret" \
+  "$secrets/s3-identities.json"

@@ -199,9 +199,10 @@ The adapter keeps no local state. Everything it needs after a restart lives in t
   - `just test-s3-adapter`, wired into `ci-fast` and CI.
   - The `dac-s3-adapter` image target.
   - `just ci-fast`, which passed.
+- **Also done:** step 4, Compose wiring (`compose.artifacts.yaml`, `just test-artifact-store-stack` in CI).
 - **Open:**
-  - Step 4, Compose wiring. Its readiness check must probe a conditional write.
-  - The end-to-end run through the control plane.
+  - The end-to-end run through the control plane. It needs the Camer key, and the Codex qualification must
+    read evidence from the store rather than the simulator.
   - A rerun from a committed revision.
   - The disposition, and `just ci`.
 

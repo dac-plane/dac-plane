@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -58,7 +59,26 @@ func (s *S3Store) Provision(ctx context.Context, r Retention) error {
 	if _, err := s.client.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(s.cfg.ObjectsBucket), Policy: aws.String(policy)}); err != nil {
 		return fmt.Errorf("set policy of %s: %w", s.cfg.ObjectsBucket, err)
 	}
-	return s.Verify(ctx, r)
+	if err := s.Verify(ctx, r); err != nil {
+		return err
+	}
+	return s.conditionalWrite(ctx)
+}
+
+// conditionalWrite proves the store serves the If-None-Match writes the adapter
+// relies on. SeaweedFS holds them until its lock ring forms, which was observed
+// about nine seconds after its S3 listener answered, so readiness is this
+// write and not an HTTP answer. The probe expires with staging.
+func (s *S3Store) conditionalWrite(ctx context.Context) error {
+	key := fmt.Sprintf("readiness/%d", time.Now().UnixNano())
+	err := s.PutFence(ctx, key, []byte("1"), Write{Create: true})
+	if err != nil {
+		return fmt.Errorf("conditional write to %s: %w", s.cfg.StagingBucket, err)
+	}
+	if err := s.PutFence(ctx, key, []byte("1"), Write{Create: true}); !errors.Is(err, ErrPrecondition) {
+		return fmt.Errorf("store accepted a second create of one key: %v", err)
+	}
+	return nil
 }
 
 // Verify reads every setting Provision applies back with the operator's key.

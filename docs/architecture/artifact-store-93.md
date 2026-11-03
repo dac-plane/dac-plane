@@ -3,13 +3,30 @@
 Status:
 - **Done:** the spike; the adapter ([`adapters/s3`](../../adapters/s3/README.md)); its live
   qualification against SeaweedFS, which passed.
+- **Done since:** the Compose profile (`compose.artifacts.yaml`), deployed by `just test-artifact-store-stack`.
 - **Not done:**
-  - wiring into the reference Compose stack
   - an end-to-end run through the control plane
   - the GitHub CI run
   - the final live, shadow or off decision
 
 Decision: [ADR-0017](../adr/0017-qualify-an-s3-api-artifact-store.md).
+
+## Compose profile
+
+Observed on 2026-11-03 with `just test-artifact-store-stack`, which needs no provider secret and finished in
+63 seconds:
+- The control plane logged `adapter connected` for the `artifact_store` role.
+- `netstat` in the store's namespace listed one listener off loopback: `0.0.0.0:8443`.
+- SeaweedFS was killed with `SIGKILL`. It came back healthy behind the same proxy, and `provision` passed
+  again, including its conditional write.
+- First provisioning took 10.4 seconds, most of it the lock warm-up.
+
+Two things the deployment changed:
+1. **Network exposure.** SeaweedFS serves plaintext S3, filer, master, volume and an unauthenticated IAM
+   gRPC service. `-s3.port=0` binds a random port rather than disabling one. So every SeaweedFS listener
+   is bound to loopback, and HAProxy 3.2.26 passes TLS through.
+2. **Namespace ownership.** The proxy first shared the store's namespace. After a store restart it kept a
+   dead namespace and connections were refused. Reversing the ownership fixed it.
 
 ## Live qualification
 

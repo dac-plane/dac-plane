@@ -1,0 +1,134 @@
+# Layered over compose.codex.yaml and compose.e2b.yaml: the artifact store is a
+# pinned, self-hosted SeaweedFS behind the S3 adapter (ADR-0017), replacing the
+# simulator's byte store. The operator owns the store's volume and backups, as
+# with PostgreSQL. Commit evidence is read from the store by version.
+services:
+  # The proxy owns the network identity and SeaweedFS joins its namespace, so a
+  # store restart rejoins a live namespace. SeaweedFS binds every listener to
+  # loopback because its plaintext S3, filer, master, volume and IAM gRPC ports
+  # cannot be turned off; the proxy passes TLS through to the HTTPS S3 port.
+  artifact-store:
+    image: haproxy:3.2.26-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b
+    configs:
+      - source: artifact_store_proxy
+        target: /usr/local/etc/haproxy/haproxy.cfg
+    profiles: ["qualification"]
+    read_only: true
+    restart: unless-stopped
+
+  artifact-store-seaweedfs:
+    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    network_mode: service:artifact-store
+    command:
+      - server
+      - -dir=/data
+      - -ip=127.0.0.1
+      - -ip.bind=127.0.0.1
+      - -master.telemetry=false
+      - -s3
+      - -s3.ip.bind=127.0.0.1
+      - -s3.port.https=9443
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.config=/run/secrets/s3_identities.json
+      - -s3.cert.file=/run/secrets/tls.crt
+      - -s3.key.file=/run/secrets/tls.key
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+      # SeaweedFS needs its certificate in the key's directory.
+      - source: tls_cert
+        target: /run/secrets/tls.crt
+    secrets:
+      - s3_identities.json
+      - source: tls_key
+        target: tls.key
+    volumes:
+      - artifact-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$$(curl -s -o /dev/null -w '%{http_code}' --cacert /run/config/ca.crt https://localhost:9443/)\" = 403"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      artifact-store:
+        condition: service_started
+    profiles: ["qualification"]
+    restart: unless-stopped
+
+  # Creates or completes both buckets with the operator key, verifies them and
+  # waits for a conditional write, which SeaweedFS refuses to serve until its
+  # lock ring forms.
+  artifact-store-provision:
+    image: ${DAC_S3_ADAPTER_IMAGE:-dac-s3-adapter:qualification}
+    build:
+      context: ../..
+      target: dac-s3-adapter
+    command: ["provision"]
+    environment: &s3-store
+      DAC_S3_ENDPOINT: https://artifact-store:8443
+      DAC_S3_CA_FILE: /run/config/ca.crt
+      DAC_S3_STAGING_BUCKET: dac-staging
+      DAC_S3_OBJECTS_BUCKET: dac-objects
+      DAC_S3_ACCESS_KEY_ID: dac-operator
+      DAC_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_operator_secret
+      DAC_S3_RETENTION_DAYS: ${DAC_S3_RETENTION_DAYS:-30}
+      DAC_S3_STAGING_DAYS: ${DAC_S3_STAGING_DAYS:-2}
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+    secrets:
+      - s3_operator_secret
+    depends_on:
+      artifact-store-seaweedfs:
+        condition: service_healthy
+    profiles: ["qualification"]
+    read_only: true
+    restart: on-failure:5
+
+  artifact-adapter:
+    image: ${DAC_S3_ADAPTER_IMAGE:-dac-s3-adapter:qualification}
+    build: !override
+      context: ../..
+      target: dac-s3-adapter
+    command: !reset []
+    environment: !override
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ADAPTER_CLIENT_ID: artifact-adapter
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_PROVIDER_ID: 01a167fd-51d9-7d33-8a3b-6c5d4e3f2a11
+      DAC_S3_ENDPOINT: https://artifact-store:8443
+      DAC_S3_CA_FILE: /run/config/ca.crt
+      DAC_S3_STAGING_BUCKET: dac-staging
+      DAC_S3_OBJECTS_BUCKET: dac-objects
+      DAC_S3_ACCESS_KEY_ID: dac-adapter
+      DAC_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_adapter_secret
+      DAC_S3_UPLOAD_TTL: ${DAC_S3_UPLOAD_TTL:-15m}
+    configs: !override
+      - source: dev_ca
+        target: /run/config/ca.crt
+    secrets: !override
+      - artifact_client_secret
+      - s3_adapter_secret
+    ports: !reset []
+    depends_on:
+      artifact-store-provision:
+        condition: service_completed_successfully
+
+configs:
+  artifact_store_proxy:
+    file: ./artifact-store-haproxy.cfg
+
+volumes:
+  artifact-data:
+
+secrets:
+  s3_identities.json:
+    file: ${DAC_S3_IDENTITIES_FILE:?set DAC_S3_IDENTITIES_FILE; run just stack-certs}
+  s3_operator_secret:
+    file: ${DAC_S3_OPERATOR_SECRET_FILE:?set DAC_S3_OPERATOR_SECRET_FILE; run just stack-certs}
+  s3_adapter_secret:
+    file: ${DAC_S3_ADAPTER_SECRET_FILE:?set DAC_S3_ADAPTER_SECRET_FILE; run just stack-certs}

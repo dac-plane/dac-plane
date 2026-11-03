@@ -211,6 +211,9 @@ jobs:
       - name: Containment overlay
         run: just check-containment-compose
 
+      - name: Artifact store profile
+        run: just test-artifact-store-stack
+
       - name: Run deployed lifecycle smoke test
         run: just test-stack
 
