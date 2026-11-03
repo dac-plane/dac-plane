@@ -187,10 +187,7 @@ jobs:
         run: |
           amd64="$(cat "images/image-$TARGET-amd64/digest")"
           arm64="$(cat "images/image-$TARGET-arm64/digest")"
-          # GitHub links a multi-platform package to its repository through this annotation.
-          docker buildx imagetools create -t "$REPOSITORY:$VERSION" \
-            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            "$REPOSITORY@$amd64" "$REPOSITORY@$arm64"
+          docker buildx imagetools create -t "$REPOSITORY:$VERSION" "$REPOSITORY@$amd64" "$REPOSITORY@$arm64"
           digest="$(docker buildx imagetools inspect "$REPOSITORY:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
           mkdir -p index
           echo "$digest" >"index/$TARGET"
