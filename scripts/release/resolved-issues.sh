@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Prints the issues resolved since a release as Markdown, grouped by kind, with
 # each issue's area as a tag. With no argument it lists every resolved issue.
+# Anyone can write an issue title and no person reviews the published list, so
+# titles lose anything Markdown or GitHub would turn into a link or a mention.
 set -euo pipefail
 since=${1:-}
 repository=${GITHUB_REPOSITORY:-dac-plane/dac-plane}
@@ -8,6 +10,7 @@ repository=${GITHUB_REPOSITORY:-dac-plane/dac-plane}
 gh issue list --repo "$repository" --state closed --limit 1000 --json number,title,labels,closedAt,stateReason |
 	jq -r --arg since "$since" '
 	def has($name): any(.labels[]; .name == $name);
+	def plain: gsub("[\\[\\]()<>`|!@#*~]"; "") | gsub("://"; " ") | gsub("www\\."; "www ");
 	def kind: (.title | capture("^(?<k>[a-z]+)(\\(|:)").k? // "");
 	def group:
 		if has("security") then "Security fixes"
@@ -15,9 +18,9 @@ gh issue list --repo "$repository" --state closed --limit 1000 --json number,tit
 		elif has("bug") or kind == "fix" then "Bugs"
 		elif has("type:test") or kind == "test" then "Tests and qualification"
 		else "Documentation and maintenance" end;
-	def text: (.title | sub("^[a-z]+(\\([^)]*\\))?!?:\\s*"; "")) | (.[0:1] | ascii_upcase) as $first | $first + .[1:];
+	def text: (.title | sub("^[a-z]+(\\([^)]*\\))?!?:\\s*"; "") | plain) | (.[0:1] | ascii_upcase) as $first | $first + .[1:];
 	def tags:
-		([(.title | capture("^[a-z]+\\((?<s>[^)]+)\\)").s? // empty)]
+		([(.title | capture("^[a-z]+\\((?<s>[^)]+)\\)").s? // empty | plain)]
 			+ [.labels[].name | select(startswith("area:")) | ltrimstr("area:")])
 		| unique | map("`" + . + "`") | join(" ");
 	[.[] | select(.stateReason == "COMPLETED" and (has("type:epic") | not) and .closedAt >= $since)
