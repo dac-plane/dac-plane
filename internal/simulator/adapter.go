@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit"
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/adapterkit"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/internal/contracts"
 )
 
 // Handler serves a provider port through the adapter kit, so a simulator runs

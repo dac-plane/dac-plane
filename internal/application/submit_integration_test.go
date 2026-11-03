@@ -17,17 +17,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register the pgx stdlib driver for migration setup.
 
-	"github.com/AssahBismarkabah/dac-plane/internal/application"
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
-	"github.com/AssahBismarkabah/dac-plane/internal/worker"
+	"github.com/dac-plane/dac-plane/internal/application"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/simulator"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
+	"github.com/dac-plane/dac-plane/internal/testsupport/wiretest"
+	"github.com/dac-plane/dac-plane/internal/worker"
 )
 
 // fixture is one tenant with one principal and one simulated provider. Only

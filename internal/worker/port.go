@@ -5,9 +5,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // LoopbackPort is the test-only provider port the worker tests script.

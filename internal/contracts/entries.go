@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // MaxInlinePayload bounds an entry's inline payload; larger content travels

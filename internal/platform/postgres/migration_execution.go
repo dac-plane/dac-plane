@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // SnapshotMigrationItems freezes the source-owned nonterminal Attempts for a

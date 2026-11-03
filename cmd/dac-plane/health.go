@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/config"
 )
 
 const healthTimeout = 3 * time.Second

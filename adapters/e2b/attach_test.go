@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/adapters/e2b/journal"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapters/e2b/journal"
 )
 
 // fakeSandboxPorts answers envd's process service and the exec-server port.
@@ -147,8 +147,13 @@ func TestSandboxThatCannotServeCommandsIsDeletedAndReplaced(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{}}
 	ports := &fakeSandboxPorts{refuseStart: true}
 	a := attachingAdapter(t, fake, ports)
-	if _, err := a.Send(context.Background(), taskProvision("operation-1", "delivery-1")); err == nil {
-		t.Fatal("provision succeeded without exec-server")
+	failed, err := a.Send(context.Background(), taskProvision("operation-1", "delivery-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An unknown outcome would leave the task provisioning.
+	if failed.Outcome != wire.OutcomeFailed || failed.Durability != wire.DurabilityRejected || failed.Failure.Code != wire.FailureProviderFailed {
+		t.Fatalf("reply=%+v", failed)
 	}
 	if fake.deleted != 1 || len(fake.sandboxes) != 0 {
 		t.Fatalf("failed sandbox survived: deleted=%d live=%d", fake.deleted, len(fake.sandboxes))

@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit"
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	e2b "github.com/AssahBismarkabah/dac-plane/adapters/e2b"
-	"github.com/AssahBismarkabah/dac-plane/adapters/e2b/journal"
+	"github.com/dac-plane/dac-plane/adapterkit"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	e2b "github.com/dac-plane/dac-plane/adapters/e2b"
+	"github.com/dac-plane/dac-plane/adapters/e2b/journal"
 )
 
 func main() {

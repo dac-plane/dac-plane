@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 )
 
 // StoreResolver resolves bindings from PostgreSQL on every call, so disabling

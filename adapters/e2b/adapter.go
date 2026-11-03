@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit"
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/adapters/e2b/journal"
+	"github.com/dac-plane/dac-plane/adapterkit"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapters/e2b/journal"
 )
 
 const (
@@ -398,7 +398,11 @@ func (a *Adapter) releaseRejectedCreate(operation string, err error) error {
 
 func (a *Adapter) finishTaskProvision(ctx context.Context, req wire.Request, sbx sandbox) (wire.Reply, error) {
 	if len(a.cfg.AttachKey) != 0 {
-		if err := a.attach(ctx, req, sbx); err != nil {
+		err := a.attach(ctx, req, sbx)
+		if errors.Is(err, errSandboxDiscarded) {
+			return rejected(req, wire.FailureProviderFailed, err.Error()), nil
+		}
+		if err != nil {
 			return wire.Reply{}, err
 		}
 	}
@@ -409,9 +413,15 @@ func (a *Adapter) finishTaskProvision(ctx context.Context, req wire.Request, sbx
 	return a.recordTaskReadiness(req, ref)
 }
 
+// errSandboxDiscarded reports a sandbox that could not serve commands and is
+// known to be gone, so the provision has no effect and can be rejected. An
+// unknown reply would leave its task provisioning, because the control plane
+// never dispatches an uncertain operation again.
+var errSandboxDiscarded = errors.New("sandbox could not serve commands and was deleted")
+
 // attach makes a sandbox ready for commands. A sandbox that cannot serve them is
-// deleted, so the redelivered provision creates another rather than reporting
-// one the runtime cannot use.
+// deleted, so a replayed provision creates another rather than reporting one the
+// runtime cannot use.
 func (a *Adapter) attach(ctx context.Context, req wire.Request, sbx sandbox) error {
 	if sbx.EnvdAccessToken == "" {
 		// A sandbox found by listing carries no token, and connect restarts its
@@ -437,7 +447,10 @@ func (a *Adapter) attach(ctx context.Context, req wire.Request, sbx sandbox) err
 	if deleteErr := a.doJSON(ctx, http.MethodDelete, "/sandboxes/"+url.PathEscape(sbx.SandboxID), nil, "", nil); deleteErr != nil && !(errors.As(deleteErr, &status) && status.status == http.StatusNotFound) {
 		return fmt.Errorf("%w; deleting the sandbox also failed: %w", err, deleteErr)
 	}
-	return a.releaseRejectedCreate(req.Operation, err)
+	if resetErr := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.State = "prepared"; return nil }); resetErr != nil {
+		return resetErr
+	}
+	return fmt.Errorf("%w: %w", errSandboxDiscarded, err)
 }
 
 // recordTaskReadiness records the provisioned sandbox's running observation

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // StreamEvent is one committed durable event as the Surface API streams it.

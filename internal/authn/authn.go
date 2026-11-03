@@ -24,8 +24,8 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 const (

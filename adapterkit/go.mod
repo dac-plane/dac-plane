@@ -1,4 +1,4 @@
-module github.com/AssahBismarkabah/dac-plane/adapterkit
+module github.com/dac-plane/dac-plane/adapterkit
 
 go 1.26.0
 

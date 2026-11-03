@@ -18,14 +18,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/adapterwire"
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
+	"github.com/dac-plane/dac-plane/internal/adapterwire"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
+	"github.com/dac-plane/dac-plane/internal/testsupport/wiretest"
 )
 
 type fixture struct {

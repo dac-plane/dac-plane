@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/conformance"
+	"github.com/dac-plane/dac-plane/adapterkit/conformance"
 )
 
 func main() {

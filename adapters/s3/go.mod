@@ -1,15 +1,15 @@
-module github.com/AssahBismarkabah/dac-plane/adapters/s3
+module github.com/dac-plane/dac-plane/adapters/s3
 
 go 1.26.0
 
 toolchain go1.26.10
 
 require (
-	github.com/AssahBismarkabah/dac-plane/adapterkit v0.0.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
 	github.com/aws/smithy-go v1.28.7
+	github.com/dac-plane/dac-plane/adapterkit v0.0.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
 
@@ -27,4 +27,4 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 )
 
-replace github.com/AssahBismarkabah/dac-plane/adapterkit => ../../adapterkit
+replace github.com/dac-plane/dac-plane/adapterkit => ../../adapterkit

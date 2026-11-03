@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	"github.com/dac-plane/dac-plane/internal/config"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
 func TestNewConnectsAndApplicationStopsOnCancellation(t *testing.T) {

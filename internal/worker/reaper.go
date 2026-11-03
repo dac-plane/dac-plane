@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 )
 
 // ReapClaims takes over lapsed maintenance claims and renews owned ones

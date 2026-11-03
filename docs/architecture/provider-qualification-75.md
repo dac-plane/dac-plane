@@ -8,7 +8,8 @@ within the limits below. This is not a production or availability claim. Every o
 
 The promotion rule in the [#91 note](codex-runtime-91.md) also asks for a registry image digest. Nothing is
 published yet, so by the project owner's decision that requirement moves to the packaging issue,
-[#95](https://github.com/dac-plane/dac-plane/issues/95). The images below are local builds, identified by image ID.
+[#95](https://github.com/dac-plane/dac-plane/issues/95). The images were local builds. See
+[Identifying an image](#identifying-an-image).
 
 ## Pins
 
@@ -18,10 +19,6 @@ published yet, so by the project owner's decision that requirement moves to the 
 | Sandbox template | `dac-codex-exec` (`th79mhkayk88pgbw6ijn`), built on 2026-11-01 from [`e2b.Dockerfile`](../../adapters/e2b/template/e2b.Dockerfile), envd 0.10.0 |
 | Artifact store | SeaweedFS 4.51, pinned in [`compose.artifacts.yaml`](../../deploy/compose/compose.artifacts.yaml) |
 | Model | Camer `deepseek-v4-flash-0731` |
-| Control plane image | `sha256:71bdcb7abae5664eb31f16a392b4d35d919153beffd4b358b6f69ced6a1e5c26` |
-| Codex adapter image | `sha256:31f48f242a1673ba3aa8bd18238db8733e82273a1b6653bfa96aad0e06013db2` |
-| E2B adapter image | `sha256:6902cbfc4503c87b3ff3368342f08069bbaff3ad9bb08abbcc8d0a15c77a7e9e` |
-| S3 adapter image | `sha256:ff4b2cc1f77092ac542095f52457c5d6db0b802f2987351ca3ff795e563005cb` |
 
 E2B Cloud's own build is not exposed or pinnable.
 
@@ -43,13 +40,14 @@ Every run is recorded, including those that failed.
 | 1 | Full | Stopped after about 32 minutes; all 7 cancellation scenarios and the first 4 containment scenarios had failed | Every task stayed in `provisioning`: the adapter bug below. |
 | 2 | Full | 15 of 15 scenarios passed in 680.3 seconds; the recipe exited 1 | The recipe's final adapter check failed falsely, as described below. |
 | 3 | One scenario | Passed in 33.7 seconds; the recipe exited 0 | Proved the corrected check exits cleanly. |
+| 4 | One scenario, E2B's `base` template | The task failed as intended, in 22.9 seconds | `base` has no Codex, so this forced a failed start after the stall fix below. |
+| 5 | A result is read from the sandbox | Passed in 59.8 seconds; the recipe exited 0 | Final code: the renamed module and the stall fix. |
 
 ## Final run
 
-Run 2 used the stack and the adapter fix recorded here, and the pins above are its images. Afterwards, the recipe's
-final check and these documents changed, but no Go source. Run 3's four image IDs differ from run 2's; why was not
-investigated, so the pins identify run 2 only. The Compose log of run 2 shows all three adapters connected and no
-provider key.
+Run 2 is the only full run. Afterwards the recipe's final check changed, the Go module was renamed and the stall
+below was fixed, and runs 4 and 5 covered those changes with one scenario each. The Compose log of run 2 shows all
+three adapters connected and no provider key.
 
 | Scenario | Time | Observed |
 |---|---|---|
@@ -79,16 +77,28 @@ approval. The search for `unapproved.txt` covered the sandbox except `/proc`, an
   answers a plain request with 400 before it checks a token. So every sandbox was deleted after 30 seconds, and
   the [#108 note](codex-containment-108.md) did not describe what was merged. The adapter now sends a WebSocket
   upgrade, which draws the 401, and the fake refuses a request without one.
+- **A failed sandbox start stalled silently.** The adapter's 30-second wait for exec-server equalled the control
+  plane's 30-second send timeout, and its error reply meant an unknown outcome. The control plane never dispatches
+  an uncertain operation again, so the task stayed in `provisioning`, and the adapter logged nothing. The wait is
+  now 20 seconds, and a sandbox known to be deleted is answered as rejected. In run 4 the task failed with the
+  reason recorded, and the adapter kit now logs every failed reply.
 - **A recipe check failed falsely.** `compose logs | grep -q` fails under `pipefail` when `grep` closes the pipe
   first. `qualify-providers` and `qualify-codex-artifact-store` now read the logs before searching them.
+
+## Identifying an image
+
+Image IDs from the recipe changed between runs 2 and 3, so they were investigated. Two local builds of one tree
+gave identical layers and different image IDs, and the local Docker uses the containerd image store. So a local image
+ID does not identify content, and `qualify-providers` now records each image's top layer. `just image-repro`
+built all five images twice with identical digests from one tree, which is the path #95 should publish from.
 
 ## Limits
 
 - One passing full run on one host, arm64 for the adapters, with local images. Nothing here is an availability,
   throughput, cost or production claim.
-- **A failed sandbox start stalls silently.** The adapter's 30-second wait for exec-server equals the control
-  plane's 30-second send timeout. When the wait fails, the operation becomes `uncertain`, the task stays in
-  `provisioning` until someone cancels it, and the adapter logs nothing.
+- **A provision can still stall.** If its reply is truly lost, or the sandbox cannot be confirmed deleted, the
+  operation stays `uncertain` and the task stays in `provisioning` until someone cancels it. A create slow enough to
+  use the remaining 10 seconds of the send timeout does the same.
 - The E2B log showed `Process start (server stream end)` at `error` level during run 2, at about the time of the
   egress scenario. Its cause was not established. The run passed.
 - The limits in the [#108](codex-containment-108.md), [#101](task-cancellation-101.md) and

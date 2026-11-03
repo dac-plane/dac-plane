@@ -1,8 +1,8 @@
 package worker
 
 import (
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // Ports resolves the port of a tenant's provider in one role. A provider may

@@ -3,8 +3,8 @@ package lifecycle
 import (
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // ArtifactVerification records integrity admission, not semantic correctness.

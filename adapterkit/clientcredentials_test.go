@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit"
+	"github.com/dac-plane/dac-plane/adapterkit"
 )
 
 func TestClientCredentialsFetchesATokenWithTheRotatedSecret(t *testing.T) {

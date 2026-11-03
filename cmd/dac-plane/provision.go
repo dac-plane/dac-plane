@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/provision"
+	"github.com/dac-plane/dac-plane/internal/config"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/provision"
 )
 
 // runProvision performs one trusted provisioning operation (ADR-0007). The

@@ -3,8 +3,8 @@ package contracts
 import (
 	"fmt"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // RuntimeStart is the provider-neutral input to start_turn. Recovery is set

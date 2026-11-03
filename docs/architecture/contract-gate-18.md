@@ -2,7 +2,7 @@
 
 - Status: **approved**
 - Date: 2026-10-16
-- Tracker: [#18](https://github.com/AssahBismarkabah/dac-plane/issues/18) (epic #11)
+- Tracker: [#18](https://github.com/dac-plane/dac-plane/issues/18) (epic #11)
 - Prerequisites: #13, #14, #15, #16, #17 and #32 closed and merged at `main@8851ec4`.
 - Effect: persistence work (#19) is unblocked. Final M1 freeze remains with #30.
 

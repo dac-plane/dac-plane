@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 const (

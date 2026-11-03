@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
 func connect(t *testing.T, ctx context.Context, databaseURL string) *pgx.Conn {

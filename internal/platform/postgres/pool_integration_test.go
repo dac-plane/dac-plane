@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
 func TestOpenConnectsToEmptyPostgreSQL16(t *testing.T) {

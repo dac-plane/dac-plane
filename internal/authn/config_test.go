@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
+	"github.com/dac-plane/dac-plane/internal/testsupport/schematest"
 )
 
 const configSchema = "../../contracts/jsonschema/config/identity-config.schema.json"

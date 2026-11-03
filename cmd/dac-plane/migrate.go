@@ -12,8 +12,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
+	"github.com/dac-plane/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
 )
 
 const migrateUsage = `usage: dac-plane migrate up | status | down-to VERSION

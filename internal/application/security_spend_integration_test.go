@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/application"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/application"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
 func TestSecuritySpendCancellationWinsBeforeAssertionScopeLock(t *testing.T) {

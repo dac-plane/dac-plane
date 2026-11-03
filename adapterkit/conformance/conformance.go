@@ -27,7 +27,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
 )
 
 // Fixture describes the adapter under test and the work it can answer.

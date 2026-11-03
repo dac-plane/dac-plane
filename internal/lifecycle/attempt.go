@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // AttemptState is the product lifecycle state of one execution of a Task.

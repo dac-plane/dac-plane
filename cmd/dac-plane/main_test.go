@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
 )
 
 func TestRunRefusesInvalidCommandsBeforeReadingConfiguration(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/contracts"
 )
 
 // errInvalidPolicy reports an exhaustion policy that cannot bound a retry.

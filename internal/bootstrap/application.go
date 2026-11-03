@@ -8,11 +8,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/adapterwire"
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/worker"
+	"github.com/dac-plane/dac-plane/internal/adapterwire"
+	"github.com/dac-plane/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/worker"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

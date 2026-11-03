@@ -11,12 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/adapterwire"
-	"github.com/AssahBismarkabah/dac-plane/internal/authn"
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	"github.com/AssahBismarkabah/dac-plane/internal/httpapi"
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/adapterwire"
+	"github.com/dac-plane/dac-plane/internal/authn"
+	"github.com/dac-plane/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/httpapi"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 )
 
 const (

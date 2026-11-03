@@ -29,10 +29,10 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/config"
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/oidctest"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	"github.com/dac-plane/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
+	"github.com/dac-plane/dac-plane/internal/testsupport/oidctest"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
 // serving is one control-plane process under test with its configuration.

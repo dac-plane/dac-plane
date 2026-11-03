@@ -3,7 +3,7 @@ package worker
 import (
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/contracts"
 )
 
 func TestArtifactReplyDecoderRejectsExtraFieldsAndDocuments(t *testing.T) {

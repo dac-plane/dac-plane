@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/testsupport/schematest"
 )
 
 const schemaDir = "../../contracts/jsonschema/lifecycle"

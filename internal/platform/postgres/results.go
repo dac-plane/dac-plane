@@ -6,9 +6,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // ResultProposal is immutable provider evidence with product-owned identities.

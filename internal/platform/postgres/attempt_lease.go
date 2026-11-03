@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // AttemptLease is the fence a worker holds while it drives one attempt: the

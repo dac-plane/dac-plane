@@ -5,8 +5,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // ProviderRegistration records that a provider plays one role in a tenant. A

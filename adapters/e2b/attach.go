@@ -25,8 +25,10 @@ const (
 	sandboxUser = "user"
 	// defaultSandboxDomain is E2B's public port host.
 	defaultSandboxDomain = "e2b.app"
-	// execServerReadyTimeout bounds the wait for exec-server to listen.
-	execServerReadyTimeout = 30 * time.Second
+	// execServerReadyTimeout bounds the wait for exec-server to listen. It stays
+	// under the control plane's 30-second send timeout, so that a failed start
+	// is answered rather than lost as an unknown outcome.
+	execServerReadyTimeout = 20 * time.Second
 	execServerPollInterval = 250 * time.Millisecond
 	// connectEndStream marks the Connect frame that ends a stream.
 	connectEndStream = 2

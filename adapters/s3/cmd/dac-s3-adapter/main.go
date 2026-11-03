@@ -19,9 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit"
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	s3adapter "github.com/AssahBismarkabah/dac-plane/adapters/s3"
+	"github.com/dac-plane/dac-plane/adapterkit"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	s3adapter "github.com/dac-plane/dac-plane/adapters/s3"
 )
 
 func main() {

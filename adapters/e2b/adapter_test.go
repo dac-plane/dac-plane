@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/adapters/e2b/journal"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapters/e2b/journal"
 )
 
 type fakeE2B struct {

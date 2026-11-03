@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 )
 
 func mustRowID(t *testing.T) ids.AnyID {

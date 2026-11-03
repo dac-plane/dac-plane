@@ -26,16 +26,16 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit"
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/internal/adapterwire"
-	"github.com/AssahBismarkabah/dac-plane/internal/authn"
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/oidctest"
-	"github.com/AssahBismarkabah/dac-plane/internal/worker"
+	"github.com/dac-plane/dac-plane/adapterkit"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/internal/adapterwire"
+	"github.com/dac-plane/dac-plane/internal/authn"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/testsupport/oidctest"
+	"github.com/dac-plane/dac-plane/internal/worker"
 )
 
 // Audience is the adapter endpoint's audience in test tokens.

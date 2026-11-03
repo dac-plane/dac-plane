@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
 )
 
 // ErrUnauthenticated reports that the control plane refused the token or the
@@ -195,6 +195,9 @@ func (s *session) handleRequest(ctx context.Context, request wire.Request) {
 		reply = failedReply(request, wire.DurabilityUnknown, wire.FailureProviderFailed, err.Error())
 	case reply.Operation != request.Operation || reply.Delivery != request.Delivery:
 		reply = failedReply(request, wire.DurabilityUnknown, wire.FailureProviderFailed, "handler answered another delivery")
+	}
+	if reply.Failure != nil {
+		s.config.Logger.Warn("request failed", "operation", reply.Operation, "method", request.Method, "durability", reply.Durability, "code", reply.Failure.Code, "message", reply.Failure.Message)
 	}
 	s.reply(ctx, reply)
 }

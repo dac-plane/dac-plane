@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/adapters/codex/appserver"
-	"github.com/AssahBismarkabah/dac-plane/adapters/codex/journal"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapters/codex/appserver"
+	"github.com/dac-plane/dac-plane/adapters/codex/journal"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/contracts"
 )
 
 type contextWaitingMigrationPort struct{}

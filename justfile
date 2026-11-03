@@ -82,9 +82,9 @@ vet-integration:
 [group('check')]
 deps-check:
     go list -deps ./cmd/dac-plane | while IFS= read -r dep; do case "$dep" in */internal/simulator|*/internal/testsupport|*/internal/testsupport/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "release binary imports forbidden package: $dep"; exit 1;; esac; done
-    cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "Codex adapter imports control-plane internal package: $dep"; exit 1;; esac; done
-    cd {{ e2b_adapter_dir }} && go list -deps ./cmd/dac-e2b-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*) echo "E2B adapter imports control-plane internal package: $dep"; exit 1;; esac; done
-    cd {{ s3_adapter_dir }} && go list -deps ./cmd/dac-s3-adapter | while IFS= read -r dep; do case "$dep" in github.com/AssahBismarkabah/dac-plane/internal|github.com/AssahBismarkabah/dac-plane/internal/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "S3 adapter imports a forbidden package: $dep"; exit 1;; esac; done
+    cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*) echo "Codex adapter imports control-plane internal package: $dep"; exit 1;; esac; done
+    cd {{ e2b_adapter_dir }} && go list -deps ./cmd/dac-e2b-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*) echo "E2B adapter imports control-plane internal package: $dep"; exit 1;; esac; done
+    cd {{ s3_adapter_dir }} && go list -deps ./cmd/dac-s3-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "S3 adapter imports a forbidden package: $dep"; exit 1;; esac; done
 
 # Run unit tests, including the JSON Schema contract conformance suites
 [group('test')]
@@ -350,7 +350,8 @@ qualify-providers: stack-certs
     "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
-    for image in "${DAC_PLANE_IMAGE:-dac-plane:dev}" dac-codex-adapter:qualification dac-e2b-adapter:qualification dac-s3-adapter:qualification; do printf '%s %s\n' "$image" "$(docker image inspect "$image" | jq -r '.[0].Id')"; done | tee "$work/image-ids.txt"
+    # An image ID changes on every local build; its layers identify the content.
+    for image in "${DAC_PLANE_IMAGE:-dac-plane:dev}" dac-codex-adapter:qualification dac-e2b-adapter:qualification dac-s3-adapter:qualification; do printf '%s %s\n' "$image" "$(docker image inspect "$image" | jq -r '.[0].RootFS.Layers[-1]')"; done | tee "$work/image-layers.txt"
     if docker ps --filter "label=com.docker.compose.project=$DAC_QUALIFICATION_PROJECT" --format '{{{{.Image}}' | grep -q sim-adapter; then echo "a simulator process is running" >&2; exit 1; fi
     set -a
     source .work/stack/compose.env

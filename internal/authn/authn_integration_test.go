@@ -13,12 +13,12 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/platform/migrations"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
-	"github.com/AssahBismarkabah/dac-plane/internal/provision"
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/platform/migrations"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/provision"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
 // TestAuthenticateThroughProvisionedBindings runs the whole path: a token

@@ -25,7 +25,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
 )
 
 // Handler is the provider side of the protocol.

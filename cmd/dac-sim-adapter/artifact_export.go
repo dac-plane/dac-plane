@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
 // httpsUploader sends a fixture the way the Codex adapter sends a real

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
 func TestRecoveryShadowResetReopensLocalReplay(t *testing.T) {

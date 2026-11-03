@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
+	"github.com/dac-plane/dac-plane/internal/testsupport/schematest"
 )
 
 func TestContractConformanceUsageReported(t *testing.T) {

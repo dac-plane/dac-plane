@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // HarnessMode is how far a runtime harness is trusted for a tenant.

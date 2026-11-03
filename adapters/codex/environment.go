@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/adapterkit/wire"
-	"github.com/AssahBismarkabah/dac-plane/adapters/codex/execclient"
-	"github.com/AssahBismarkabah/dac-plane/adapters/codex/journal"
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
+	"github.com/dac-plane/dac-plane/adapters/codex/execclient"
+	"github.com/dac-plane/dac-plane/adapters/codex/journal"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/ids"
 )
 
 // MaxAmount bounds every budget amount so that JSON consumers, which may hold

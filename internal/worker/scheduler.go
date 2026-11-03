@@ -4,8 +4,8 @@ import (
 	"cmp"
 	"slices"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 )
 
 // Scheduler orders one poll batch for dispatch. Person-facing work goes

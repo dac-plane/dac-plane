@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	testpostgres "github.com/AssahBismarkabah/dac-plane/internal/testsupport/postgres"
+	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
 // setupTestDB starts one hermetic PostgreSQL container, migrates it and

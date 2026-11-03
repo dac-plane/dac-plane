@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
 
 // SetHarnessAdministrator is trusted provisioning, not a public command.

@@ -3,9 +3,9 @@ package simulator_test
 import (
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
 func TestResourceRefusesStaleTokens(t *testing.T) {

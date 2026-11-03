@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/adapters/codex/execclient/exectest"
+	"github.com/dac-plane/dac-plane/adapters/codex/execclient/exectest"
 )
 
 func TestSnapshotWalksTheWorkspaceAndSkipsToolDirectories(t *testing.T) {

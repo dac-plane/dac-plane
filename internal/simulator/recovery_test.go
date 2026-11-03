@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
 func TestRecoveryRuntimeDistinctDecisionsAndChangedReplay(t *testing.T) {

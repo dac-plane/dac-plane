@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/schematest"
+	"github.com/dac-plane/dac-plane/internal/testsupport/schematest"
 )
 
 var executionBriefContract = schematest.GoContract[ExecutionBrief](filepath.Join("../../contracts/jsonschema/lifecycle", "execution-brief.schema.json"))

@@ -21,9 +21,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/authn"
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	store "github.com/AssahBismarkabah/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/authn"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 )
 
 // Subprotocol names the ControlFrame framing in the WebSocket handshake.

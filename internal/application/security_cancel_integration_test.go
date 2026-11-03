@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/contracts"
-	"github.com/AssahBismarkabah/dac-plane/internal/lifecycle"
-	"github.com/AssahBismarkabah/dac-plane/internal/simulator"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/wiretest"
-	"github.com/AssahBismarkabah/dac-plane/internal/worker"
+	"github.com/dac-plane/dac-plane/internal/contracts"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
+	"github.com/dac-plane/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/testsupport/wiretest"
+	"github.com/dac-plane/dac-plane/internal/worker"
 )
 
 // lostCancelAcknowledgement wraps the wire port the worker resolves. The

@@ -21,9 +21,9 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 
-	"github.com/AssahBismarkabah/dac-plane/internal/identity"
-	"github.com/AssahBismarkabah/dac-plane/internal/ids"
-	"github.com/AssahBismarkabah/dac-plane/internal/testsupport/oidctest"
+	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/testsupport/oidctest"
 )
 
 var testNow = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
