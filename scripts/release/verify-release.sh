@@ -65,11 +65,21 @@ tar -xzf "$(dirname "$manifest")/dac-plane-compose-$version.tar.gz" -C "$room"
 "$room/deploy/compose/generate-dev-config.sh" >/dev/null 2>&1
 export DAC_PLANE_IMAGE="$control_plane"
 compose=(docker compose -p dac-release-verify --project-directory "$room/deploy/compose" --env-file "$room/.work/stack/compose.env" -f "$room/deploy/compose/compose.yaml" -f "$room/deploy/compose/compose.dev.yaml" --profile dev)
-"${compose[@]}" up -d --no-build --scale sim-adapter=0 --wait dac-plane
+"${compose[@]}" up -d --no-build --wait dac-plane
 "${compose[@]}" exec -T dac-plane /dac-plane health ready
 echo "migrated and ready"
 
 echo "== external adapter against the published kit"
+# The module proxy's first fetch of a new version can time out, and it answers
+# with that failure for some minutes before trying again.
+for attempt in {1..30}; do
+	go list -m "$kit_module@$kit" >/dev/null 2>&1 && break
+	if ((attempt == 30)); then
+		echo "the module proxy never served $kit_module@$kit" >&2
+		exit 1
+	fi
+	sleep 30
+done
 mkdir "$room/external"
 cp "$repo/adapterkit/examples/minimal/main.go" "$room/external/"
 (
