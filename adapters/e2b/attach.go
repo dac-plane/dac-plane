@@ -102,13 +102,19 @@ func (a *Adapter) startProcess(ctx context.Context, sbx sandbox, command string)
 	return nil
 }
 
-// waitForExecServer waits for the unauthenticated response from exec-server.
+// waitForExecServer waits for the unauthenticated response from exec-server. It
+// sends a WebSocket upgrade because exec-server answers anything else with 400
+// before it checks a token.
 func (a *Adapter) waitForExecServer(ctx context.Context, sandboxID string) error {
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.sandboxURL(a.cfg.ExecServerPort, sandboxID), nil)
 		if err != nil {
 			return err
 		}
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Version", "13")
+		req.Header.Set("Sec-WebSocket-Key", "ZGFjLXJlYWRpbmVzcy1wcm9iZQ==")
 		resp, err := a.cfg.HTTPClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()

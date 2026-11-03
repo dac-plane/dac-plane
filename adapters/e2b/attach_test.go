@@ -37,6 +37,11 @@ func (f *fakeSandboxPorts) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
+		// Codex 0.165.0 refuses a request without an upgrade before checking a token.
+		if r.Header.Get("Upgrade") != "websocket" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
