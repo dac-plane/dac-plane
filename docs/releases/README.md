@@ -4,7 +4,9 @@
 
 - [v0.1.0](v0.1.0.md)
 
-Copy [template.md](template.md) for a new release.
+Copy [template.md](template.md) for a new release. The workflow adds every issue resolved since the last release to
+the GitHub Release, grouped by kind with its area as a tag, so close issues as completed and give them a conventional
+title.
 
 ## Cutting a release
 

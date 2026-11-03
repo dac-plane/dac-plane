@@ -273,6 +273,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      issues: read
     env:
       VERSION: ${{ needs.identify.outputs.version }}
       FINAL: ${{ needs.identify.outputs.final }}
@@ -301,7 +302,9 @@ jobs:
         run: |
           flags=(--draft --verify-tag --title "$VERSION")
           if [[ "$FINAL" == true ]]; then
-            flags+=(--notes-file "docs/releases/$VERSION.md")
+            since="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .published_at 2>/dev/null || true)"
+            { cat "docs/releases/$VERSION.md"; echo; scripts/release/resolved-issues.sh "$since"; } >notes.md
+            flags+=(--notes-file notes.md)
           else
             flags+=(--prerelease --notes "Rehearsal. Not a supported release.")
           fi
