@@ -26,7 +26,11 @@ cleanup() {
 }
 trap cleanup EXIT
 if [[ -n "${DAC_RELEASE_ANONYMOUS:-}" ]]; then
+	# An empty config has no login, but must keep the buildx and compose plugins.
 	mkdir "$room/docker"
+	if [[ -d "${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" ]]; then
+		ln -s "${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" "$room/docker/cli-plugins"
+	fi
 	export DOCKER_CONFIG="$room/docker"
 fi
 export GOWORK=off GOFLAGS=-mod=mod GOPATH="$room/gopath" GOCACHE="$room/gocache"
