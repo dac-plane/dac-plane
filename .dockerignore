@@ -4,3 +4,8 @@
 architecture-explore
 node_modules
 dac-plane
+.env
+.env.*
+.agents
+.claude
+.idea

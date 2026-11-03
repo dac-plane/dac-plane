@@ -1,0 +1,302 @@
+name: release
+
+# Rebuilds a release from its signed tags and stops on the first failure
+# (ADR-0018). Nothing publishes except from a tag.
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  JUST_VERSION: 1.57.0
+
+jobs:
+  identify:
+    name: Verify the tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      kit: ${{ steps.tag.outputs.kit }}
+      namespace: ${{ steps.tag.outputs.namespace }}
+      environment: ${{ steps.tag.outputs.environment }}
+      final: ${{ steps.tag.outputs.final }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Check both tags
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/check-tag.sh "$TAG" >>"$GITHUB_OUTPUT"
+
+  ci:
+    name: Full CI
+    needs: identify
+    uses: ./.github/workflows/ci.yml
+
+  security:
+    name: Security
+    needs: identify
+    uses: ./.github/workflows/security.yml
+
+  build:
+    name: Build ${{ matrix.target }} on ${{ matrix.arch }}
+    needs: [identify, ci, security]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [dac-plane, dac-codex-adapter, dac-e2b-adapter, dac-s3-adapter]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.identify.outputs.version }}
+      KIT: ${{ needs.identify.outputs.kit }}
+      REPOSITORY: ${{ needs.identify.outputs.namespace }}/${{ matrix.target }}
+      TARGET: ${{ matrix.target }}
+      PLATFORM: linux/${{ matrix.arch }}
+      WORK: .work/release/${{ matrix.target }}-${{ matrix.arch }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: docker-container
+
+      - name: Build twice and compare
+        run: just release-image "$TARGET" "$PLATFORM" "$VERSION" "$KIT"
+
+      - name: Scan
+        run: just release-scan "$TARGET" "$PLATFORM"
+
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push by digest
+        run: just release-push "$TARGET" "$PLATFORM" "$VERSION" "$KIT" "$REPOSITORY"
+
+      - name: Read the digest
+        id: digest
+        run: echo "digest=$(cat "$WORK/digest")" >>"$GITHUB_OUTPUT"
+
+      - name: Attest provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REPOSITORY }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REPOSITORY }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: ${{ env.WORK }}/sbom.cdx.json
+          push-to-registry: true
+
+      - name: Keep the provenance bundle
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" "$WORK/provenance.intoto.jsonl"
+
+      - name: Upload the digest and evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            ${{ env.WORK }}/digest
+            ${{ env.WORK }}/scan.json
+            ${{ env.WORK }}/sbom.cdx.json
+            ${{ env.WORK }}/provenance.intoto.jsonl
+          if-no-files-found: error
+
+  publish:
+    name: Join the images
+    needs: [identify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ needs.identify.outputs.environment }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [dac-plane, dac-codex-adapter, dac-e2b-adapter, dac-s3-adapter]
+    env:
+      VERSION: ${{ needs.identify.outputs.version }}
+      REPOSITORY: ${{ needs.identify.outputs.namespace }}/${{ matrix.target }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-${{ matrix.target }}-*
+          path: images
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Join the platforms
+        id: index
+        run: |
+          amd64="$(cat "images/image-$TARGET-amd64/digest")"
+          arm64="$(cat "images/image-$TARGET-arm64/digest")"
+          docker buildx imagetools create -t "$REPOSITORY:$VERSION" "$REPOSITORY@$amd64" "$REPOSITORY@$arm64"
+          digest="$(docker buildx imagetools inspect "$REPOSITORY:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
+          mkdir -p index
+          echo "$digest" >"index/$TARGET"
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Attest the index
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REPOSITORY }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload the index digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: index-${{ matrix.target }}
+          path: index/${{ matrix.target }}
+          if-no-files-found: error
+
+  verify:
+    name: Clean room
+    needs: [identify, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    env:
+      VERSION: ${{ needs.identify.outputs.version }}
+      KIT: ${{ needs.identify.outputs.kit }}
+      NAMESPACE: ${{ needs.identify.outputs.namespace }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          go-cache: 'false'
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Download the index digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: index-*
+          path: index
+          merge-multiple: true
+
+      # A first release's packages are private until an owner opens them, so this
+      # run logs in. scripts/release/verify-release.sh repeats it anonymously after.
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Write the manifest and bundles
+        run: |
+          mkdir -p release
+          scripts/release/write-manifest.sh "$VERSION" "$KIT" "$NAMESPACE" "$GITHUB_SHA" index >release/release-manifest.json
+          tar -czf "release/dac-plane-compose-$VERSION.tar.gz" deploy/compose
+          tar -czf "release/dac-plane-contracts-$VERSION.tar.gz" contracts
+
+      - name: Run the clean room
+        run: scripts/release/verify-release.sh release/release-manifest.json
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: release
+          if-no-files-found: error
+
+  draft:
+    name: Draft the GitHub Release
+    needs: [identify, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.identify.outputs.version }}
+      FINAL: ${{ needs.identify.outputs.final }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download the release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: downloaded
+
+      - name: Collect the evidence
+        run: |
+          mkdir -p assets
+          cp downloaded/release/* assets/
+          for dir in downloaded/image-*; do
+            name="${dir#downloaded/image-}"
+            cp "$dir/scan.json" "assets/$name.scan.json"
+            cp "$dir/sbom.cdx.json" "assets/$name.sbom.cdx.json"
+            cp "$dir/provenance.intoto.jsonl" "assets/$name.intoto.jsonl"
+          done
+
+      - name: Create the draft
+        run: |
+          flags=(--draft --verify-tag --title "$VERSION")
+          if [[ "$FINAL" == true ]]; then
+            flags+=(--notes-file "docs/releases/$VERSION.md")
+          else
+            flags+=(--prerelease --notes "Rehearsal. Not a supported release.")
+          fi
+          gh release create "$VERSION" "${flags[@]}" assets/*

@@ -1,7 +1,8 @@
 // Command dac-plane is the control plane's single binary (ADR-0009): serve
 // runs every role of a serving process, migrate applies schema migrations,
-// provision performs trusted provisioning and health probes the operations
-// listener, so a container health check needs no shell.
+// provision performs trusted provisioning, health probes the operations
+// listener, so a container health check needs no shell, and version names the
+// release.
 package main
 
 import (
@@ -16,7 +17,8 @@ commands:
   serve       run the Surface API, the adapter endpoint and the worker (the default)
   migrate     up | status | down-to VERSION: apply or inspect schema migrations
   provision   perform one trusted provisioning operation
-  health      live | ready: probe the local operations listener`
+  health      live | ready: probe the local operations listener
+  version     print the release version, revision, schema range and protocol`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -38,6 +40,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runProvision(args[1:], stdout, stderr)
 	case "health":
 		return runHealth(args[1:], stderr)
+	case "version":
+		if len(args) != 1 {
+			return usageError(stderr, "version takes no arguments")
+		}
+		return runVersion(stdout)
 	case "-h", "-help", "--help", "help":
 		_, _ = fmt.Fprintln(stdout, usage)
 		return 0

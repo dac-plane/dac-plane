@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
 	github.com/aws/smithy-go v1.28.7
-	github.com/dac-plane/dac-plane/adapterkit v0.0.0
+	github.com/dac-plane/dac-plane/adapterkit v0.1.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
 

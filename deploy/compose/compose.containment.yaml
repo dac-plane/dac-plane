@@ -3,6 +3,10 @@
 # them through E2B's port host, with a token both adapters derive from one key.
 services:
   codex-adapter:
+    image: ${DAC_CODEX_ADAPTER_IMAGE:-dac-codex-adapter:containment}
+    build:
+      context: ../..
+      target: dac-codex-adapter
     environment:
       DAC_CODEX_EXEC_SERVER_URL: wss://8765-{resource}.${DAC_E2B_DOMAIN:-e2b.app}
       DAC_ENVIRONMENT_ATTACH_KEY_FILE: /run/secrets/environment_attach_key

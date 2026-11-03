@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dac-plane/dac-plane/adapterkit/wire"
 	"github.com/dac-plane/dac-plane/internal/platform/migrations"
 )
 
@@ -22,6 +23,7 @@ func TestRunRefusesInvalidCommandsBeforeReadingConfiguration(t *testing.T) {
 		"down-to negative":     {"migrate", "down-to", "-1"},
 		"health without probe": {"health"},
 		"health unknown probe": {"health", "deep"},
+		"version with extra":   {"version", "now"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -40,5 +42,19 @@ func TestHealthFailsWhenNothingListens(t *testing.T) {
 	var stderr bytes.Buffer
 	if code := runHealth([]string{"live"}, &stderr); code != 1 {
 		t.Fatalf("runHealth() = %d, want 1; stderr %q", code, stderr.String())
+	}
+}
+
+func TestVersionNamesTheCompatibilitySet(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"version"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(version) = %d; stderr %q", code, stderr.String())
+	}
+	want := "version=dev\nrevision=unknown\n" +
+		"schema_min=" + strconv.FormatInt(migrations.MinServeVersion, 10) + "\n" +
+		"schema_current=" + strconv.FormatInt(migrations.CurrentVersion, 10) + "\n" +
+		"protocol=" + strconv.FormatUint(uint64(wire.ProtocolVersion), 10) + "\n"
+	if stdout.String() != want {
+		t.Fatalf("version printed %q, want %q", stdout.String(), want)
 	}
 }

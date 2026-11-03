@@ -57,7 +57,7 @@ services:
     image: ${DAC_CODEX_ADAPTER_IMAGE:-dac-codex-adapter:qualification}
     build:
       context: ../..
-      target: dac-codex-adapter
+      target: dac-codex-adapter-local
     environment:
       HOME: /codex/home
       DAC_ADAPTER_URL: wss://dac-plane:9443

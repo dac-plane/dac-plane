@@ -1,5 +1,10 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
+# Release identity (ADR-0018). `just release-image` sets these from the tag.
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG KIT_VERSION=dev
+
 FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS build
 
 WORKDIR /src
@@ -17,10 +22,12 @@ COPY internal ./internal
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION
+ARG REVISION
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
+    go build -mod=readonly -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.revision=${REVISION}" \
     -o /out/dac-plane ./cmd/dac-plane && \
     CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -mod=readonly -trimpath -tags=operationstest -ldflags="-s -w -buildid=" \
@@ -109,6 +116,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-plane
 
+ARG VERSION
+ARG REVISION
+ARG KIT_VERSION
+LABEL org.opencontainers.image.title="dac-plane" \
+      org.opencontainers.image.source="https://github.com/dac-plane/dac-plane" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      io.dac-plane.adapterkit.version="${KIT_VERSION}"
+COPY LICENSE NOTICE third_party/THIRD_PARTY_NOTICES.txt /licenses/
 COPY --from=build --chown=nonroot:nonroot /out/dac-plane /dac-plane
 USER nonroot:nonroot
 ENTRYPOINT ["/dac-plane"]
@@ -125,7 +142,28 @@ COPY --from=build --chown=nonroot:nonroot /out/dac-sim-adapter /dac-sim-adapter
 USER nonroot:nonroot
 ENTRYPOINT ["/dac-sim-adapter"]
 
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS dac-codex-adapter
+# Published. Commands run in the task's sandbox (ADR-0016), so it needs no shell.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-codex-adapter
+
+ARG VERSION
+ARG REVISION
+ARG KIT_VERSION
+LABEL org.opencontainers.image.title="dac-codex-adapter" \
+      org.opencontainers.image.source="https://github.com/dac-plane/dac-plane" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      io.dac-plane.adapterkit.version="${KIT_VERSION}"
+COPY LICENSE NOTICE third_party/THIRD_PARTY_NOTICES.txt /licenses/
+COPY third_party/codex-app-server /licenses/codex-app-server
+COPY --from=codex-adapter-build --chown=nonroot:nonroot /out/dac-codex-adapter /dac-codex-adapter
+COPY --from=codex-adapter-build --chown=nonroot:nonroot /out/codex-app-server /codex-app-server
+USER nonroot:nonroot
+ENTRYPOINT ["/dac-codex-adapter"]
+
+# Never published. Codex runs commands in this container, for the recipes that
+# qualify the runtime without a sandbox.
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS dac-codex-adapter-local
 
 COPY --from=codex-adapter-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=codex-adapter-build --chown=65532:65532 /out/dac-codex-adapter /dac-codex-adapter
@@ -133,15 +171,34 @@ COPY --from=codex-adapter-build --chown=65532:65532 /out/codex-app-server /codex
 USER 65532:65532
 ENTRYPOINT ["/dac-codex-adapter"]
 
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS dac-e2b-adapter
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-e2b-adapter
 
-COPY --from=e2b-adapter-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=e2b-adapter-build --chown=65532:65532 /out/dac-e2b-adapter /dac-e2b-adapter
-USER 65532:65532
+ARG VERSION
+ARG REVISION
+ARG KIT_VERSION
+LABEL org.opencontainers.image.title="dac-e2b-adapter" \
+      org.opencontainers.image.source="https://github.com/dac-plane/dac-plane" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      io.dac-plane.adapterkit.version="${KIT_VERSION}"
+COPY LICENSE NOTICE third_party/THIRD_PARTY_NOTICES.txt /licenses/
+COPY --from=e2b-adapter-build --chown=nonroot:nonroot /out/dac-e2b-adapter /dac-e2b-adapter
+USER nonroot:nonroot
 ENTRYPOINT ["/dac-e2b-adapter"]
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-s3-adapter
 
+ARG VERSION
+ARG REVISION
+ARG KIT_VERSION
+LABEL org.opencontainers.image.title="dac-s3-adapter" \
+      org.opencontainers.image.source="https://github.com/dac-plane/dac-plane" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      io.dac-plane.adapterkit.version="${KIT_VERSION}"
+COPY LICENSE NOTICE third_party/THIRD_PARTY_NOTICES.txt /licenses/
 COPY --from=s3-adapter-build --chown=nonroot:nonroot /out/dac-s3-adapter /dac-s3-adapter
 USER nonroot:nonroot
 ENTRYPOINT ["/dac-s3-adapter"]

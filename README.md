@@ -50,3 +50,7 @@ upgrade/rollback rules and the simulator-backed development profile.
 ```sh
 just test-stack  # clean TLS Compose stack and full public-API lifecycle smoke
 ```
+
+## License
+
+[Apache-2.0](LICENSE). Third-party notices are in [third_party](third_party) and in `/licenses` in each published image.

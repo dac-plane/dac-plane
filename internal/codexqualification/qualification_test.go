@@ -295,9 +295,14 @@ func workspaceAbsent(t *testing.T, ctx context.Context, name string) {
 	if strings.ContainsAny(name, "/\\") {
 		t.Fatal("unsafe fixture path")
 	}
-	cmd := exec.CommandContext(ctx, "docker", "exec", "dac-codex-qualification-codex-adapter-1", "test", "!", "-e", "/workspace/"+name)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("workspace effect exists or could not be inspected: %v: %s", err, output)
+	// docker cp needs no shell in the image, and a missing path has its own error.
+	cmd := exec.CommandContext(ctx, "docker", "cp", "dac-codex-qualification-codex-adapter-1:/workspace/"+name, "-")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("workspace effect %s exists", name)
+	}
+	if !bytes.Contains(output, []byte("Could not find the file")) {
+		t.Fatalf("workspace could not be inspected: %v: %s", err, output)
 	}
 }
 

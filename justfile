@@ -12,6 +12,7 @@ s3_adapter_dir := "adapters/s3"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
+trivy_version := "0.76.1"
 recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
 migration_tests := "Migration"
 hook_lifecycle_tests := "GovernedAction(PostHook|FailureHook|LostPostHook)|HookStageEvidence"
@@ -28,7 +29,7 @@ default:
 
 # Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci-fast: fmt-check mod-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-conformance vuln lint-workflows
+ci-fast: fmt-check mod-check notices-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-conformance vuln lint-workflows
 
 # Full local equivalent of the parallel GitHub PR checks. This is intentionally
 # slower and is best used for final local verification or CI diagnosis.
@@ -61,6 +62,16 @@ mod-check:
     cd {{ codex_adapter_dir }} && go mod verify && go mod tidy -diff
     cd {{ e2b_adapter_dir }} && go mod verify && go mod tidy -diff
     cd {{ s3_adapter_dir }} && go mod verify && go mod tidy -diff
+
+# Regenerate the third-party notices shipped in every published image
+[group('dev')]
+notices:
+    scripts/release/generate-notices.sh > third_party/THIRD_PARTY_NOTICES.txt
+
+# Fail if the notices do not match the modules linked into the released binaries
+[group('check')]
+notices-check:
+    scripts/release/generate-notices.sh | diff -q - third_party/THIRD_PARTY_NOTICES.txt
 
 # Run go vet on every package
 [group('check')]
@@ -319,7 +330,7 @@ qualify-codex-containment: stack-certs
     "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
-    for image in dac-codex-adapter:qualification dac-e2b-adapter:qualification; do docker image inspect "$image" | jq -r '.[0].Id'; done | tee "$work/image-ids.txt"
+    for image in dac-codex-adapter:containment dac-e2b-adapter:qualification; do docker image inspect "$image" | jq -r '.[0].Id'; done | tee "$work/image-ids.txt"
     set -a
     source .work/stack/compose.env
     set +a
@@ -346,12 +357,18 @@ qualify-providers: stack-certs
     cleanup() { code=$?; "${compose[@]}" logs --no-color >"$work/compose.log" 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" "$DAC_E2B_API_KEY_FILE" "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" "$work/compose.log"; then echo "provider credential appeared in qualification logs" >&2; code=1; fi; done; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -f "$DAC_ENVIRONMENT_ATTACH_KEY_FILE"; rmdir "$keydir"; exit "$code"; }
     trap cleanup EXIT
     "${compose[@]}" down -v --remove-orphans
-    "${compose[@]}" up -d --build --scale sim-adapter=0
+    # With every image named by digest this runs what was published, not a local build.
+    if [[ -n "${DAC_PROVIDER_PUBLISHED_IMAGES:-}" ]]; then
+      for image in "$DAC_PLANE_IMAGE" "$DAC_CODEX_ADAPTER_IMAGE" "$DAC_E2B_ADAPTER_IMAGE" "$DAC_S3_ADAPTER_IMAGE"; do [[ "$image" == *@sha256:* ]] || { echo "published image $image is not named by digest" >&2; exit 2; }; docker pull -q "$image"; done
+      "${compose[@]}" up -d --no-build --scale sim-adapter=0
+    else
+      "${compose[@]}" up -d --build --scale sim-adapter=0
+    fi
     "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
     # An image ID changes on every local build; its layers identify the content.
-    for image in "${DAC_PLANE_IMAGE:-dac-plane:dev}" dac-codex-adapter:qualification dac-e2b-adapter:qualification dac-s3-adapter:qualification; do printf '%s %s\n' "$image" "$(docker image inspect "$image" | jq -r '.[0].RootFS.Layers[-1]')"; done | tee "$work/image-layers.txt"
+    for image in "${DAC_PLANE_IMAGE:-dac-plane:dev}" "${DAC_CODEX_ADAPTER_IMAGE:-dac-codex-adapter:containment}" "${DAC_E2B_ADAPTER_IMAGE:-dac-e2b-adapter:qualification}" "${DAC_S3_ADAPTER_IMAGE:-dac-s3-adapter:qualification}"; do printf '%s %s\n' "$image" "$(docker image inspect "$image" | jq -r '.[0].RootFS.Layers[-1]')"; done | tee "$work/image-layers.txt"
     if docker ps --filter "label=com.docker.compose.project=$DAC_QUALIFICATION_PROJECT" --format '{{{{.Image}}' | grep -q sim-adapter; then echo "a simulator process is running" >&2; exit 1; fi
     set -a
     source .work/stack/compose.env
@@ -451,6 +468,67 @@ image-build:
 image-repro:
     mkdir -p .work/image-repro
     epoch="$(git log -1 --format=%ct)"; for target in dac-plane dac-sim-adapter dac-codex-adapter dac-e2b-adapter dac-s3-adapter; do for pass in 1 2; do SOURCE_DATE_EPOCH="$epoch" docker buildx build --target "$target" --provenance=false --output "type=oci,dest=.work/image-repro/$target-$pass.tar,rewrite-timestamp=true" --metadata-file ".work/image-repro/$target-$pass.json" .; done; first="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-1.json")"; second="$(jq -r '."containerimage.digest"' ".work/image-repro/$target-2.json")"; test "$first" = "$second"; echo "$target reproducible at $first"; done
+
+# Build one published target for one platform twice, the second time without
+# cache, and fail unless the digests match (ADR-0018).
+[group('image')]
+release-image target platform version kit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=".work/release/{{ target }}-$(basename {{ platform }})"
+    mkdir -p "$work"
+    export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+    build=(docker buildx build --target {{ target }} --platform {{ platform }} --provenance=false --sbom=false --build-arg VERSION={{ version }} --build-arg REVISION="$(git rev-parse HEAD)" --build-arg KIT_VERSION={{ kit }})
+    "${build[@]}" --output "type=oci,dest=$work/image.tar,rewrite-timestamp=true" --metadata-file "$work/1.json" .
+    "${build[@]}" --no-cache --output "type=oci,dest=$work/again.tar,rewrite-timestamp=true" --metadata-file "$work/2.json" .
+    digest="$(jq -r '."containerimage.digest"' "$work/1.json")"
+    test "$digest" = "$(jq -r '."containerimage.digest"' "$work/2.json")"
+    rm -f "$work/again.tar"
+    echo "$digest" >"$work/digest"
+    echo "{{ target }} {{ platform }} reproducible at $digest"
+
+# Stop on any fixable HIGH or CRITICAL finding or any secret in a built image,
+# and write the full scan and an SBOM as evidence.
+[group('image')]
+release-scan target platform: _trivy
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=".work/release/{{ target }}-$(basename {{ platform }})"
+    trivy="{{ tools_dir }}/trivy-{{ trivy_version }}/trivy"
+    # Trivy reads an OCI layout as a directory, not as the archive BuildKit writes.
+    mkdir -p "$work/oci"
+    tar -xf "$work/image.tar" -C "$work/oci"
+    "$trivy" image --quiet --input "$work/oci" --scanners vuln,secret --format json --output "$work/scan.json"
+    "$trivy" image --quiet --input "$work/oci" --format cyclonedx --output "$work/sbom.cdx.json"
+    "$trivy" image --quiet --input "$work/oci" --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml --exit-code 1
+
+# Push the built image by digest. The workflow joins the platforms into one index.
+[group('image')]
+release-push target platform version kit repository:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=".work/release/{{ target }}-$(basename {{ platform }})"
+    export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+    docker buildx build --target {{ target }} --platform {{ platform }} --provenance=false --sbom=false --build-arg VERSION={{ version }} --build-arg REVISION="$(git rev-parse HEAD)" --build-arg KIT_VERSION={{ kit }} --output "type=registry,name={{ repository }},push-by-digest=true,rewrite-timestamp=true" --metadata-file "$work/push.json" .
+    test "$(cat "$work/digest")" = "$(jq -r '."containerimage.digest"' "$work/push.json")"
+
+# Install the pinned scanner from its release, checking the published checksum.
+[private]
+_trivy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{ tools_dir }}/trivy-{{ trivy_version }}"
+    if [[ -x "$dir/trivy" ]]; then exit 0; fi
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64) archive=Linux-64bit; sum=c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0 ;;
+      Linux-aarch64) archive=Linux-ARM64; sum=e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f ;;
+      *) echo "the release scan runs on Linux" >&2; exit 1 ;;
+    esac
+    mkdir -p "$dir"
+    curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 -o "$dir/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v{{ trivy_version }}/trivy_{{ trivy_version }}_$archive.tar.gz"
+    echo "$sum  $dir/trivy.tar.gz" | sha256sum -c -
+    tar -xzf "$dir/trivy.tar.gz" -C "$dir" trivy
+    rm "$dir/trivy.tar.gz"
 
 # Generate throwaway development certificates and credentials under .work/.
 [group('stack')]

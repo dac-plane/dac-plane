@@ -1,0 +1,4 @@
+# Findings the release gate accepts (ADR-0018). Each entry needs a statement and
+# an expired_at date, so an exception is reviewed and lapses.
+vulnerabilities: []
+secrets: []

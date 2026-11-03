@@ -4,9 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -39,6 +40,9 @@ jobs:
 
       - name: Check modules
         run: just mod-check
+
+      - name: Check third-party notices
+        run: just notices-check
 
       - name: Check release dependencies
         run: just deps-check
