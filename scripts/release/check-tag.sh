@@ -17,7 +17,7 @@ if [[ "$tag" == *-rc.* ]]; then
 	final=false
 fi
 
-# The draft needs these notes; a rehearsal finds out before a final tag does.
+# The release links these notes; a rehearsal finds out before a final tag does.
 if [[ ! -f "docs/releases/${tag%%-*}.md" ]]; then
 	echo "docs/releases/${tag%%-*}.md is missing" >&2
 	exit 1

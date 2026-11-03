@@ -20,13 +20,13 @@ You need a signing key that GitHub reports as verified.
    `DAC_CODEX_API_KEY_FILE`, `DAC_E2B_API_KEY_FILE` and `DAC_E2B_TEMPLATE_ID`, and it spends provider credit. Record
    every run in the release's evidence note, including failed ones. A failure that the notes already list as a known
    limit may be rerun alone. Any other failure stops the release.
-4. **Tag the release.** `just release-tag v0.1.0`, on `main`, from the commit you qualified. Approve the `release`
-   environment when the run asks.
-5. **Open the packages.** A new package starts private. Make it public in
-   [its settings](https://github.com/orgs/dac-plane/packages).
-6. **Publish.** Read the draft and publish it. Its assets and tag are locked from then on.
-7. **Check it as a stranger would.** From a checkout of the tag, run `just release-verify v0.1.0`. Record the digests
+4. **Tag the release.** `just release-tag v0.1.0`, on `main`, from the commit you qualified. If the gate passes, the
+   release publishes itself with nothing further to approve.
+5. **Check it as a stranger would.** From a checkout of the tag, run `just release-verify v0.1.0`. Record the digests
    and results in the evidence note.
+
+A package new to this repository starts private, so the clean room's login passes and an anonymous pull fails. Make it
+public in [its settings](https://github.com/orgs/dac-plane/packages) when you add a new image.
 
 ## When something fails
 

@@ -266,8 +266,8 @@ jobs:
           path: release
           if-no-files-found: error
 
-  draft:
-    name: Draft the GitHub Release
+  release:
+    name: Publish the GitHub Release
     needs: [identify, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -298,17 +298,19 @@ jobs:
             cp "$dir/provenance.intoto.jsonl" "assets/$name.intoto.jsonl"
           done
 
-      - name: Create the draft
+      # A final release publishes at once (ADR-0019). gh uploads the assets before
+      # publishing, so an immutable release is complete when it appears.
+      - name: Create the release
         run: |
-          flags=(--draft --verify-tag --title "$VERSION")
+          flags=(--verify-tag --title "$VERSION")
           if [[ "$FINAL" == true ]]; then
             since="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .published_at 2>/dev/null || true)"
             {
               printf '## Upgrading\n\nBefore upgrading refer to [the release notes](https://github.com/%s/blob/%s/docs/releases/%s.md) for compatibility, upgrade steps and known limits.\n\n' "$GITHUB_REPOSITORY" "$VERSION" "$VERSION"
               scripts/release/resolved-issues.sh "$since"
             } >notes.md
-            flags+=(--notes-file notes.md)
+            flags+=(--latest --notes-file notes.md)
           else
-            flags+=(--prerelease --notes "Rehearsal. Not a supported release.")
+            flags+=(--draft --prerelease --notes "Rehearsal. Not a supported release.")
           fi
           gh release create "$VERSION" "${flags[@]}" assets/*
