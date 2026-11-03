@@ -27,6 +27,16 @@ The executable requires:
 | `DAC_CODEX_BASE_URL` | HTTPS Responses endpoint |
 | `DAC_CODEX_API_KEY_FILE` | file-mounted provider credential |
 
+Commands run beside the adapter unless both of these are set, and then only in the environment assigned to the
+Attempt ([ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md)):
+
+| Setting | Purpose |
+|---|---|
+| `DAC_CODEX_EXEC_SERVER_URL` | a resource's exec-server address, with `{resource}` for its identifier |
+| `DAC_ENVIRONMENT_ATTACH_KEY_FILE` | key shared with the environment adapter |
+
+`DAC_CODEX_WORKSPACE` is then a path inside the environment.
+
 Adapter authentication uses either `DAC_ADAPTER_TOKEN_FILE`, or the existing client-credentials
 settings `DAC_ADAPTER_TOKEN_URL`, `DAC_ADAPTER_CLIENT_ID`,
 `DAC_ADAPTER_CLIENT_SECRET_FILE` and `DAC_ADAPTER_SCOPE`. `DAC_ADAPTER_CA_FILE` adds private roots
@@ -55,4 +65,6 @@ ControlFrame conformance tests with and without the race detector. These determi
 qualify Camer availability or a production artifact store. The secret-backed deployed gate remains
 `just qualify-codex-runtime`; it requires `DAC_CODEX_API_KEY_FILE`, creates a disposable Compose
 project, and removes that project's volumes after retaining logs under `.work/codex-qualification/`.
-Its observed status and limits are recorded in the issue evidence note.
+Its observed status and limits are recorded in the issue evidence note. `just qualify-codex-containment` is the
+same kind of gate for commands running in a sandbox, recorded in
+[its evidence note](../../docs/architecture/codex-containment-108.md).

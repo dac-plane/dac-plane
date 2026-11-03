@@ -33,7 +33,10 @@ const StateCancelled = "cancelled"
 type Operation struct {
 	ID, Tenant, Attempt, ArgumentsHash, ThreadID, TurnID, State string
 	Baseline                                                    map[string]string
-	CreatedAt                                                   time.Time
+	// Environment is the resource running the commands, empty when they run
+	// beside the adapter.
+	Environment string
+	CreatedAt   time.Time
 }
 
 type Decision struct {

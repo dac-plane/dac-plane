@@ -124,6 +124,7 @@ var taskMachine = newMachine(TaskStates(), TaskEvents(),
 		TaskWaitingInput: {
 			TaskInputResolved:   {TaskRunning},
 			TaskInputUnresolved: {TaskRunning, TaskFailed, TaskCancelling},
+			TaskExecutionFailed: {TaskFailed},
 			TaskCancel:          {TaskCancelling},
 		},
 		// Passing verification always reaches review: the baseline's lifecycle

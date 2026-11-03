@@ -4,10 +4,37 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestConfigureEnvironmentsRestoresLocalWithoutDeletingOtherSettings(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "environments.toml")
+	if err := configureEnvironments(home, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureEnvironments(home, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("managed file still exists: %v", err)
+	}
+	const custom = "include_local = false\n# operator setting\n"
+	if err := os.WriteFile(path, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureEnvironments(home, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != custom {
+		t.Fatalf("custom settings = %q, err = %v", got, err)
+	}
+}
 
 func TestReaderRoutesResponsesRequestsAndNotifications(t *testing.T) {
 	response := make(chan Message, 1)

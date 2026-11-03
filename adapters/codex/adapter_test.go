@@ -40,6 +40,7 @@ type fakeNative struct {
 	failThreadStart     bool
 	failTurnStart       bool
 	failResume          bool
+	resumedStatus       string
 	failClean           bool
 	failReplyOnce       bool
 	completeOnTurnStart bool
@@ -86,7 +87,11 @@ func (f *fakeNative) Call(_ context.Context, method string, params, result any) 
 			f.notifications <- appserver.Message{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
 		}
 	case "thread/resume":
-		response = map[string]any{"thread": map[string]any{"id": "thread-1", "turns": []any{map[string]any{"id": "turn-1", "status": "inProgress"}}}}
+		status := f.resumedStatus
+		if status == "" {
+			status = "inProgress"
+		}
+		response = map[string]any{"thread": map[string]any{"id": "thread-1", "turns": []any{map[string]any{"id": "turn-1", "status": status}}}}
 	case "thread/read":
 		response = map[string]any{"thread": map[string]any{"id": "thread-1"}}
 	default:

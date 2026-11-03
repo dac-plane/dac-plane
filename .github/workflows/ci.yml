@@ -205,6 +205,9 @@ jobs:
       - name: Verify reproducible images
         run: just image-repro
 
+      - name: Containment overlay
+        run: just check-containment-compose
+
       - name: Run deployed lifecycle smoke test
         run: just test-stack
 

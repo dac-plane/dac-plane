@@ -1,0 +1,21 @@
+# Layered over compose.codex.yaml and compose.e2b.yaml for the containment
+# qualification (ADR-0016). Commands run in the task's sandbox: Codex reaches
+# them through E2B's port host, with a token both adapters derive from one key.
+services:
+  codex-adapter:
+    environment:
+      DAC_CODEX_EXEC_SERVER_URL: wss://8765-{resource}.${DAC_E2B_DOMAIN:-e2b.app}
+      DAC_ENVIRONMENT_ATTACH_KEY_FILE: /run/secrets/environment_attach_key
+    secrets:
+      - environment_attach_key
+
+  e2b-adapter:
+    environment:
+      DAC_E2B_TEMPLATE_ID: ${DAC_E2B_TEMPLATE_ID:?set DAC_E2B_TEMPLATE_ID to a template from just build-e2b-codex-template}
+      DAC_ENVIRONMENT_ATTACH_KEY_FILE: /run/secrets/environment_attach_key
+    secrets:
+      - environment_attach_key
+
+secrets:
+  environment_attach_key:
+    file: ${DAC_ENVIRONMENT_ATTACH_KEY_FILE:?set DAC_ENVIRONMENT_ATTACH_KEY_FILE to the key both adapters share}

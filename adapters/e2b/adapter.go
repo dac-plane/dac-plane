@@ -50,6 +50,15 @@ type Config struct {
 	SandboxTimeout time.Duration
 	// StopRetryInterval paces retries of unconfirmed stops.
 	StopRetryInterval time.Duration
+	// AttachKey, when set, makes each task sandbox serve commands to the runtime
+	// adapter that shares this key.
+	AttachKey []byte
+	// ExecServerPort defaults to defaultExecServerPort.
+	ExecServerPort int
+	// SandboxDomain is the public port host, by default defaultSandboxDomain.
+	SandboxDomain string
+	// SandboxURL overrides the address of a sandbox port.
+	SandboxURL func(port int, sandboxID string) string
 }
 
 type Adapter struct {
@@ -74,15 +83,17 @@ type migrationRequest struct {
 }
 
 type sandbox struct {
-	SandboxID   string            `json:"sandboxID"`
-	SandboxId   string            `json:"sandboxId,omitempty"`
-	Template    string            `json:"templateID"`
-	State       string            `json:"state"`
-	EnvdVersion string            `json:"envdVersion"`
-	StartedAt   time.Time         `json:"startedAt"`
-	EndAt       time.Time         `json:"endAt"`
-	Metadata    map[string]string `json:"metadata"`
-	Network     struct {
+	SandboxID   string `json:"sandboxID"`
+	SandboxId   string `json:"sandboxId,omitempty"`
+	Template    string `json:"templateID"`
+	State       string `json:"state"`
+	EnvdVersion string `json:"envdVersion"`
+	// EnvdAccessToken is returned by create and connect, never by a listing.
+	EnvdAccessToken string            `json:"envdAccessToken"`
+	StartedAt       time.Time         `json:"startedAt"`
+	EndAt           time.Time         `json:"endAt"`
+	Metadata        map[string]string `json:"metadata"`
+	Network         struct {
 		DenyOut []string `json:"denyOut"`
 	} `json:"network"`
 	AllowInternetAccess *bool `json:"allowInternetAccess"`
@@ -114,6 +125,12 @@ func New(cfg Config) (*Adapter, error) {
 	}
 	if cfg.APIKey == "" || cfg.TemplateID == "" || cfg.ProviderID == "" || cfg.Journal == nil {
 		return nil, errors.New("E2B adapter configuration is incomplete")
+	}
+	if cfg.ExecServerPort == 0 {
+		cfg.ExecServerPort = defaultExecServerPort
+	}
+	if cfg.SandboxDomain == "" {
+		cfg.SandboxDomain = defaultSandboxDomain
 	}
 	if cfg.StopRetryInterval == 0 {
 		cfg.StopRetryInterval = defaultStopRetryInterval
@@ -318,7 +335,7 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 		if found == nil {
 			return wire.Reply{}, errors.New("E2B create outcome remains unknown; no retry was issued")
 		}
-		return a.finishTaskProvision(req, *found)
+		return a.finishTaskProvision(ctx, req, *found)
 	}
 	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error {
 		o.State, o.CreateExpires = "create_sent", a.cfg.Now().Add(a.cfg.SandboxTimeout+createOutcomeMargin)
@@ -333,11 +350,11 @@ func (a *Adapter) provisionTask(ctx context.Context, req wire.Request) (wire.Rep
 		}
 		found, lookupErr := a.findOperation(ctx, req.Operation)
 		if lookupErr == nil && found != nil {
-			return a.finishTaskProvision(req, *found)
+			return a.finishTaskProvision(ctx, req, *found)
 		}
 		return wire.Reply{}, fmt.Errorf("E2B create reply is uncertain: %w", err)
 	}
-	return a.finishTaskProvision(req, createdSandbox)
+	return a.finishTaskProvision(ctx, req, createdSandbox)
 }
 
 // createSandbox never asks E2B to pause on timeout: a paused sandbox has no
@@ -348,6 +365,10 @@ func (a *Adapter) createSandbox(ctx context.Context, req wire.Request) (sandbox,
 		"autoPause": false,
 		"network":   map[string]any{"denyOut": []string{"0.0.0.0/0"}},
 		"metadata":  map[string]string{metadataOperation: req.Operation, metadataTenant: req.Tenant, metadataAttempt: req.Attempt}}
+	if len(a.cfg.AttachKey) != 0 {
+		// envd is reachable from outside, so it must demand its access token.
+		body["secure"] = true
+	}
 	var created sandbox
 	if err := a.doJSON(ctx, http.MethodPost, "/v2/sandboxes", body, "", &created); err != nil {
 		return sandbox{}, err
@@ -375,12 +396,48 @@ func (a *Adapter) releaseRejectedCreate(operation string, err error) error {
 	return fmt.Errorf("E2B rejected sandbox create: %w", err)
 }
 
-func (a *Adapter) finishTaskProvision(req wire.Request, sbx sandbox) (wire.Reply, error) {
+func (a *Adapter) finishTaskProvision(ctx context.Context, req wire.Request, sbx sandbox) (wire.Reply, error) {
+	if len(a.cfg.AttachKey) != 0 {
+		if err := a.attach(ctx, req, sbx); err != nil {
+			return wire.Reply{}, err
+		}
+	}
 	ref := "sandbox:" + sbx.SandboxID
 	if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error { o.ResourceRef, o.State = ref, "provisioned"; return nil }); err != nil {
 		return wire.Reply{}, err
 	}
 	return a.recordTaskReadiness(req, ref)
+}
+
+// attach makes a sandbox ready for commands. A sandbox that cannot serve them is
+// deleted, so the redelivered provision creates another rather than reporting
+// one the runtime cannot use.
+func (a *Adapter) attach(ctx context.Context, req wire.Request, sbx sandbox) error {
+	if sbx.EnvdAccessToken == "" {
+		// A sandbox found by listing carries no token, and connect restarts its
+		// lifetime, so the create's recorded lifetime moves first.
+		if err := a.cfg.Journal.Update(req.Operation, func(o *journal.Operation) error {
+			o.CreateExpires = a.cfg.Now().Add(a.cfg.SandboxTimeout + createOutcomeMargin)
+			return nil
+		}); err != nil {
+			return err
+		}
+		var connected sandbox
+		body := map[string]any{"timeout": int64(a.cfg.SandboxTimeout / time.Second)}
+		if err := a.doJSON(ctx, http.MethodPost, "/sandboxes/"+url.PathEscape(sbx.SandboxID)+"/connect", body, "", &connected); err != nil {
+			return fmt.Errorf("E2B connect failed: %w", err)
+		}
+		sbx.EnvdAccessToken = connected.EnvdAccessToken
+	}
+	err := a.prepareAttachment(ctx, sbx)
+	if err == nil {
+		return nil
+	}
+	var status apiError
+	if deleteErr := a.doJSON(ctx, http.MethodDelete, "/sandboxes/"+url.PathEscape(sbx.SandboxID), nil, "", nil); deleteErr != nil && !(errors.As(deleteErr, &status) && status.status == http.StatusNotFound) {
+		return fmt.Errorf("%w; deleting the sandbox also failed: %w", err, deleteErr)
+	}
+	return a.releaseRejectedCreate(req.Operation, err)
 }
 
 // recordTaskReadiness records the provisioned sandbox's running observation

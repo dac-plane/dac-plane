@@ -26,6 +26,8 @@ type fakeE2B struct {
 	hideList             bool
 	malformedList        bool
 	failDeletes          int
+	secure               bool
+	connected            int
 }
 
 func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +54,7 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				DenyOut []string `json:"denyOut"`
 			} `json:"network"`
 			Metadata map[string]string `json:"metadata"`
+			Secure   bool              `json:"secure"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			http.Error(w, "bad request", 400)
@@ -62,6 +65,7 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.created++
+		f.secure = f.secure || input.Secure
 		f.timeouts = append(f.timeouts, input.Timeout)
 		id := fmt.Sprintf("sbx-%d", f.created)
 		sbx := sandbox{SandboxID: id, Template: input.Template, State: "running", Metadata: input.Metadata}
@@ -75,7 +79,10 @@ func (f *fakeE2B) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]string{"sandboxId": sbx.SandboxID, "templateID": sbx.Template, "state": sbx.State})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sandboxId": sbx.SandboxID, "templateID": sbx.Template, "state": sbx.State, "envdAccessToken": "envd-token"})
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/connect"):
+		f.connected++
+		_ = json.NewEncoder(w).Encode(map[string]string{"envdAccessToken": "envd-token"})
 	case r.Method == http.MethodGet && r.URL.Path == "/v2/sandboxes":
 		if f.malformedList {
 			w.Header().Set("Content-Type", "application/json")
