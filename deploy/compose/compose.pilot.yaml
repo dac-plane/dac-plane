@@ -1,0 +1,283 @@
+# Layered over compose.yaml alone for an operated pilot (#96): Codex with its
+# commands in E2B sandboxes (ADR-0016), and SeaweedFS behind the S3 adapter
+# (ADR-0017). Unlike the qualification overlays it needs no development
+# profile: every image is published and named by digest, the operator's OIDC
+# issuer mints the adapters' tokens, and the operator provisions identities
+# with the `provision` tool service. deploy/compose/PILOT.md is the runbook.
+#
+# One trust bundle (DAC_TRUST_BUNDLE_FILE) holds every private root the stack
+# needs: the control plane's and artifact store's certificate issuer, and the
+# OIDC issuer's if it is private. An adapter's CA file replaces its roots for
+# the control plane and token issuer; provider APIs keep the system roots.
+services:
+  migrate:
+    image: ${DAC_PLANE_IMAGE:?set DAC_PLANE_IMAGE to the published image by digest}
+    build: !reset null
+
+  dac-plane:
+    image: ${DAC_PLANE_IMAGE:?set DAC_PLANE_IMAGE to the published image by digest}
+    build: !reset null
+    environment:
+      # Pinned so no env file can admit a development issuer (ADR-0009).
+      DAC_DEPLOYMENT: production
+      # Extends the system roots so issuer discovery trusts a private issuer.
+      SSL_CERT_FILE: /run/config/trust.crt
+    configs:
+      - source: trust_bundle
+        target: /run/config/trust.crt
+    # Adapters reach the adapter endpoint on the Compose network, so only the
+    # Surface API is published, on the address the operator chooses.
+    ports: !override
+      - "${DAC_SURFACE_BIND:-127.0.0.1}:${DAC_SURFACE_PORT:-8443}:8443"
+
+  # Trusted provisioning (ADR-0007), run on demand:
+  #   docker compose ... run --rm provision tenant -id ...
+  provision:
+    image: ${DAC_PLANE_IMAGE:?set DAC_PLANE_IMAGE to the published image by digest}
+    entrypoint: ["/dac-plane", "provision"]
+    environment:
+      DAC_DATABASE_URL_FILE: /run/secrets/database_url
+    secrets:
+      - source: migrate_database_url
+        target: database_url
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    profiles: ["tools"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: "no"
+
+  # The adapters run as nonroot; these give their volumes that owner.
+  codex-init:
+    image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+    command: ["sh", "-c", "mkdir -p /codex/home && chown -R 65532:65532 /codex"]
+    volumes:
+      - codex-data:/codex
+    network_mode: none
+    restart: "no"
+
+  e2b-init:
+    image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+    command: ["sh", "-c", "chown -R 65532:65532 /state"]
+    volumes:
+      - e2b-data:/state
+    network_mode: none
+    restart: "no"
+
+  codex-adapter:
+    image: ${DAC_CODEX_ADAPTER_IMAGE:?set DAC_CODEX_ADAPTER_IMAGE to the published image by digest}
+    environment:
+      HOME: /codex/home
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/trust.crt
+      DAC_ADAPTER_TOKEN_URL: ${DAC_ADAPTER_TOKEN_URL:?set DAC_ADAPTER_TOKEN_URL to the issuer token endpoint}
+      DAC_ADAPTER_SCOPE: ${DAC_ADAPTER_SCOPE:-dac-plane-adapters}
+      DAC_ADAPTER_CLIENT_ID: ${DAC_RUNTIME_CLIENT_ID:?set DAC_RUNTIME_CLIENT_ID}
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/runtime_client_secret
+      DAC_PROVIDER_ID: ${DAC_RUNTIME_PROVIDER_ID:?set DAC_RUNTIME_PROVIDER_ID}
+      DAC_CODEX_APP_SERVER: /codex-app-server
+      DAC_CODEX_HOME: /codex/home
+      DAC_CODEX_STATE: /codex/adapter.db
+      # A path inside the attempt's sandbox, where every command runs.
+      DAC_CODEX_WORKSPACE: /workspace
+      DAC_CODEX_EXEC_SERVER_URL: wss://8765-{resource}.${DAC_E2B_DOMAIN:-e2b.app}
+      DAC_ENVIRONMENT_ATTACH_KEY_FILE: /run/secrets/environment_attach_key
+      DAC_CODEX_MODEL_PROVIDER: ${DAC_CODEX_MODEL_PROVIDER:?set DAC_CODEX_MODEL_PROVIDER}
+      DAC_CODEX_MODEL: ${DAC_CODEX_MODEL:?set DAC_CODEX_MODEL}
+      DAC_CODEX_BASE_URL: ${DAC_CODEX_BASE_URL:?set DAC_CODEX_BASE_URL}
+      DAC_CODEX_API_KEY_FILE: /run/secrets/model_api_key
+    configs:
+      - source: trust_bundle
+        target: /run/config/trust.crt
+    secrets:
+      - runtime_client_secret
+      - environment_attach_key
+      - model_api_key
+    volumes:
+      - codex-data:/codex
+    depends_on:
+      codex-init:
+        condition: service_completed_successfully
+      dac-plane:
+        condition: service_healthy
+      artifact-adapter:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  e2b-adapter:
+    image: ${DAC_E2B_ADAPTER_IMAGE:?set DAC_E2B_ADAPTER_IMAGE to the published image by digest}
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/trust.crt
+      DAC_ADAPTER_TOKEN_URL: ${DAC_ADAPTER_TOKEN_URL:?set DAC_ADAPTER_TOKEN_URL to the issuer token endpoint}
+      DAC_ADAPTER_SCOPE: ${DAC_ADAPTER_SCOPE:-dac-plane-adapters}
+      DAC_ADAPTER_CLIENT_ID: ${DAC_ENVIRONMENT_CLIENT_ID:?set DAC_ENVIRONMENT_CLIENT_ID}
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/environment_client_secret
+      DAC_PROVIDER_ID: ${DAC_ENVIRONMENT_PROVIDER_ID:?set DAC_ENVIRONMENT_PROVIDER_ID}
+      DAC_E2B_BASE_URL: ${DAC_E2B_BASE_URL:-https://api.e2b.app}
+      DAC_E2B_TEMPLATE_ID: ${DAC_E2B_TEMPLATE_ID:?set DAC_E2B_TEMPLATE_ID to a template from just build-e2b-codex-template}
+      DAC_E2B_SANDBOX_TIMEOUT: ${DAC_E2B_SANDBOX_TIMEOUT:-15m}
+      DAC_E2B_API_KEY_FILE: /run/secrets/e2b_api_key
+      DAC_E2B_STATE: /state/adapter.db
+      DAC_ENVIRONMENT_ATTACH_KEY_FILE: /run/secrets/environment_attach_key
+    configs:
+      - source: trust_bundle
+        target: /run/config/trust.crt
+    secrets:
+      - environment_client_secret
+      - environment_attach_key
+      - e2b_api_key
+    volumes:
+      - e2b-data:/state
+    depends_on:
+      e2b-init:
+        condition: service_completed_successfully
+      dac-plane:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  # As in compose.artifacts.yaml: the proxy owns the network identity and
+  # passes TLS through; SeaweedFS shares its namespace and binds loopback only.
+  artifact-store:
+    image: haproxy:3.2.26-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b
+    configs:
+      - source: artifact_store_proxy
+        target: /usr/local/etc/haproxy/haproxy.cfg
+    read_only: true
+    restart: unless-stopped
+
+  artifact-store-seaweedfs:
+    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    network_mode: service:artifact-store
+    command:
+      - server
+      - -dir=/data
+      - -ip=127.0.0.1
+      - -ip.bind=127.0.0.1
+      - -master.telemetry=false
+      - -s3
+      - -s3.ip.bind=127.0.0.1
+      - -s3.port.https=9443
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.config=/run/secrets/s3_identities.json
+      - -s3.cert.file=/run/secrets/tls.crt
+      - -s3.key.file=/run/secrets/tls.key
+    configs:
+      - source: trust_bundle
+        target: /run/config/trust.crt
+      # SeaweedFS needs its certificate in the key's directory.
+      - source: tls_cert
+        target: /run/secrets/tls.crt
+    secrets:
+      - s3_identities.json
+      - source: tls_key
+        target: tls.key
+    volumes:
+      - artifact-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$$(curl -s -o /dev/null -w '%{http_code}' --cacert /run/config/trust.crt --resolve artifact-store:9443:127.0.0.1 https://artifact-store:9443/)\" = 403"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      artifact-store:
+        condition: service_started
+    restart: unless-stopped
+
+  artifact-store-provision:
+    image: ${DAC_S3_ADAPTER_IMAGE:?set DAC_S3_ADAPTER_IMAGE to the published image by digest}
+    command: ["provision"]
+    environment:
+      DAC_S3_ENDPOINT: https://artifact-store:8443
+      DAC_S3_CA_FILE: /run/config/trust.crt
+      DAC_S3_STAGING_BUCKET: dac-staging
+      DAC_S3_OBJECTS_BUCKET: dac-objects
+      DAC_S3_ACCESS_KEY_ID: dac-operator
+      DAC_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_operator_secret
+      DAC_S3_RETENTION_DAYS: ${DAC_S3_RETENTION_DAYS:-30}
+      DAC_S3_STAGING_DAYS: ${DAC_S3_STAGING_DAYS:-2}
+    configs:
+      - source: trust_bundle
+        target: /run/config/trust.crt
+    secrets:
+      - s3_operator_secret
+    depends_on:
+      artifact-store-seaweedfs:
+        condition: service_healthy
+    read_only: true
+    restart: on-failure:5
+
+  artifact-adapter:
+    image: ${DAC_S3_ADAPTER_IMAGE:?set DAC_S3_ADAPTER_IMAGE to the published image by digest}
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/trust.crt
+      DAC_ADAPTER_TOKEN_URL: ${DAC_ADAPTER_TOKEN_URL:?set DAC_ADAPTER_TOKEN_URL to the issuer token endpoint}
+      DAC_ADAPTER_SCOPE: ${DAC_ADAPTER_SCOPE:-dac-plane-adapters}
+      DAC_ADAPTER_CLIENT_ID: ${DAC_ARTIFACT_CLIENT_ID:?set DAC_ARTIFACT_CLIENT_ID}
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/artifact_client_secret
+      DAC_PROVIDER_ID: ${DAC_ARTIFACT_PROVIDER_ID:?set DAC_ARTIFACT_PROVIDER_ID}
+      DAC_S3_ENDPOINT: https://artifact-store:8443
+      DAC_S3_CA_FILE: /run/config/trust.crt
+      DAC_S3_STAGING_BUCKET: dac-staging
+      DAC_S3_OBJECTS_BUCKET: dac-objects
+      DAC_S3_ACCESS_KEY_ID: dac-adapter
+      DAC_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_adapter_secret
+      DAC_S3_UPLOAD_TTL: ${DAC_S3_UPLOAD_TTL:-15m}
+    configs:
+      - source: trust_bundle
+        target: /run/config/trust.crt
+    secrets:
+      - artifact_client_secret
+      - s3_adapter_secret
+    depends_on:
+      dac-plane:
+        condition: service_healthy
+      artifact-store-provision:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+volumes:
+  codex-data:
+  e2b-data:
+  artifact-data:
+
+configs:
+  trust_bundle:
+    file: ${DAC_TRUST_BUNDLE_FILE:?set DAC_TRUST_BUNDLE_FILE to the PEM roots the stack trusts}
+  artifact_store_proxy:
+    file: ./artifact-store-haproxy.cfg
+
+secrets:
+  runtime_client_secret:
+    file: ${DAC_RUNTIME_CLIENT_SECRET_FILE:?set DAC_RUNTIME_CLIENT_SECRET_FILE}
+  environment_client_secret:
+    file: ${DAC_ENVIRONMENT_CLIENT_SECRET_FILE:?set DAC_ENVIRONMENT_CLIENT_SECRET_FILE}
+  artifact_client_secret:
+    file: ${DAC_ARTIFACT_CLIENT_SECRET_FILE:?set DAC_ARTIFACT_CLIENT_SECRET_FILE}
+  environment_attach_key:
+    file: ${DAC_ENVIRONMENT_ATTACH_KEY_FILE:?set DAC_ENVIRONMENT_ATTACH_KEY_FILE to the key both adapters share}
+  model_api_key:
+    file: ${DAC_CODEX_API_KEY_FILE:?set DAC_CODEX_API_KEY_FILE to the model provider credential file}
+  e2b_api_key:
+    file: ${DAC_E2B_API_KEY_FILE:?set DAC_E2B_API_KEY_FILE}
+  s3_identities.json:
+    file: ${DAC_S3_IDENTITIES_FILE:?set DAC_S3_IDENTITIES_FILE}
+  s3_operator_secret:
+    file: ${DAC_S3_OPERATOR_SECRET_FILE:?set DAC_S3_OPERATOR_SECRET_FILE}
+  s3_adapter_secret:
+    file: ${DAC_S3_ADAPTER_SECRET_FILE:?set DAC_S3_ADAPTER_SECRET_FILE}

@@ -215,6 +215,9 @@ jobs:
       - name: Containment overlay
         run: just check-containment-compose
 
+      - name: Pilot overlay
+        run: just check-pilot-compose
+
       - name: Artifact store profile
         run: just test-artifact-store-stack
 
