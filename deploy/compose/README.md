@@ -62,6 +62,13 @@ prompt to delete data.
 TLS certificates are reloaded from their mounted files for new connections. Rotate the certificate
 and key atomically and keep the old certificate valid long enough for existing connections to drain.
 
+## Pilot with real providers
+
+`compose.pilot.yaml` layers Codex, E2B and the S3 artifact store over the base stack alone, with published images by
+digest and the operator's own issuer; `compose.keycloak.yaml` adds Keycloak as a reference issuer.
+[PILOT.md](PILOT.md) is the runbook, and `generate-pilot-config.sh` and `configure-pilot.sh` generate the
+configuration and provision the pilot. `just check-pilot-compose` keeps the overlay production-shaped.
+
 ## Development profile
 
 From the repository root:

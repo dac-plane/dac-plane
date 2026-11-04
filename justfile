@@ -297,6 +297,11 @@ check-pilot-compose:
     for name in DAC_PLANE_IMAGE DAC_TRUST_BUNDLE_FILE DAC_ADAPTER_TOKEN_URL DAC_RUNTIME_PROVIDER_ID DAC_E2B_TEMPLATE_ID DAC_CODEX_MODEL; do
       if (unset "$name"; "${compose[@]}" config -q 2>/dev/null); then fail "$name has a default"; fi
     done
+    # The reference issuer composes over the pilot and publishes only its own port beside the Surface API.
+    export DAC_KEYCLOAK_DB_PASSWORD_FILE=/dev/null DAC_KEYCLOAK_ADMIN_PASSWORD_FILE=/dev/null
+    [[ "$("${compose[@]}" -f deploy/compose/compose.keycloak.yaml config --format json | jq -c '[.services[] | .ports // [] | .[] | {host_ip, target}] | sort_by(.target)')" == '[{"host_ip":"127.0.0.1","target":8443},{"host_ip":"127.0.0.1","target":8443}]' ]] || fail "the Keycloak overlay publishes something unexpected"
+    sh -n deploy/compose/generate-pilot-config.sh
+    sh -n deploy/compose/configure-pilot.sh
     echo "pilot overlay is production-shaped"
 
 # The artifact store profile needs no provider secret. The simulated runtime

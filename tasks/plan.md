@@ -14,7 +14,7 @@ Surveyed on 2026-11-04. Each item blocks the pilot or shapes its design.
 | The published digests have never run against live providers | #96 body and `release-95.md`: earlier live runs used local arm64 builds of an older commit | `just release-qualify v0.1.0` must pass on the pilot's architecture before the pilot claims qualified providers. |
 | The provider overlays only work over the development profile | `compose.codex.yaml`, `compose.e2b.yaml`, `compose.artifacts.yaml` hard-code `DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token` and mount `dev_ca`; `qualify-providers` layers them on `compose.dev.yaml` | No production-shaped way exists to run real adapters against an external issuer. The pilot needs one. `#95` listed it as #96 scope. |
 | Provisioning exists only as fixed dev jobs | `compose.dev.yaml` runs `provision tenant/principal/bind/register-provider/bind-adapter` with fixed IDs and the dev issuer | The pilot needs an operator procedure with its own IDs, issuer and subjects. `provision qualify-harness` exists for the harness qualification. |
-| Tenant policy is set by raw SQL | `qualify-providers` runs `update policy ...` through `psql` as `dac_migrate`; neither `provision` nor Surface API v1 sets policy | An operator procedure that edits tables is not a supported path. See decision 6. |
+| Tenant policy is set by raw SQL | `qualify-providers` runs `update policy ...` through `psql` as `dac_migrate`; neither `provision` nor Surface API v1 sets policy | The pilot repeats that update as a documented v0.1.0 limit. See decision 6. |
 | No metrics | No Prometheus, OpenTelemetry or `/metrics` in `internal/` or `cmd/` | "Log/metric collection" in the issue cannot be met for metrics without new code. See decision 7. |
 | Backup and upgrade are proven only with simulators | `operations-74.md`: `pg_dump -Fc` / `pg_restore`, one rolling upgrade with a test-only schema 16, simulators only | The pilot repeats these with real adapters and adds the artifact-store volume, which #74 did not cover. |
 | Only one runbook-like text exists | `deploy/compose/README.md` covers upgrade, rollback and TLS reload | Credential rotation (OIDC clients, provider keys, S3 keys, attach key), inspection and incident procedures are missing. |
@@ -44,8 +44,15 @@ Agreed with the project owner on 2026-11-04.
 5. **Real issuer.** Keycloak in a container on the pilot host, with one confidential client per adapter role and a
    distinct audience for the Surface API and the adapter endpoint. `DAC_DEPLOYMENT=production`, so a development issuer
    is refused.
-6. **Tenant policy.** Add `provision set-policy`, so no operator procedure edits tables. `qualify-providers` switches to
-   it.
+6. **Tenant policy and the upgrade stay on v0.1.0.** A `set_policy` provisioning record needs schema migration 16
+   (the operation list is a check constraint, see `00013_qualify_harness.sql`), and only a new release carries it. Decided
+   on 2026-11-04, after comparing how other projects separate upgrade testing from staging: an upgrade is proven in CI
+   from the previous release, and a staging or pilot deployment runs the current release and receives the next one
+   first (Temporal's self-hosted upgrade guide; Atlas's guide to on-premise migrations). So the pilot runs v0.1.0 only.
+   Its first policy is set with the same update `qualify-providers` uses, documented as a v0.1.0 limit. The rolling
+   upgrade item is exercised as the binary-first procedure on v0.1.0, and the evidence cites the CI upgrade test for
+   version-to-version safety. Follow-ups: `provision set-policy` with migration 16, and an upgrade test from the
+   published v0.1.0 digest. The next release rolls out to the pilot first.
 7. **Metrics.** Structured logs plus health and readiness only. Metrics are a stated limit with a follow-up issue and
    their own ADR.
 8. **Evidence.** `docs/architecture/pilot-96.md`, with commands, versions, digests, durations and limits. Host names
@@ -59,10 +66,13 @@ Agreed with the project owner on 2026-11-04.
    Verify: `docker compose config` of `compose.yaml` plus `compose.pilot.yaml` resolves with no `issuer:8443`, no
    `dev_ca`, no simulator and no `build:`; it refuses to start without each required setting; `just ci-fast` and
    `just test-artifact-store-stack` are unaffected.
-2. **Add `provision set-policy`.** One transaction that bumps the generation, with unit and integration tests;
-   `qualify-providers` uses it instead of `psql`.
-   Verify: `just ci-fast`, the provision integration tests.
-3. **Write the runbook.** `deploy/compose/PILOT.md`: host prerequisites, the env file, secret layout, the trust bundle,
+2. **Open the follow-ups.** `provision set-policy` with migration 16, and an upgrade test from the published v0.1.0
+   digest. Neither blocks the pilot.
+3. **Write the runbook.** Done on 2026-11-04: `deploy/compose/PILOT.md`, `generate-pilot-config.sh`,
+   `configure-pilot.sh` and `compose.keycloak.yaml` (Keycloak 26.8.1 by digest). On the laptop, with no provider
+   credential: the bootstrap ran twice with identical identifiers, the v0.1.0 control plane served in production
+   mode, the S3 adapter connected under its Keycloak identity, the owner's token read tenant events (200) while an
+   adapter token and no token were refused (401), and dac-plane stayed ready through a Keycloak restart. Covered: host prerequisites, the env file, secret layout, the trust bundle,
    Keycloak realm and clients, the ordered provisioning commands, deploy, migrate, inspect, backup and restore of
    PostgreSQL and the artifact volume, binary-first upgrade and rollback (ADR-0011), rotation of every credential, and
    one procedure per known limit. Each procedure states its stop conditions.
@@ -90,7 +100,9 @@ Kubernetes, multi-region, high availability, measured SLO, RPO or RTO, a public 
 
 ## Limits to state in the evidence
 
-One host, one PostgreSQL primary, logical backup only. A macOS host running Docker in a Linux VM, not a Linux server. The rolling upgrade has no real newer release to roll to unless
-one is cut first; a self-roll proves the procedure, not schema compatibility across versions, which #74 covered with a
-test-only schema. The provider limits from the #75 and #108 notes. No availability, throughput, cost or production
+One host, one PostgreSQL primary, logical backup only. A macOS host running Docker in a Linux VM, not a Linux server. The
+rolling upgrade has no newer release to roll to; it proves the procedure, and schema compatibility across versions rests
+on the CI upgrade test (#74), which uses a test-only schema until the follow-up moves it to the v0.1.0 digest. The first
+policy is set by a direct update, because v0.1.0 has no provisioning command for it. The pilot overlay and runbook come
+from `main`, because the v0.1.0 Compose bundle predates them. The provider limits from the #75 and #108 notes. No availability, throughput, cost or production
 claim.
