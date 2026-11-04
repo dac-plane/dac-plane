@@ -222,13 +222,18 @@ previous release).
 
 | Credential | Procedure | Downtime |
 |---|---|---|
-| Adapter client secret | Regenerate it on the client's Credentials tab in Keycloak, then write it to the adapter's secret file in `$PILOT_HOME/secrets`. The adapter reads the file on every token fetch. | None; the current connection keeps its token until renewal |
+| Adapter client secret | Regenerate it on the client's Credentials tab in Keycloak, write it to the adapter's secret file in `$PILOT_HOME/secrets`, then `pilot up -d --force-recreate --no-deps ADAPTER`. | Seconds, while the adapter reconnects |
 | Owner client secret | Same, for `pilot-owner` and `owner-client-secret`. | None |
-| TLS certificate | Issue a new one with the CA, replace `config/server.crt` and `secrets/server.key` with `mv` of complete files, then `pilot restart artifact-store-seaweedfs keycloak`. dac-plane reloads its files for new connections. | Brief, for the store and Keycloak |
+| TLS certificate | Issue a new one with the CA, replace `config/server.crt` and `secrets/server.key`, then `pilot up -d --force-recreate dac-plane artifact-store-seaweedfs keycloak`. | Brief |
 | E2B or model key | Replace the file, then `pilot up -d --force-recreate e2b-adapter` or `codex-adapter`. | The adapter reconnects |
 | S3 adapter key | Edit both `s3-adapter-secret` and `s3-identities.json`, then restart `artifact-store-seaweedfs` and `artifact-adapter`. | Brief |
 | Attach key | Replace the file, then recreate `e2b-adapter` and `codex-adapter` together, with no attempt running. | Running attempts lose their exec-server link |
 | Database passwords | `ALTER ROLE ... PASSWORD`, then update the password and URL files and recreate `dac-plane`. | Brief |
+
+Compose bind-mounts each secret as a single file, and the mount stays attached to the file it started with. Replacing
+a file with `mv` or an editor that writes a new file leaves the container reading the deleted original: in the
+rehearsal, a rotated adapter failed with `cannot open the client secret file` at its next renewal. So recreate the
+container after every credential change, as the table says.
 
 Never paste a credential into a command line, log or ticket; write it to its file.
 
