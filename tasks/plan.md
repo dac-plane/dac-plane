@@ -1,122 +1,96 @@
-# Issue #95 — Publish the first supported dac-plane distribution
+# Issue #96 — Operate the first supported dac-plane pilot
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/95
-Branch: `chore/95-first-release`, from `main` at `a4a2798`.
-Parent: #94. Blocks #96 and #97.
+Tracker: https://github.com/dac-plane/dac-plane/issues/96
+Branch: `feat/96-pilot-deployment`, from `main` at `12c724d`.
+Parent: #94. Depends on #95, #75 and #108, all closed. Blocks #97.
 
 ## Where the tree stands
 
-Surveyed on 2026-11-03. Each item blocks a release or changes its design.
+Surveyed on 2026-11-04. Each item blocks the pilot or shapes its design.
 
 | Finding | Evidence | Consequence |
 |---|---|---|
-| No license file | `git ls-files` finds no license or notice file; the repository is public | Nobody may lawfully run or build on a release. The Codex image also redistributes `codex-app-server`, and SPEC section "Licensing / upgrades" asks to retain notices and review terms. |
-| Binaries and images carry no version | No `version` command, `-X` flag or OCI label; `.git` is excluded from the build context | The tag, labels and digest cannot be tied together, which the first acceptance item requires. |
-| The kit's published `go.mod` would pin a flagged dependency | `adapterkit` and `adapters/codex` require `golang.org/x/text v0.14.0`; Trivy reports CVE-2026-56851 and CVE-2026-56852 as HIGH in the Codex binary | Fix before the kit is published, because a published `go.mod` sets the floor for every consumer. `govulncheck` passes on this tree, so it does not catch this. |
-| Two adapter images fail any sensible vulnerability gate | `bookworm-slim`: 1 CRITICAL, 32 HIGH, 1 fixable, on both Codex and E2B. Distroless `dac-plane` and S3 images: 4 UNKNOWN, all fixable | See decision 4. Both adapters are static and neither calls a shell. |
-| `.env` is not in `.dockerignore` | The root `.env` holds the E2B key; `Dockerfile` copies named paths only, so it reaches the local build context and not an image | Exclude it. Add a secret scan of the images as the gate. |
-| Tests need a shell in the Codex adapter image | `qualification_test.go:298` runs `docker exec ... test` in that container | Moving it to distroless means changing those helpers. |
-| Qualification rebuilds its images | Overlays have `build:` sections and `:qualification` default tags | #75's disposition covers local builds. A digest needs a no-build mode in `qualify-providers`. |
-| Amd64 was never live-qualified | The #75 runs used arm64 adapters; the amd64 Codex archive is pinned but its image was never run live | Publish it only with the limit stated, or qualify it. See decision 3. |
-| Nothing protects tags or `main` | No rulesets; `main` is not protected | A signed tag means little if it can move. The exploration rejected AgentOven partly because "the same release tag was moved". |
-| The kit has no README | `adapterkit/` has only code | An external author, and #97, has nothing to start from. |
-
-Ready already: `image-repro` gives identical digests, `MinServeVersion` 13 and `CurrentVersion` 15 exist, OpenAPI is
-at 1.0.0, ControlFrame is protocol 1, ADR-0011 sets the upgrade order, and a signing key is registered on GitHub.
-Confirmed by test: an adapter's `go.mod` can require an unpublished kit version while its `replace` stays, and
-`tidy`, `build` and `verify` all pass.
+| v0.1.0 is published and public | Release is final and Latest; all four images pull anonymously by digest; `adapterkit@v0.1.0` resolves on proxy.golang.org | The pilot deploys these digests. Nothing here rebuilds them. |
+| The published digests have never run against live providers | #96 body and `release-95.md`: earlier live runs used local arm64 builds of an older commit | `just release-qualify v0.1.0` must pass on the pilot's architecture before the pilot claims qualified providers. |
+| The provider overlays only work over the development profile | `compose.codex.yaml`, `compose.e2b.yaml`, `compose.artifacts.yaml` hard-code `DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token` and mount `dev_ca`; `qualify-providers` layers them on `compose.dev.yaml` | No production-shaped way exists to run real adapters against an external issuer. The pilot needs one. `#95` listed it as #96 scope. |
+| Provisioning exists only as fixed dev jobs | `compose.dev.yaml` runs `provision tenant/principal/bind/register-provider/bind-adapter` with fixed IDs and the dev issuer | The pilot needs an operator procedure with its own IDs, issuer and subjects. `provision qualify-harness` exists for the harness qualification. |
+| Tenant policy is set by raw SQL | `qualify-providers` runs `update policy ...` through `psql` as `dac_migrate`; neither `provision` nor Surface API v1 sets policy | An operator procedure that edits tables is not a supported path. See decision 6. |
+| No metrics | No Prometheus, OpenTelemetry or `/metrics` in `internal/` or `cmd/` | "Log/metric collection" in the issue cannot be met for metrics without new code. See decision 7. |
+| Backup and upgrade are proven only with simulators | `operations-74.md`: `pg_dump -Fc` / `pg_restore`, one rolling upgrade with a test-only schema 16, simulators only | The pilot repeats these with real adapters and adds the artifact-store volume, which #74 did not cover. |
+| Only one runbook-like text exists | `deploy/compose/README.md` covers upgrade, rollback and TLS reload | Credential rotation (OIDC clients, provider keys, S3 keys, attach key), inspection and incident procedures are missing. |
+| Known provider limits still apply | `provider-qualification-75.md` and `codex-containment-108.md` "Limits": a provision can stall in `uncertain`, a lost sandbox takes about a minute to end | The runbook needs a procedure for each limit, and the evidence must not claim more. |
 
 ## Decisions
 
-Decided by the project owner on 2026-11-03: Apache-2.0, and `v0.1.0` for both tags.
+Agreed with the project owner on 2026-11-04.
 
-1. **License.** Apache-2.0 for the whole repository.
-2. **Version numbers.** Control plane `v0.1.0` and kit `adapterkit/v0.1.0`, on the same commit. ADR-0008 says a kit
-   major matches a protocol major, which implies kit v1 today. But v1 freezes the kit's API before #97, its first
-   external consumer, has used it, and a break would then need a `/v2` module path. So ADR-0018 records that v0 speaks
-   protocol 1, and that kit v1.0.0 follows #97.
-3. **Architectures.** Publish `linux/amd64` and `linux/arm64`, built natively on GitHub's runners, and state that only
-   arm64 is live-qualified. #96 must qualify amd64 if the pilot runs on it.
-4. **Adapter base image.** Move Codex and E2B to distroless static, like S3. This removes the OS findings instead of
-   allowlisting 33 of them. The fallback, if `codex-app-server` needs the OS, is to keep Debian on Codex only and record
-   each finding.
-5. **Vulnerability gate.** Fail on any fixable HIGH or CRITICAL finding in an image or binary, and on any `govulncheck`
-   finding. Publish everything else as evidence. An unfixable HIGH or CRITICAL finding needs a dated entry, with its
-   reason, in a reviewed file.
-6. **Replace directives.** Keep them in this repository, and require the real kit version in each `go.mod`. This
-   replaces my earlier note that they must go. Removing them would need two commits per release and would stop CI
-   testing adapters against the current kit. Images built from the tag contain exactly the tagged kit, and step 5
-   proves the published kit builds every in-tree adapter.
-7. **Registry.** `ghcr.io/dac-plane/{dac-plane,dac-codex-adapter,dac-e2b-adapter,dac-s3-adapter}`, public. The
-   simulator and `operationstest` targets are not published.
-
-Tags never move and never get deleted. A failed release gets the next patch number. The Go module proxy caches a
-version permanently, so all rehearsal uses `-rc.N` tags.
+1. **Two hosts, in order.** A rehearsal on the development laptop (arm64, OrbStack), then the pilot on a Mac mini the
+   owner has access to (Apple Silicon, so arm64, Docker in a Linux VM). The Mac mini is set up from scratch with the
+   runbook and the release assets only. Its chip, memory, ability to install Docker and Tailscale, and a week of
+   uptime are to be confirmed before step 6.
+2. **Grok Bot is not a deployment reference.** It is vendor-hosted and the exploration only read its desktop client.
+   The deployment model comes from ADR-0009 and ADR-0011; the pilot maps each role (surface, control plane, runtime,
+   sandbox, artifact store) to one instance, with E2B renting the sandbox fleet.
+3. **A separate pilot overlay.** `compose.codex.yaml`, `compose.e2b.yaml`, `compose.containment.yaml` and
+   `compose.artifacts.yaml` are qualification fixtures: they depend on `compose.dev.yaml` for secrets, configs and
+   `provision-qualify`, run under the `qualification` profile, and build local targets. Changing them in place would
+   risk the existing gates. A new `compose.pilot.yaml` layers on `compose.yaml` alone, requires published images, and
+   takes the issuer, trust bundle, provider IDs and credentials from the env file. The adapters already read all of
+   these from the environment, so no Go change is needed.
+4. **One trust bundle.** Each adapter's `DAC_ADAPTER_CA_FILE` replaces its roots for the control plane and token
+   issuer, and the S3 store is reached under the same CA in the qualification profile. The pilot passes one bundle
+   holding every private root it needs. Whether the pilot uses a private CA throughout or a Tailscale certificate for
+   the Surface API is a runbook choice; the overlay only takes file paths.
+5. **Real issuer.** Keycloak in a container on the pilot host, with one confidential client per adapter role and a
+   distinct audience for the Surface API and the adapter endpoint. `DAC_DEPLOYMENT=production`, so a development issuer
+   is refused.
+6. **Tenant policy.** Add `provision set-policy`, so no operator procedure edits tables. `qualify-providers` switches to
+   it.
+7. **Metrics.** Structured logs plus health and readiness only. Metrics are a stated limit with a follow-up issue and
+   their own ADR.
+8. **Evidence.** `docs/architecture/pilot-96.md`, with commands, versions, digests, durations and limits. Host names
+   and endpoints that are not meant to be public stay out.
 
 ## Steps
 
-1. **Record the release contract.** License and third-party notices. ADR-0018: versioning, the compatibility set, the
-   gate, and tags never moving. Kit README.
-   Verify: notices cover every Go dependency and `codex-app-server`.
-2. **Make the tree releasable.** Bump `x/text` in the kit and Codex adapter. Refresh the distroless digest. Extend
-   `.dockerignore`. Add `dac-plane version`, printing version, revision, schema range and protocol. Add `VERSION` and
-   `REVISION` build arguments and OCI labels to all four targets. Move Codex and E2B to distroless and replace the
-   shell-based test helpers.
-   Verify: `just ci-fast`, `just image-repro`, Trivy shows no fixable HIGH or CRITICAL, and `just qualify-providers`
-   passes on the new bases.
-3. **Build per architecture.** A `release-image` recipe builds one target for one platform with fixed timestamps and
-   no inline attestations, since those would change the digest. `image-repro` keeps checking that two builds match.
-   Verify: identical digests on amd64 and arm64 from one tree.
-4. **Write the release workflow.** `.github/workflows/release.yml`, on `v*` tags, with a protected `release`
-   environment. `ci.yml` and `security.yml` gain `workflow_call`.
-   Order: verify the tag, full CI, build each architecture twice and compare, publish by digest, join into one index,
-   scan, attest provenance and SBOM, clean-room, and only then the GitHub Release.
-   Tag check: both tags exist on one commit, GitHub reports both signatures verified, and every `go.mod` requires that
-   kit version.
-   Least privilege per job, actions pinned by SHA, scanners installed by checksum. I will check current action versions
-   upstream at this point, because Context7 is not connected in this session.
-   Verify: `just lint-workflows`.
-5. **Add the clean room.** `just verify-release <tag>`, from an empty directory with no Docker credentials, and
-   `GOWORK=off`:
-   - Pull all four images by digest and check labels against the tag.
-   - Run `dac-plane version`, then `migrate` and `serve` on the base Compose stack until `health ready` passes.
-   - Check `gh attestation verify` for each image.
-   - Compile `adapterkit/examples/minimal` against the published kit, and run `adapter-conformance` at that version.
-   - Drop the `replace` from a copy of each in-tree adapter and build it against the published kit.
-6. **Rehearse, including failures.** Push `v0.1.0-rc.1` and `adapterkit/v0.1.0-rc.1` to `ghcr.io/dac-plane/dry-run/*`.
-   Prove the gate stops on an unsigned tag, a mismatched kit version, a planted vulnerable dependency and a planted
-   fake secret, and that nothing reaches the release namespace in those runs.
-   Then run the full `just qualify-providers` against the rc digests, with no build.
-7. **Write the notes.** `docs/releases/v0.1.0.md`: the compatibility table (image digests, kit, schema 13 to 15,
-   Surface API v1, protocol 1, Codex 0.165.0, E2B template source, SeaweedFS 4.51, PostgreSQL 16), upgrade order and
-   rollback limits from ADR-0011, known limits from the #75 note, and how to report a vulnerability. No availability or
-   support claim. Assets: OpenAPI, JSON Schemas, base Compose stack, SBOMs, scan results, and a digest manifest for #96.
-8. **Release.** Add tag rulesets, enable immutable releases, and have the project owner sign and push `v0.1.0` and
-   `adapterkit/v0.1.0`. Rerun the clean room against the published release. Record the evidence in
-   `docs/architecture/release-95.md`, including failed runs. Tick the #95 acceptance items and link the digests from
-   #96 and #91's promotion rule.
-
-## Layout checked against established projects
-
-Compared on 2026-11-03 with containerd, Prometheus, cert-manager, dex, cosign, the OpenTelemetry Collector, Tempo,
-Temporal and Keycloak, and with OpenSSF Scorecard's checks. Scripts moved to `scripts/release`, the external adapter
-became a kit example, and `SECURITY.md`, `RELEASES.md`, `CODEOWNERS`, Dependabot and Scorecard were added. Following
-Keycloak, `RELEASES.md` states policy for users, and the procedure and note template live in `docs/releases`.
+1. **Add `compose.pilot.yaml`.** Codex (contained), E2B, SeaweedFS behind HAProxy and the S3 adapter over the base
+   stack, every image by digest with no `build:`, and a `provision` tool service under a `tools` profile so the operator
+   runs `docker compose run --rm provision ...`.
+   Verify: `docker compose config` of `compose.yaml` plus `compose.pilot.yaml` resolves with no `issuer:8443`, no
+   `dev_ca`, no simulator and no `build:`; it refuses to start without each required setting; `just ci-fast` and
+   `just test-artifact-store-stack` are unaffected.
+2. **Add `provision set-policy`.** One transaction that bumps the generation, with unit and integration tests;
+   `qualify-providers` uses it instead of `psql`.
+   Verify: `just ci-fast`, the provision integration tests.
+3. **Write the runbook.** `deploy/compose/PILOT.md`: host prerequisites, the env file, secret layout, the trust bundle,
+   Keycloak realm and clients, the ordered provisioning commands, deploy, migrate, inspect, backup and restore of
+   PostgreSQL and the artifact volume, binary-first upgrade and rollback (ADR-0011), rotation of every credential, and
+   one procedure per known limit. Each procedure states its stop conditions.
+4. **Qualify the published digests on the laptop.** `just release-qualify v0.1.0`.
+   Verify: the run passes and the log credential scan finds nothing.
+5. **Rehearse on the laptop.** Follow the runbook from an empty directory with the release assets: deploy, a real
+   lifecycle through the Surface API, cancellation, backup and restore, an upgrade, rotation. Fix the runbook wherever
+   a step had to be improvised.
+6. **Run the pilot on the Mac mini.** The same runbook, from scratch. Leave it running, reach it from the laptop over
+   Tailscale, and repeat the lifecycle and operations scenarios there.
+   Verify: `health ready` everywhere, `dac-plane version` reports v0.1.0 and schema 13 to 15, all three adapters
+   connected with their own identities, and the event stream, audit trail and E2B's sandbox listing agree.
+7. **Record the evidence.** `docs/architecture/pilot-96.md`, including failed runs. Tick the #96 acceptance items, link
+   the note from #96 and #94, and give #97 the endpoint and issuer it should use.
 
 ## Owner-only actions
 
-Choosing the license, signing and pushing the final tags, approving the `release` environment, making the packages
-public, and turning on private vulnerability reporting and Dependabot alerts. The environments, tag ruleset and
-immutable releases were applied on 2026-11-03.
+Access to the Mac mini, and permission from whoever owns it to hold provider credentials and run continuously. Holding
+the Codex and E2B credentials, and any usage cost they incur. Approving that the pilot endpoint may be reachable by #97.
 
 ## Out of scope
 
-Compose overlays for real providers, an OIDC issuer, backup and operating the pilot (#96). The reference application
-(#97). Kubernetes. Protecting `main`, which is worth doing but is not needed for a tag gate. Moving the rolling-upgrade
-fixture from `ca20b3e` to a published digest, which should follow the first release.
+Kubernetes, multi-region, high availability, measured SLO, RPO or RTO, a public multi-tenant service, an example UI
+(#97), a metrics endpoint, and Kubernetes packaging, which ADR-0009 defers to its own decision.
 
-## Limits to carry into the release notes
+## Limits to state in the evidence
 
-Live evidence is one full run on one arm64 host, from before the rebuilt images, until step 6 repeats it. A provision
-can still stall as the #75 note records. Reproducibility is proved on GitHub's runners for this Dockerfile only, and
-E2B Cloud's own build cannot be pinned.
+One host, one PostgreSQL primary, logical backup only. A macOS host running Docker in a Linux VM, not a Linux server. The rolling upgrade has no real newer release to roll to unless
+one is cut first; a self-roll proves the procedure, not schema compatibility across versions, which #74 covered with a
+test-only schema. The provider limits from the #75 and #108 notes. No availability, throughput, cost or production
+claim.
