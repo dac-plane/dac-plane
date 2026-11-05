@@ -81,6 +81,7 @@ Agreed with the project owner on 2026-11-04.
 5. **Rehearse on the laptop.** Follow the runbook from an empty directory with the release assets: deploy, a real
    lifecycle through the Surface API, cancellation, backup and restore, an upgrade, rotation. Fix the runbook wherever
    a step had to be improvised.
+   Done on 2026-11-04 and 2026-11-05; results and the four fixes it forced are in `docs/architecture/pilot-96.md`.
 6. **Run the pilot on the Mac mini.** The same runbook, from scratch. Leave it running, reach it from the laptop over
    Tailscale, and repeat the lifecycle and operations scenarios there.
    Verify: `health ready` everywhere, `dac-plane version` reports v0.1.0 and schema 13 to 15, all three adapters
