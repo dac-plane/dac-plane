@@ -90,6 +90,7 @@ printf '{"identities":[{"name":"operator","credentials":[{"accessKey":"dac-opera
 # Keycloak's access tokens carry typ "Bearer" and a JWT header typ of "JWT",
 # not at+jwt, so the type check is off. Each audience is issued only by this
 # realm's audience scopes, which is the condition authn.IssuerConfig sets.
+if [ -e "$config/identity.json" ]; then chmod 0600 "$config/identity.json"; fi
 cat >"$config/identity.json" <<'EOF'
 {
   "issuers": [

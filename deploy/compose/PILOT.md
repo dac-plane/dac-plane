@@ -172,31 +172,37 @@ no metrics endpoint in v0.1.0.
 
 ## 9. Back up and restore
 
-A backup is the two databases and the artifact store's volume, taken together, plus `$PILOT_HOME`, which the operator
-keeps encrypted elsewhere.
+A backup is the two databases and three volumes, taken together: the artifact store's objects and the state of the
+Codex and E2B adapters, each of which records the operations it holds for the control plane. `$PILOT_HOME`, which
+holds the keys, is kept encrypted elsewhere by the operator.
 
 ```sh
 backup="$HOME/dac-pilot-backups/$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$backup"
+debian=debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+pilot stop codex-adapter e2b-adapter artifact-adapter artifact-store-seaweedfs
 pilot exec -T postgres pg_dump -U dac_migrate -Fc dac >"$backup/dac.dump"
 pilot exec -T keycloak-db pg_dump -U keycloak -Fc keycloak >"$backup/keycloak.dump"
-pilot stop artifact-adapter artifact-store-seaweedfs
-docker run --rm -v dac-pilot_artifact-data:/data:ro -v "$backup:/backup" \
-  debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 \
-  tar -C /data -czf /backup/artifact-data.tgz .
-pilot start artifact-store-seaweedfs artifact-adapter
+for volume in artifact-data codex-data e2b-data; do
+  docker run --rm -v "dac-pilot_$volume:/data:ro" -v "$backup:/backup" "$debian" \
+    tar -C /data -czf "/backup/$volume.tgz" .
+done
+pilot start artifact-store-seaweedfs artifact-adapter e2b-adapter codex-adapter
 ```
 
-The artifact store stops while its volume is copied, so the copy is consistent. Take backups while no task is running,
-so no artifact commit falls into that window.
+The adapters and the store stop before the database dump and stay stopped until every volume is copied, so the
+databases and the volumes describe the same moment. Take backups while no task is running: a stopped adapter fails a
+running attempt.
 
-Restore into an empty stack: `pilot down -v`, `pilot up -d --wait postgres keycloak-db`, then
+Restore into an empty stack: `pilot down -v`, then `pilot create`, which recreates the volumes empty, then
+`pilot up -d --wait postgres keycloak-db`, then
 
 ```sh
 pilot exec -T postgres pg_restore -U dac_migrate -d dac <"$backup/dac.dump"
 pilot exec -T keycloak-db pg_restore -U keycloak -d keycloak <"$backup/keycloak.dump"
-docker run --rm -v dac-pilot_artifact-data:/data -v "$backup:/backup:ro" \
-  debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 \
-  tar -C /data -xzf /backup/artifact-data.tgz
+for volume in artifact-data codex-data e2b-data; do
+  docker run --rm -v "dac-pilot_$volume:/data" -v "$backup:/backup:ro" "$debian" \
+    tar -C /data -xzf "/backup/$volume.tgz"
+done
 pilot up -d --wait
 ```
 
@@ -224,9 +230,9 @@ previous release).
 |---|---|---|
 | Adapter client secret | Regenerate it on the client's Credentials tab in Keycloak, write it to the adapter's secret file in `$PILOT_HOME/secrets`, then `pilot up -d --force-recreate --no-deps ADAPTER`. | Seconds, while the adapter reconnects |
 | Owner client secret | Same, for `pilot-owner` and `owner-client-secret`. | None |
-| TLS certificate | Issue a new one with the CA, replace `config/server.crt` and `secrets/server.key`, then `pilot up -d --force-recreate dac-plane artifact-store-seaweedfs keycloak`. | Brief |
+| TLS certificate | Move `config/server.crt` and `secrets/server.key` aside, run `generate-pilot-config.sh` again with the same arguments, which issues a new pair from the same CA, then `pilot up -d --force-recreate dac-plane artifact-store-seaweedfs keycloak`, and delete the old pair once the new serial is served. | About 25 seconds: the adapters reconnect after Keycloak returns |
 | E2B or model key | Replace the file, then `pilot up -d --force-recreate e2b-adapter` or `codex-adapter`. | The adapter reconnects |
-| S3 adapter key | Edit both `s3-adapter-secret` and `s3-identities.json`, then restart `artifact-store-seaweedfs` and `artifact-adapter`. | Brief |
+| S3 adapter key | Write a new value to `s3-adapter-secret`, run `generate-pilot-config.sh` again, which rewrites `s3-identities.json` from it, then `pilot up -d --wait --force-recreate --no-deps artifact-store-seaweedfs artifact-adapter`, with no task storing an artifact. | About 15 seconds |
 | Attach key | Replace the file, then recreate `e2b-adapter` and `codex-adapter` together, with no attempt running. | Running attempts lose their exec-server link |
 | Database passwords | `ALTER ROLE ... PASSWORD`, then update the password and URL files and recreate `dac-plane`. | Brief |
 
@@ -243,6 +249,7 @@ Never paste a credential into a command line, log or ticket; write it to its fil
 |---|---|---|
 | A task stays in `provisioning` | An E2B create outlasted the send timeout, or its reply was lost, so the operation is `uncertain` ([#75 note](../../docs/architecture/provider-qualification-75.md#limits)) | Cancel the task through the Surface API; it ends once the environment stop is confirmed. Check E2B's sandbox list for a leftover sandbox. |
 | A task takes about a minute to fail after a sandbox is lost | Codex reports the lost link, then the adapter waits for it to return ([#108 note](../../docs/architecture/codex-containment-108.md#limits)) | None; it ends on its own. |
+| Adapters log `the token endpoint refused the client credentials` | Any failed token fetch reads so, including while Keycloak restarts | A stop condition only if it continues once `keycloak` is healthy; then check the client id, its secret file and the client in Keycloak. |
 | A turn is reported ended while its command still runs | After a runtime restart, until the environment stop lands, up to about 40 seconds | Treat the report alone as no proof the command ended; wait for the attempt to end. |
 
 ## Limits

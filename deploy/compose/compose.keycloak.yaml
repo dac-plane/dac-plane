@@ -48,6 +48,9 @@ services:
       KC_HTTPS_CERTIFICATE_FILE: /run/config/keycloak.crt
       KC_HTTPS_CERTIFICATE_KEY_FILE: /run/secrets/keycloak.key
       KC_HEALTH_ENABLED: "true"
+      # Health is served on the unpublished management port 9000 over plain
+      # HTTP, so the health check below needs no client certificate trust.
+      KC_HTTP_MANAGEMENT_SCHEME: http
       KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
     configs:
       - source: tls_cert
@@ -62,8 +65,17 @@ services:
         condition: service_healthy
     ports:
       - "${DAC_ISSUER_BIND:-127.0.0.1}:${DAC_ISSUER_PORT:-18443}:8443"
+    # Healthy means ready: an open port alone admits callers while Keycloak
+    # still answers 503 "Bootstrap in progress", and dac-plane exits when its
+    # issuer discovery gets that answer. The image has no HTTP client, so the
+    # check speaks HTTP over bash's /dev/tcp.
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8443"]
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000
+          && printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          && grep -q '"status": "UP"' <&3
       start_period: 60s
       interval: 5s
       timeout: 3s
