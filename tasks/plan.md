@@ -87,6 +87,7 @@ Agreed with the project owner on 2026-11-04.
    Tailscale, and repeat the lifecycle and operations scenarios there.
    Verify: `health ready` everywhere, `dac-plane version` reports v0.1.0 and schema 13 to 15, all three adapters
    connected with their own identities, and the event stream, audit trail and E2B's sandbox listing agree.
+   Done on 2026-11-05, reached over SSH rather than Tailscale; recorded in `docs/architecture/pilot-96.md`.
 7. **Record the evidence.** `docs/architecture/pilot-96.md`, including failed runs. Tick the #96 acceptance items, link
    the note from #96 and #94, and give #97 the endpoint and issuer it should use.
 

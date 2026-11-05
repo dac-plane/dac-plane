@@ -1,8 +1,9 @@
 # Pilot operation evidence — issue #96
 
-Status: **rehearsal done, pilot pending.** The published v0.1.0 digests passed the live provider qualification, and
-the laptop rehearsal below ran the runbook end to end on them with real providers. The pilot on the Mac mini (plan
-step 6) has not run yet; its results will be added here. Nothing below is a production or availability claim.
+Status: **pilot operated.** The published v0.1.0 digests passed the live provider qualification. A laptop rehearsal
+ran the runbook end to end with real providers and fixed it wherever a step failed or had to be improvised, and the
+pilot then ran from scratch on a separate Mac mini with the corrected runbook. Nothing below is a production or
+availability claim.
 
 The runbook is [`deploy/compose/PILOT.md`](../../deploy/compose/PILOT.md). The deployment is
 [`compose.yaml`](../../deploy/compose/compose.yaml) with [`compose.pilot.yaml`](../../deploy/compose/compose.pilot.yaml)
@@ -56,7 +57,31 @@ logs. Codex reported app-server 0.165.0.
 | Containment: an open approval survives a control plane restart | 58.4 s |
 | Containment: a runtime restart ends an open approval | 27.0 s |
 
-## Scenarios
+## Pilot host
+
+A Mac mini (Apple M4, 24 GB, macOS 26.6.2) on the company network, operated from the laptop over SSH with key
+authentication. Colima 0.10.3 (`vz`, 4 CPUs, 8 GB, 60 GB disk), Docker Engine 29.5.2 (linux/aarch64), Docker Compose
+5.7.0, OpenSSL 3.6.2, jq 1.7.1. The Compose files and scripts were copied from this branch (`ed03645`, plus the
+bootstrap admin step below), and the release manifest from the laptop, where `gh release download` had fetched it;
+its SHA-256 matched on both hosts. The Mac mini reached ghcr.io, quay.io, Docker Hub, Camer and E2B directly. Runs
+took place on 2026-11-05 between 09:57 and 10:16 local time.
+
+| Scenario | Result | Time | Observed |
+|---|---|---|---|
+| Configure | Pass | 117 s, then 4 s | First run pulled every image and provisioned; the second reused every identifier, its policy update changed 0 rows. |
+| Bootstrap admin replaced | Pass | 4 s | `configure-pilot.sh` created `pilot-admin`, deleted `bootstrap-admin` and rotated the admin password file. `bootstrap-admin` then gets `invalid_grant`; `pilot-admin` is the only `master` user and holds `admin`. A later run signed in as `pilot-admin`. |
+| Deploy and verify | Pass | 56 s | All services up and healthy; `dac-plane version` v0.1.0, schema 13 to 15; `health ready`; all three adapters connected. |
+| Lifecycle | Pass | 44 s | One approval, task `succeeded`; the committed artifact is 6 bytes with digest `sha256:0628e754…12bd7`, which is the SHA-256 of `pilot\n`. |
+| Cancellation | Pass | 55 s, 12 s after the cancel | `runtime_stopped`, `environment_stopped`, `cancelled`. E2B listed 0 sandboxes before, 1 (`dac-codex-exec`) during the run and at the cancel, and 0 after. |
+| Remote access | Pass | | From the laptop through an SSH tunnel (PILOT.md step 7): the owner's token, fetched through the tunnel, gets 200 on tenant events; no token gets 401. On the host both ports listen on 127.0.0.1 only. |
+| Backup and restore | Pass | 43 s backup, 48 s restore | The PILOT.md commands as written: no warnings, tasks identical, three adapters reconnected, no `dac-plane` exit. A new task succeeded in 44 s and `pilot-admin` still signed in. |
+| Binary-first roll | Pass | 3 s control plane, 1 s adapters | Schema 15 before and after `migrate up`; `health ready`. |
+| Runtime client secret rotation | Pass | | Regenerated in Keycloak: old secret 401, new 200. Written to its file, `codex-adapter` recreated. Over the next 330 seconds, past a token renewal, it connected twice with no secret-file error and no failed connection. A task then succeeded in 41 s. |
+
+At the end every service was up, every health-checked service healthy, and no container had restarted. The
+TLS, S3 key and attach key rotations were exercised on the laptop only.
+
+## Rehearsal scenarios
 
 The task scenarios used a driver that calls the Surface API with the owner's token: submit, approve the one
 `action_approval` the task raises, and accept the revision.
@@ -97,6 +122,14 @@ Every failure is recorded.
   writable first, as it already did for the database URLs.
 - **The TLS and S3 rotation rows were not exact.** "Issue a new one with the CA" and "restart" became the commands
   that were run.
+- **The bootstrap admin step was not a procedure.** On the Mac mini, the runbook's "create a permanent admin with the
+  admin console or `kcadm.sh`" named no commands, and `configure-pilot.sh` signed in as `bootstrap-admin`, so it would
+  have broken once that user was deleted. The script now makes the replacement itself and signs in as the recorded
+  admin afterwards.
+- **Remote access needed no exposed port.** The runbook only described binding the published ports to a reachable
+  address. It now starts with an SSH tunnel, which kept both ports on the Mac mini's loopback.
+- **Colima's Compose plugin was not found.** Homebrew's `docker-compose` needs `cliPluginsExtraDirs` in
+  `~/.docker/config.json`; the prerequisites now say so.
 
 ## Observations
 
@@ -109,14 +142,12 @@ Every failure is recorded.
   unusable answer as such (`adapterkit/clientcredentials.go`). The v0.1.0 images the pilot runs still carry the old
   message, so PILOT.md lists it as a symptom that is a stop condition only once Keycloak is healthy again.
 
-## Not covered by the rehearsal
+## Not covered
 
-- E2B's sandbox listing was read after the cancellation, not during the run.
-- The bootstrap admin was not replaced by a named administrator.
 - The E2B and model keys, the owner secret and the database passwords were not rotated; the first two need new keys
   from the providers.
 - An upgrade to a newer release: v0.1.0 is the only one ([#116](https://github.com/dac-plane/dac-plane/issues/116)).
-- The Mac mini pilot.
+- Continuous operation: the pilot ran for about 20 minutes of scenarios, not a soak.
 
 ## Limits
 
