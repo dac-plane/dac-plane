@@ -29,7 +29,10 @@ E2B and the model provider is outbound.
 - An arm64 host. The released images are live-qualified on arm64 only; on amd64, run `just release-qualify` there
   first.
 - Docker with Compose v2.24.4 or later (for `!reset` and `!override`), `openssl`, `jq` and `curl`. On macOS, Docker
-  runs in a Linux VM (Docker Desktop, OrbStack or Colima); give it at least 4 CPUs and 8 GB.
+  runs in a Linux VM (Docker Desktop, OrbStack or Colima); give it at least 4 CPUs and 8 GB. Colima runs headless,
+  which suits a host reached over SSH: `brew install colima docker docker-compose`, add
+  `"cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]` to `~/.docker/config.json` so `docker compose`
+  finds the plugin, then `colima start --cpu 4 --memory 8 --disk 60 --vm-type vz`.
 - The release's `release-manifest.json`, and the Compose files from the same commit as this runbook: `compose.yaml`,
   `compose.pilot.yaml`, `compose.keycloak.yaml`, `init-db.sh`, `artifact-store-haproxy.cfg`,
   `generate-pilot-config.sh` and `configure-pilot.sh`. The v0.1.0 Compose bundle predates the pilot files, so take
@@ -93,7 +96,10 @@ This starts Keycloak and PostgreSQL, then:
    account, the artifact store, runtime and environment providers, each adapter binding, and the runtime's live
    harness qualification;
 5. sets the first policy: `process.exec` and `fs.write` ask the owner;
-6. records every identifier in `$PILOT_HOME/pilot.ids` and the provider identifiers in `pilot.env`.
+6. records every identifier in `$PILOT_HOME/pilot.ids` and the provider identifiers in `pilot.env`;
+7. replaces Keycloak's temporary `bootstrap-admin` with a permanent `pilot-admin` in the `master` realm, under a new
+   password it writes to `secrets/keycloak-admin-password`, deletes `bootstrap-admin` once `pilot-admin` has signed in,
+   and records `DAC_KEYCLOAK_ADMIN_USERNAME=pilot-admin` in `pilot.env` for later runs.
 
 It is safe to run again: recorded identifiers are reused and every provisioning operation is idempotent.
 
@@ -101,9 +107,6 @@ Keycloak issues `sub` as the service account's user id, not the client id, so th
 policy step is a direct database update, because v0.1.0 has no provisioning command for policy
 ([#115](https://github.com/dac-plane/dac-plane/issues/115)); it only applies to the empty policy tenant creation
 wrote.
-
-Then replace Keycloak's bootstrap admin, which exists only to make the first changes: create a permanent admin in the
-`master` realm with the admin console or `kcadm.sh`, and delete `bootstrap-admin`.
 
 ## 5. Deploy
 
@@ -146,8 +149,18 @@ An adapter's token, or none, gets 401 there: the two audiences never cross.
 
 ## 7. Reach it from another machine
 
-Bind the published ports to an address other machines reach, for example the host's Tailscale address, in
-`pilot.env` (`DAC_SURFACE_BIND`, `DAC_ISSUER_BIND`), and `pilot up -d`. The certificate must name the host as the
+The simplest way keeps both ports on the host's loopback and forwards them over SSH from the caller:
+
+```sh
+ssh -f -N -L 28443:127.0.0.1:8443 -L 38443:127.0.0.1:18443 PILOT_HOST
+curl --cacert ca.crt --connect-to keycloak:8443:127.0.0.1:38443 https://keycloak:8443/realms/dac/...
+curl --cacert ca.crt --connect-to dac-plane:8443:127.0.0.1:28443 https://dac-plane:8443/v1/...
+```
+
+`ca.crt` is a copy of `$PILOT_HOME/config/ca.crt`, which is public. Nothing is published beyond the host.
+
+To serve callers without SSH instead, bind the published ports to an address other machines reach, for example the
+host's Tailscale address, in `pilot.env` (`DAC_SURFACE_BIND`, `DAC_ISSUER_BIND`), and `pilot up -d`. The certificate must name the host as the
 caller addresses it (step 2). The caller trusts `config/ca.crt` and keeps the names the issuer and certificate carry:
 
 ```sh

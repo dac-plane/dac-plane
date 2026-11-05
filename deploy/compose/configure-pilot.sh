@@ -4,7 +4,8 @@
 # `dac` realm with one confidential client per adapter role and one for the
 # pilot's owner, migrates the schema, provisions the tenant, owner, providers
 # and bindings through `dac-plane provision`, seeds the harness qualification
-# and the first policy, and records every identifier. It is safe to run again:
+# and the first policy, replaces Keycloak's temporary bootstrap admin with a
+# permanent one, and records every identifier. It is safe to run again:
 # identifiers already recorded in PILOT_HOME/pilot.ids are reused.
 #
 # usage: configure-pilot.sh PILOT_HOME COMPOSE_DIR
@@ -73,10 +74,15 @@ until curl -fsS -o /dev/null --cacert "$DAC_TRUST_BUNDLE_FILE" --connect-to "$kc
   [ "$tries" -lt 90 ] || { echo "Keycloak did not become ready" >&2; exit 1; }
   sleep 2
 done
-admin_token=$(curl -fsS --cacert "$DAC_TRUST_BUNDLE_FILE" --connect-to "$kc_connect" \
-  https://keycloak:8443/realms/master/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=admin-cli -d username=bootstrap-admin \
-  --data-urlencode "password=$(cat "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE")" | jq -er .access_token)
+# The bootstrap admin until this script has replaced it, then the permanent one.
+admin_user=${DAC_KEYCLOAK_ADMIN_USERNAME:-bootstrap-admin}
+admin_login() {
+  curl -fsS --cacert "$DAC_TRUST_BUNDLE_FILE" --connect-to "$kc_connect" \
+    https://keycloak:8443/realms/master/protocol/openid-connect/token \
+    -d grant_type=password -d client_id=admin-cli -d "username=$1" \
+    --data-urlencode "password=$(cat "$2")" | jq -er .access_token
+}
+admin_token=$(admin_login "$admin_user" "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE")
 
 if ! kc GET /dac >/dev/null 2>&1; then
   kc POST "" -H 'Content-Type: application/json' \
@@ -154,4 +160,29 @@ SQL
 for name in DAC_RUNTIME_PROVIDER_ID DAC_ENVIRONMENT_PROVIDER_ID DAC_ARTIFACT_PROVIDER_ID; do
   grep -q "^$name=" "$env_file" || grep "^$name=" "$ids" >>"$env_file"
 done
+
+# Keycloak's bootstrap admin is temporary by design. Replace it with
+# pilot-admin under a new password, and delete it only once the new admin has
+# signed in. The password file is rewritten in place, so the file Keycloak's
+# container has mounted stays the same file.
+if [ "$admin_user" = bootstrap-admin ]; then
+  new_password="$secrets/keycloak-admin-password.new"
+  [ -s "$new_password" ] || openssl rand -hex 24 >"$new_password"
+  if ! kc GET "/master/users?username=pilot-admin&exact=true" | jq -e 'length == 1' >/dev/null; then
+    jq -Rn --rawfile p "$new_password" '{username: "pilot-admin", enabled: true,
+      credentials: [{type: "password", value: ($p | rtrimstr("\n")), temporary: false}]}' |
+      kc POST /master/users -H 'Content-Type: application/json' --data-binary @-
+  fi
+  permanent=$(kc GET "/master/users?username=pilot-admin&exact=true" | jq -er '.[0].id')
+  kc GET /master/roles/admin | jq -c '[.]' |
+    kc POST "/master/users/$permanent/role-mappings/realm" -H 'Content-Type: application/json' --data-binary @-
+  admin_token=$(admin_login pilot-admin "$new_password")
+  temporary=$(kc GET "/master/users?username=bootstrap-admin&exact=true" | jq -r '.[0].id // empty')
+  [ -z "$temporary" ] || kc DELETE "/master/users/$temporary"
+  chmod 0600 "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
+  cat "$new_password" >"$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
+  chmod 0444 "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
+  rm -f "$new_password"
+  grep -q '^DAC_KEYCLOAK_ADMIN_USERNAME=' "$env_file" || echo 'DAC_KEYCLOAK_ADMIN_USERNAME=pilot-admin' >>"$env_file"
+fi
 echo "pilot configured: tenant $DAC_TENANT_ID, owner $DAC_OWNER_PRINCIPAL_ID; identifiers in $ids"
