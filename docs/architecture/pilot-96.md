@@ -1,8 +1,8 @@
 # Pilot operation evidence — issue #96
 
-Status: **rehearsal done, pilot pending.** The laptop rehearsal below ran the runbook end to end on the published
-v0.1.0 digests with real providers. The pilot on the Mac mini (plan step 6) and `just release-qualify v0.1.0` (plan
-step 4) have not run yet; their results will be added here. Nothing below is a production or availability claim.
+Status: **rehearsal done, pilot pending.** The published v0.1.0 digests passed the live provider qualification, and
+the laptop rehearsal below ran the runbook end to end on them with real providers. The pilot on the Mac mini (plan
+step 6) has not run yet; its results will be added here. Nothing below is a production or availability claim.
 
 The runbook is [`deploy/compose/PILOT.md`](../../deploy/compose/PILOT.md). The deployment is
 [`compose.yaml`](../../deploy/compose/compose.yaml) with [`compose.pilot.yaml`](../../deploy/compose/compose.pilot.yaml)
@@ -29,6 +29,32 @@ and [`compose.keycloak.yaml`](../../deploy/compose/compose.keycloak.yaml), confi
 Darwin arm64 (macOS 27.0.1), OrbStack 2.2.5, Docker Engine 29.8.2 (linux/arm64), Docker Compose 5.5.0. The control
 plane ran with `DAC_DEPLOYMENT=production`, the Surface API and the issuer published on 127.0.0.1 only. Runs took
 place on 2026-11-04 and 2026-11-05.
+
+## Release qualification
+
+`just release-qualify v0.1.0` on 2026-11-05, 07:52 to 08:05 UTC, with `DAC_E2B_TEMPLATE_ID=dac-codex-exec`: it pulls
+the four images by the digests in the release manifest and runs the [#75](provider-qualification-75.md) and
+[#108](codex-containment-108.md) scenarios against them with no local build. The recipe exited 0: all 15 scenarios
+passed in 743.5 seconds, all three adapters connected, no simulator ran and no provider key appeared in the Compose
+logs. Codex reported app-server 0.165.0.
+
+| Scenario | Time |
+|---|---|
+| Cancellation: active command | 74.0 s |
+| Cancellation: environment adapter down | 51.1 s |
+| Cancellation: control plane restart | 40.6 s |
+| Cancellation: runtime adapter restart | 39.6 s |
+| Cancellation: interrupt lost with its adapter | 38.6 s |
+| Cancellation: start lost with its adapter | 31.6 s |
+| Cancellation: stop lost with its adapter | 81.5 s |
+| Containment: commands run in the sandbox | 35.8 s |
+| Containment: credentials stay out of the workload | 38.7 s |
+| Containment: egress stays denied | 91.6 s |
+| Containment: stopping the environment alone ends the work | 60.3 s |
+| Containment: runtime restart | 32.1 s |
+| Containment: a result is read from the sandbox | 42.2 s |
+| Containment: an open approval survives a control plane restart | 58.4 s |
+| Containment: a runtime restart ends an open approval | 27.0 s |
 
 ## Scenarios
 
@@ -90,7 +116,7 @@ Every failure is recorded.
 - The E2B and model keys, the owner secret and the database passwords were not rotated; the first two need new keys
   from the providers.
 - An upgrade to a newer release: v0.1.0 is the only one ([#116](https://github.com/dac-plane/dac-plane/issues/116)).
-- `just release-qualify v0.1.0` and the Mac mini pilot.
+- The Mac mini pilot.
 
 ## Limits
 

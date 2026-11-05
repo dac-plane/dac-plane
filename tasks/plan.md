@@ -78,6 +78,7 @@ Agreed with the project owner on 2026-11-04.
    one procedure per known limit. Each procedure states its stop conditions.
 4. **Qualify the published digests on the laptop.** `just release-qualify v0.1.0`.
    Verify: the run passes and the log credential scan finds nothing.
+   Done on 2026-11-05: 15 of 15 scenarios in 743.5 seconds, exit 0; recorded in `docs/architecture/pilot-96.md`.
 5. **Rehearse on the laptop.** Follow the runbook from an empty directory with the release assets: deploy, a real
    lifecycle through the Surface API, cancellation, backup and restore, an upgrade, rotation. Fix the runbook wherever
    a step had to be improvised.
