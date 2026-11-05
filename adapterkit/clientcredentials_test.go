@@ -73,3 +73,53 @@ func TestClientCredentialsErrorsNeverCarryTheSecret(t *testing.T) {
 		t.Fatal("ClientCredentials accepted a configuration without a client")
 	}
 }
+
+func TestClientCredentialsTellsARefusalFromAnUnavailableEndpoint(t *testing.T) {
+	answer := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}
+	}
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		closed  bool
+		want    string
+	}{
+		{name: "client authentication failed", handler: answer(http.StatusUnauthorized, `{"error":"invalid_client","error_description":"canary-secret"}`), want: "refused the client credentials"},
+		{name: "grant rejected", handler: answer(http.StatusBadRequest, `{"error":"unauthorized_client"}`), want: "refused the client credentials"},
+		{name: "issuer starting", handler: answer(http.StatusServiceUnavailable, `Bootstrap in progress canary-secret`), want: "answered HTTP 503"},
+		{name: "issuer down", closed: true, want: "could not be reached"},
+		{name: "unusable answer", handler: answer(http.StatusOK, `{"access_token":`), want: "unusable response"},
+	}
+	secretFile := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secretFile, []byte("canary-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			handler := c.handler
+			if handler == nil {
+				handler = answer(http.StatusOK, `{}`)
+			}
+			server := httptest.NewTLSServer(handler)
+			client := server.Client()
+			url := server.URL
+			if c.closed {
+				server.Close()
+			} else {
+				defer server.Close()
+			}
+			source, err := adapterkit.ClientCredentials(adapterkit.ClientCredentialsConfig{TokenURL: url, ClientID: "adapter-1", SecretFile: secretFile, HTTPClient: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = source(context.Background())
+			if err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "canary-secret") {
+				t.Fatalf("error = %v, want one containing %q and not the secret or body", err, c.want)
+			}
+		})
+	}
+}

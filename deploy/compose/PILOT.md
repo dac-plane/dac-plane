@@ -249,7 +249,7 @@ Never paste a credential into a command line, log or ticket; write it to its fil
 |---|---|---|
 | A task stays in `provisioning` | An E2B create outlasted the send timeout, or its reply was lost, so the operation is `uncertain` ([#75 note](../../docs/architecture/provider-qualification-75.md#limits)) | Cancel the task through the Surface API; it ends once the environment stop is confirmed. Check E2B's sandbox list for a leftover sandbox. |
 | A task takes about a minute to fail after a sandbox is lost | Codex reports the lost link, then the adapter waits for it to return ([#108 note](../../docs/architecture/codex-containment-108.md#limits)) | None; it ends on its own. |
-| Adapters log `the token endpoint refused the client credentials` | Any failed token fetch reads so, including while Keycloak restarts | A stop condition only if it continues once `keycloak` is healthy; then check the client id, its secret file and the client in Keycloak. |
+| Adapters log `the token endpoint refused the client credentials` | In v0.1.0 every failed token fetch reads so, including while Keycloak restarts. Later releases say `could not be reached` or `answered HTTP 503` for those and keep this message for a real refusal. | A stop condition only if it continues once `keycloak` is healthy; then check the client id, its secret file and the client in Keycloak. |
 | A turn is reported ended while its command still runs | After a runtime restart, until the environment stop lands, up to about 40 seconds | Treat the report alone as no proof the command ended; wait for the attempt to end. |
 
 ## Limits

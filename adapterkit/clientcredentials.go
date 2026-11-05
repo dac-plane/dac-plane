@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -56,13 +58,36 @@ func ClientCredentials(config ClientCredentialsConfig) (TokenSource, error) {
 		}
 		token, err := grant.Token(context.WithValue(ctx, oauth2.HTTPClient, client))
 		if err != nil {
-			return Token{}, errors.New("adapterkit: the token endpoint refused the client credentials")
+			return Token{}, tokenError(err)
 		}
 		if token.AccessToken == "" || token.Expiry.IsZero() {
 			return Token{}, errors.New("adapterkit: the token endpoint returned no access token with an expiry")
 		}
 		return Token{Value: token.AccessToken, Expiry: token.Expiry}, nil
 	}, nil
+}
+
+// tokenError tells a refusal of the credentials apart from an endpoint that
+// could not be reached or failed, so an issuer restart does not read as a
+// wrong secret. The response body is never included: an issuer may echo what
+// it was sent.
+func tokenError(err error) error {
+	var refused *oauth2.RetrieveError
+	if errors.As(err, &refused) && refused.Response != nil {
+		// RFC 6749 §5.2 answers a rejected grant with 400, or 401 for client
+		// authentication.
+		switch code := refused.Response.StatusCode; code {
+		case http.StatusBadRequest, http.StatusUnauthorized:
+			return errors.New("adapterkit: the token endpoint refused the client credentials")
+		default:
+			return fmt.Errorf("adapterkit: the token endpoint answered HTTP %d", code)
+		}
+	}
+	var transport *url.Error
+	if errors.As(err, &transport) {
+		return fmt.Errorf("adapterkit: the token endpoint could not be reached: %w", transport.Err)
+	}
+	return errors.New("adapterkit: the token endpoint returned an unusable response")
 }
 
 func readSecret(path string) (string, error) {

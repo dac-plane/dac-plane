@@ -78,8 +78,10 @@ Every failure is recorded.
   same transaction that dispatches it, before the send (`internal/worker/artifact.go`), and the reply reconciles it.
   This is the stage replay contract of the [#26 note](artifact-results-26.md), not a lost reply.
 - **A Keycloak restart reads as refused credentials.** The adapter kit reports every failed token fetch as `the token
-  endpoint refused the client credentials`, including a connection failure while Keycloak restarts. PILOT.md lists it
-  as a symptom that is a stop condition only once Keycloak is healthy again.
+  endpoint refused the client credentials`, including a connection failure while Keycloak restarts. Fixed on this
+  branch: the kit keeps that message for HTTP 400 and 401 and reports an unreachable endpoint, another status or an
+  unusable answer as such (`adapterkit/clientcredentials.go`). The v0.1.0 images the pilot runs still carry the old
+  message, so PILOT.md lists it as a symptom that is a stop condition only once Keycloak is healthy again.
 
 ## Not covered by the rehearsal
 
