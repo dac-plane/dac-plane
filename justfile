@@ -270,6 +270,40 @@ qualify-task-cancellation: stack-certs
 check-containment-compose: stack-certs
     DAC_CODEX_API_KEY_FILE=/dev/null DAC_E2B_API_KEY_FILE=/dev/null DAC_ENVIRONMENT_ATTACH_KEY_FILE=/dev/null DAC_E2B_TEMPLATE_ID=template docker compose --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.e2b.yaml -f deploy/compose/compose.containment.yaml --profile dev --profile qualification config -q
 
+# The pilot overlay is only deployed by an operator, so CI checks that it
+# composes over the base stack alone and stays production-shaped: no
+# development issuer, simulator or local build, every image by digest, the
+# deployment mode pinned, only the Surface API published, and no default for a
+# required setting.
+[group('test')]
+check-pilot-compose:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=.work/pilot-compose
+    mkdir -p "$work"
+    digest="sha256:$(printf '0%.0s' {1..64})"
+    export DAC_DEPLOYMENT=development
+    for name in DAC_IDENTITY_CONFIG_FILE DAC_TLS_CERT_FILE DAC_TLS_KEY_FILE DAC_POSTGRES_MIGRATE_PASSWORD_FILE DAC_POSTGRES_SERVE_PASSWORD_FILE DAC_MIGRATE_DATABASE_URL_FILE DAC_SERVE_DATABASE_URL_FILE DAC_TRUST_BUNDLE_FILE DAC_RUNTIME_CLIENT_SECRET_FILE DAC_ENVIRONMENT_CLIENT_SECRET_FILE DAC_ARTIFACT_CLIENT_SECRET_FILE DAC_ENVIRONMENT_ATTACH_KEY_FILE DAC_CODEX_API_KEY_FILE DAC_E2B_API_KEY_FILE DAC_S3_IDENTITIES_FILE DAC_S3_OPERATOR_SECRET_FILE DAC_S3_ADAPTER_SECRET_FILE; do export "$name=/dev/null"; done
+    for name in DAC_PLANE_IMAGE DAC_CODEX_ADAPTER_IMAGE DAC_E2B_ADAPTER_IMAGE DAC_S3_ADAPTER_IMAGE; do export "$name=registry.invalid/image@$digest"; done
+    for name in DAC_ADAPTER_TOKEN_URL DAC_CODEX_BASE_URL; do export "$name=https://placeholder.invalid/"; done
+    for name in DAC_RUNTIME_CLIENT_ID DAC_ENVIRONMENT_CLIENT_ID DAC_ARTIFACT_CLIENT_ID DAC_RUNTIME_PROVIDER_ID DAC_ENVIRONMENT_PROVIDER_ID DAC_ARTIFACT_PROVIDER_ID DAC_CODEX_MODEL_PROVIDER DAC_CODEX_MODEL DAC_E2B_TEMPLATE_ID; do export "$name=placeholder"; done
+    compose=(docker compose -p dac-pilot-check -f deploy/compose/compose.yaml -f deploy/compose/compose.pilot.yaml --profile tools)
+    "${compose[@]}" config >"$work/resolved.yaml"
+    fail() { echo "pilot overlay: $1" >&2; exit 1; }
+    if grep -n -E 'issuer:8443|dev_ca|dac-sim|sim-adapter|^ *build:' "$work/resolved.yaml"; then fail "resolves to a development or build reference"; fi
+    if grep -E '^ *image:' "$work/resolved.yaml" | grep -v '@sha256:'; then fail "an image is not named by digest"; fi
+    [[ "$(grep -c 'DAC_DEPLOYMENT: production' "$work/resolved.yaml")" == 1 ]] || fail "DAC_DEPLOYMENT is not pinned to production"
+    [[ "$("${compose[@]}" config --format json | jq -c '[.services[] | .ports // [] | .[] | {host_ip, target}]')" == '[{"host_ip":"127.0.0.1","target":8443}]' ]] || fail "something besides the Surface API is published, or not on loopback by default"
+    for name in DAC_PLANE_IMAGE DAC_TRUST_BUNDLE_FILE DAC_ADAPTER_TOKEN_URL DAC_RUNTIME_PROVIDER_ID DAC_E2B_TEMPLATE_ID DAC_CODEX_MODEL; do
+      if (unset "$name"; "${compose[@]}" config -q 2>/dev/null); then fail "$name has a default"; fi
+    done
+    # The reference issuer composes over the pilot and publishes only its own port beside the Surface API.
+    export DAC_KEYCLOAK_DB_PASSWORD_FILE=/dev/null DAC_KEYCLOAK_ADMIN_PASSWORD_FILE=/dev/null
+    [[ "$("${compose[@]}" -f deploy/compose/compose.keycloak.yaml config --format json | jq -c '[.services[] | .ports // [] | .[] | {host_ip, target}] | sort_by(.target)')" == '[{"host_ip":"127.0.0.1","target":8443},{"host_ip":"127.0.0.1","target":8443}]' ]] || fail "the Keycloak overlay publishes something unexpected"
+    sh -n deploy/compose/generate-pilot-config.sh
+    sh -n deploy/compose/configure-pilot.sh
+    echo "pilot overlay is production-shaped"
+
 # The artifact store profile needs no provider secret. The simulated runtime
 # uploads through the S3 adapter's presigned HTTPS capability, so the deployed
 # lifecycle commits real bytes to SeaweedFS. It also checks that only HTTPS is
