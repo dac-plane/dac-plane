@@ -46,8 +46,15 @@ compose() {
   docker compose -p dac-pilot --project-directory "$compose_dir" \
     -f "$compose_dir/compose.yaml" -f "$compose_dir/compose.pilot.yaml" -f "$compose_dir/compose.keycloak.yaml" "$@"
 }
+# Records the identifier a provisioning step returned. An empty one means the
+# step failed inside its command substitution, which `set -e` does not catch,
+# so the script stops. An empty entry an earlier failed run left is replaced.
 record() {
-  grep -q "^$1=" "$ids" || printf '%s=%s\n' "$1" "$2" >>"$ids"
+  [ -n "$2" ] || { echo "no $1 was returned; nothing recorded" >&2; exit 1; }
+  if ! grep -q "^$1=." "$ids"; then
+    sed -i.bak "/^$1=\$/d" "$ids" && rm -f "$ids.bak"
+    printf '%s=%s\n' "$1" "$2" >>"$ids"
+  fi
   export "$1=$2"
 }
 provision() {
@@ -75,14 +82,21 @@ until curl -fsS -o /dev/null --cacert "$DAC_TRUST_BUNDLE_FILE" --connect-to "$kc
   sleep 2
 done
 # The bootstrap admin until this script has replaced it, then the permanent one.
+# A replacement that stopped part way keeps pilot-admin's new password in
+# $pending, so a later run signs in with that first.
 admin_user=${DAC_KEYCLOAK_ADMIN_USERNAME:-bootstrap-admin}
+pending="$secrets/keycloak-admin-password.new"
 admin_login() {
   curl -fsS --cacert "$DAC_TRUST_BUNDLE_FILE" --connect-to "$kc_connect" \
     https://keycloak:8443/realms/master/protocol/openid-connect/token \
     -d grant_type=password -d client_id=admin-cli -d "username=$1" \
     --data-urlencode "password=$(cat "$2")" | jq -er .access_token
 }
-admin_token=$(admin_login "$admin_user" "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE")
+if [ -s "$pending" ] && admin_token=$(admin_login pilot-admin "$pending" 2>/dev/null); then
+  :
+else
+  admin_token=$(admin_login "$admin_user" "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE")
+fi
 
 if ! kc GET /dac >/dev/null 2>&1; then
   kc POST "" -H 'Content-Type: application/json' \
@@ -162,27 +176,30 @@ for name in DAC_RUNTIME_PROVIDER_ID DAC_ENVIRONMENT_PROVIDER_ID DAC_ARTIFACT_PRO
 done
 
 # Keycloak's bootstrap admin is temporary by design. Replace it with
-# pilot-admin under a new password, and delete it only once the new admin has
-# signed in. The password file is rewritten in place, so the file Keycloak's
-# container has mounted stays the same file.
-if [ "$admin_user" = bootstrap-admin ]; then
-  new_password="$secrets/keycloak-admin-password.new"
-  [ -s "$new_password" ] || openssl rand -hex 24 >"$new_password"
-  if ! kc GET "/master/users?username=pilot-admin&exact=true" | jq -e 'length == 1' >/dev/null; then
-    jq -Rn --rawfile p "$new_password" '{username: "pilot-admin", enabled: true,
-      credentials: [{type: "password", value: ($p | rtrimstr("\n")), temporary: false}]}' |
-      kc POST /master/users -H 'Content-Type: application/json' --data-binary @-
+# pilot-admin under a new password. Every step can be repeated, so a run that
+# stops part way resumes: the new password stays in $pending until both the
+# password file and pilot.env name pilot-admin, and bootstrap-admin is deleted
+# only after that. The password file is rewritten in place, so the file
+# Keycloak's container has mounted stays the same file.
+if [ "$admin_user" = bootstrap-admin ] || [ -s "$pending" ]; then
+  [ -s "$pending" ] || openssl rand -hex 24 >"$pending"
+  pilot_admin_id() { kc GET "/master/users?username=pilot-admin&exact=true" | jq -r '.[0].id // empty'; }
+  permanent=$(pilot_admin_id)
+  if [ -z "$permanent" ]; then
+    kc POST /master/users -H 'Content-Type: application/json' -d '{"username":"pilot-admin","enabled":true}'
+    permanent=$(pilot_admin_id)
   fi
-  permanent=$(kc GET "/master/users?username=pilot-admin&exact=true" | jq -er '.[0].id')
+  jq -Rn --rawfile p "$pending" '{type: "password", value: ($p | rtrimstr("\n")), temporary: false}' |
+    kc PUT "/master/users/$permanent/reset-password" -H 'Content-Type: application/json' --data-binary @-
   kc GET /master/roles/admin | jq -c '[.]' |
     kc POST "/master/users/$permanent/role-mappings/realm" -H 'Content-Type: application/json' --data-binary @-
-  admin_token=$(admin_login pilot-admin "$new_password")
-  temporary=$(kc GET "/master/users?username=bootstrap-admin&exact=true" | jq -r '.[0].id // empty')
-  [ -z "$temporary" ] || kc DELETE "/master/users/$temporary"
-  chmod 0600 "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
-  cat "$new_password" >"$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
-  chmod 0444 "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
-  rm -f "$new_password"
+  admin_token=$(admin_login pilot-admin "$pending")
   grep -q '^DAC_KEYCLOAK_ADMIN_USERNAME=' "$env_file" || echo 'DAC_KEYCLOAK_ADMIN_USERNAME=pilot-admin' >>"$env_file"
+  chmod 0600 "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
+  cat "$pending" >"$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
+  chmod 0444 "$DAC_KEYCLOAK_ADMIN_PASSWORD_FILE"
+  rm -f "$pending"
 fi
+temporary=$(kc GET "/master/users?username=bootstrap-admin&exact=true" | jq -r '.[0].id // empty')
+[ -z "$temporary" ] || kc DELETE "/master/users/$temporary"
 echo "pilot configured: tenant $DAC_TENANT_ID, owner $DAC_OWNER_PRINCIPAL_ID; identifiers in $ids"

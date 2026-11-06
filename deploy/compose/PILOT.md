@@ -225,9 +225,17 @@ through the Surface API after restore differs from before.
 ## 10. Upgrade and roll back
 
 Follow [ADR-0011](../../docs/adr/0011-roll-compatible-binaries-before-schema-migrations.md) and the order in
-[README.md](README.md#upgrade-and-rollback): back up; confirm with `migrate status` that the new release serves the
-current schema; set the new digests in `pilot.env`; `pilot up -d --wait dac-plane` and then the adapters, with the
-schema unchanged; then `pilot run --rm migrate`, whose default command is `migrate up`; then verify (step 6).
+[README.md](README.md#upgrade-and-rollback): back up (step 9), set the new digests in `pilot.env`, then
+
+```sh
+pilot run --rm migrate migrate status       # the new release must serve the current schema
+pilot up -d --wait --force-recreate --no-deps dac-plane
+pilot up -d --wait --force-recreate --no-deps artifact-adapter e2b-adapter codex-adapter
+pilot run --rm migrate                      # its default command is migrate up
+```
+
+then verify (step 6). Every roll takes `--no-deps`: `dac-plane` depends on `migrate`, which runs the same image, so
+`pilot up dac-plane` without it would recreate `migrate` and apply the new schema before the binaries have rolled.
 
 Roll back by restoring the previous digests while the schema is inside that release's range. `migrate down-to`
 refuses a downgrade that would discard evidence; that refusal is a stop condition, not a prompt to delete data.
@@ -245,9 +253,9 @@ previous release).
 | Owner client secret | Same, for `pilot-owner` and `owner-client-secret`. | None |
 | TLS certificate | Move `config/server.crt` and `secrets/server.key` aside, run `generate-pilot-config.sh` again with the same arguments, which issues a new pair from the same CA, then `pilot up -d --force-recreate dac-plane artifact-store-seaweedfs keycloak`, and delete the old pair once the new serial is served. | About 25 seconds: the adapters reconnect after Keycloak returns |
 | E2B or model key | Replace the file, then `pilot up -d --force-recreate e2b-adapter` or `codex-adapter`. | The adapter reconnects |
-| S3 adapter key | Write a new value to `s3-adapter-secret`, run `generate-pilot-config.sh` again, which rewrites `s3-identities.json` from it, then `pilot up -d --wait --force-recreate --no-deps artifact-store-seaweedfs artifact-adapter`, with no task storing an artifact. | About 15 seconds |
+| S3 adapter key | Write a new value from `openssl rand -hex 24` to `s3-adapter-secret`, run `generate-pilot-config.sh` again, which rewrites `s3-identities.json` from it, then `pilot up -d --wait --force-recreate --no-deps artifact-store-seaweedfs artifact-adapter`, with no task storing an artifact. | About 15 seconds |
 | Attach key | Replace the file, then recreate `e2b-adapter` and `codex-adapter` together, with no attempt running. | Running attempts lose their exec-server link |
-| Database passwords | `ALTER ROLE ... PASSWORD`, then update the password and URL files and recreate `dac-plane`. | Brief |
+| Database passwords | Write a new value from `openssl rand -hex 24` to the role's password file and set it with `ALTER ROLE ... PASSWORD`, run `generate-pilot-config.sh` again, which rewrites the URL files from it, then recreate `dac-plane`. | Brief |
 
 Compose bind-mounts each secret as a single file, and the mount stays attached to the file it started with. Replacing
 a file with `mv` or an editor that writes a new file leaves the container reading the deleted original: in the

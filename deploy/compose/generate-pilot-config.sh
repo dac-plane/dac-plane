@@ -74,6 +74,19 @@ if [ ! -s "$config/server.crt" ] || [ ! -s "$secrets/server.key" ]; then
   rm -f "$secrets/server.csr"
 fi
 
+# The database URLs and the S3 identities below take these values verbatim, so
+# each must hold only characters that need no escaping in a URL or in JSON.
+# openssl rand -hex writes such values; a replacement outside them is refused
+# rather than encoded.
+for name in postgres-migrate-password postgres-serve-password s3-operator-secret s3-adapter-secret; do
+  value=$(cat "$secrets/$name")
+  case "$value" in
+    '' | *[!A-Za-z0-9._~-]*)
+      echo "$secrets/$name must hold only letters, digits and . _ ~ -, for example from openssl rand -hex 24" >&2
+      exit 1
+      ;;
+  esac
+done
 migrate_password=$(cat "$secrets/postgres-migrate-password")
 serve_password=$(cat "$secrets/postgres-serve-password")
 for name in migrate-database-url serve-database-url s3-identities.json; do
