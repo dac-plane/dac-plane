@@ -32,7 +32,31 @@ type session struct {
 
 type streamKey struct{ operation, stream string }
 
-type openStream struct{ cancel context.CancelFunc }
+// openStream is one subscribed stream. Its events are written under the
+// session's context, because a write whose context ends mid-frame closes the
+// whole WebSocket connection; mu orders each write against end, so no event
+// of an ended stream follows the unsubscribe that ended it.
+type openStream struct {
+	cancel context.CancelFunc
+	mu     sync.Mutex
+}
+
+// end stops the stream, after any event it is writing.
+func (o *openStream) end() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.cancel()
+}
+
+// emit writes one event unless the stream has ended.
+func (o *openStream) emit(ctx, stream context.Context, write func(context.Context) error) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if stream.Err() != nil {
+		return stream.Err()
+	}
+	return write(ctx)
+}
 
 // connect dials, upgrades and negotiates one session.
 func connect(ctx context.Context, config Config, client *http.Client) (*session, error) {
@@ -232,7 +256,7 @@ func (s *session) subscribe(ctx context.Context, handlers *sync.WaitGroup, curso
 	opened := &openStream{cancel: cancel}
 	s.mu.Lock()
 	if previous := s.streams[key]; previous != nil {
-		previous.cancel()
+		previous.end()
 	}
 	s.streams[key] = opened
 	s.mu.Unlock()
@@ -253,7 +277,10 @@ func (s *session) subscribe(ctx context.Context, handlers *sync.WaitGroup, curso
 				Tenant: cursor.Tenant, Attempt: cursor.Attempt, Provider: s.config.Provider, Operation: cursor.Operation,
 				Stream: cursor.Stream, Generation: cursor.Generation, Body: body,
 			}
-			if err := s.write(sctx, wire.Frame{Kind: wire.KindEvent, Event: &event}); err != nil {
+			err = opened.emit(ctx, sctx, func(wctx context.Context) error {
+				return s.write(wctx, wire.Frame{Kind: wire.KindEvent, Event: &event})
+			})
+			if err != nil {
 				if !errors.Is(err, wire.ErrMalformed) {
 					return
 				}
@@ -268,7 +295,7 @@ func (s *session) unsubscribe(key streamKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if open := s.streams[key]; open != nil {
-		open.cancel()
+		open.end()
 		delete(s.streams, key)
 	}
 }
