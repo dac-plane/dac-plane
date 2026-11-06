@@ -20,6 +20,23 @@ adopts only the provider-neutral contract semantics supported by that evidence.
 
 ## Views
 
+### Overview
+
+[Editable Excalidraw source](overview.excalidraw) · [Rendered PNG](overview.png)
+
+Question answered: **What is dac-plane, and how do the tools around it connect?**
+
+Audience: anyone new to the project.
+
+dac-plane owns the record of delegated work. Surfaces call it through the Surface API. Agent runtimes,
+environments, enforcement gateways and artifact stores connect to it through adapters and never write
+the record. An OIDC identity provider issues the tokens that people and adapters present. The tools
+named in each layer are examples of what fits there.
+
+Open the source at [excalidraw.com](https://excalidraw.com) to edit it, then export the PNG at about
+1900 pixels wide. Product logos are trademarks of their owners, shown only to name the tools. The
+generic icons are from [Tabler Icons](https://tabler.io/icons) (MIT).
+
 ### Responsibility and ownership
 
 [Editable Draw.io source](responsibility-map.drawio) · [Rendered SVG](responsibility-map.svg) ·

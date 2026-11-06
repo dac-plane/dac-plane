@@ -2,6 +2,8 @@
 
 dac-plane keeps the durable record of work you delegate to AI agents: tasks, attempts, approvals, budgets, artifacts, audit, results and reviews. The agent runtime and the environment it runs in stay replaceable.
 
+![dac-plane sits between the surfaces where people ask for work and the providers that do it. Surfaces such as web, chat, Slack, IDEs, tickets, schedules, the API and apps call it through the Surface API. Agent runtimes, environments, enforcement gateways and artifact stores connect to it through adapters. An OIDC identity provider issues the tokens.](docs/architecture/overview.png)
+
 It currently runs Codex in E2B sandboxes with S3-compatible artifact storage, and other providers can connect through the [adapter kit](adapterkit/README.md). It is ready for self-hosted pilots. See the [known limits](docs/releases/v0.1.0.md#known-limits) before you rely on it.
 
 ## Documentation
