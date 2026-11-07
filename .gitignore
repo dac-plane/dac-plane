@@ -23,3 +23,8 @@ architecture-explore/plane-bot-explore/evidence/analysis/native-thin/
 
 # Zensical build cache, written next to mkdocs.yml
 /.cache/
+
+# Copied into the user guide by `just docs-build` and `just docs-serve`
+/docs/guides/assets/redoc/
+/docs/guides/jsonschema/
+/docs/guides/reference/surface-v1.json

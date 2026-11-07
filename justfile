@@ -714,18 +714,12 @@ vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_versi
     cd {{ e2b_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ s3_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
 
-# Zensical renders the pages and warnings fail the build. The Surface API
-# reference also needs the OpenAPI document, the JSON Schemas it references and
-# the pinned Redoc bundle, copied in afterwards.
+# Zensical renders the pages and warnings fail the build.
 # Build the documentation site from docs/guides/ into .work/site
 [group('docs')]
-docs-build: _zensical _redoc
+docs-build: _zensical _docs-generated
     rm -rf {{ site_dir }}
     {{ zensical_dir }}/bin/zensical build --strict
-    mkdir -p {{ site_dir }}/assets/redoc
-    cp {{ tools_dir }}/redoc-{{ redoc_version }}/* {{ site_dir }}/assets/redoc/
-    cp contracts/openapi/surface-v1.json {{ site_dir }}/reference/
-    cp -R contracts/jsonschema {{ site_dir }}/jsonschema
 
 # External links are checked by a scheduled workflow, so an outside site never
 # fails a PR. The 404 page links absolutely under the published path /dac-plane/,
@@ -749,11 +743,22 @@ docs-links: docs-build _lychee
       --exclude '^https?://(127\.0\.0\.1|localhost|dac-plane|issuer|keycloak)[:/]' --exclude 'example\.com' --exclude '^https://dac-plane\.github\.io/dac-plane/' \
       '{{ site_dir }}/**/*.html'
 
-# The Surface API reference page needs the files docs-build copies.
-# Serve the documentation with live reload at http://127.0.0.1:8000
+# Serve the documentation with live reload at http://localhost:8000/dac-plane/
 [group('docs')]
-docs-serve: _zensical
+docs-serve: _zensical _docs-generated
     {{ zensical_dir }}/bin/zensical serve
+
+# The Surface API reference page renders contracts/openapi/surface-v1.json and
+# the JSON Schemas it references with the pinned Redoc bundle. They are copied
+# into docs/guides/, where .gitignore keeps them out of the tree, so a build and
+# a live-reloading serve both publish them.
+[private]
+_docs-generated: _redoc
+    rm -rf docs/guides/assets/redoc docs/guides/jsonschema docs/guides/reference/surface-v1.json
+    mkdir -p docs/guides/assets/redoc
+    cp {{ tools_dir }}/redoc-{{ redoc_version }}/* docs/guides/assets/redoc/
+    cp contracts/openapi/surface-v1.json docs/guides/reference/
+    cp -R contracts/jsonschema docs/guides/jsonschema
 
 # Re-pin the documentation build tools after editing docs/requirements.in (needs uv)
 [group('docs')]

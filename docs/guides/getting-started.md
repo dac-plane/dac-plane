@@ -81,12 +81,19 @@ auth=(-H "Authorization: Bearer $token")
 ## Submit a task
 
 A submission names the runtime and the environment to use, what done means, a deadline, and a budget: here, up to
-1000 tokens, with 100 reserved to start. Every command carries an `Idempotency-Key`, so retrying it is safe.
+1000 tokens, with 100 reserved to start.
+
+Every command carries an `Idempotency-Key`. Choose the key and the deadline once, before the request, so the request
+can be sent again unchanged:
 
 ```bash
+key=$(uuidgen)
 deadline=$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+1H +%Y-%m-%dT%H:%M:%SZ)
+```
+
+```bash
 task=$(curl -fsS "${api[@]}" "${auth[@]}" -X POST "$base/tasks" \
-  -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $key" -H 'Content-Type: application/json' \
   -d '{
     "provider_id": "'"$runtime"'",
     "environment_provider_id": "'"$environment"'",
@@ -100,6 +107,10 @@ echo "$task"
 ```
 
 dac-plane creates an attempt, the environment is provisioned and the runtime starts.
+
+If the response is lost, run the request block again as it is. With the same key and the same body, dac-plane
+returns the task it already created instead of creating a second one. A new key is a new submission, and the same
+key with a different body is refused with `422`.
 
 ## Answer the attention request
 
