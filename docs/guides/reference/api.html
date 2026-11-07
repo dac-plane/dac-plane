@@ -3,6 +3,11 @@
   The Surface API reference, rendered by Redoc from contracts/openapi/surface-v1.json.
   `just docs-build` copies the spec, the JSON Schemas it references and the pinned
   Redoc bundle into the site; the page loads nothing from any other origin.
+
+  style-src allows 'unsafe-inline' because Redoc styles itself by injecting
+  styles at run time; without it the page does not render, and a static site
+  has no per-request nonce to use instead. Scripts stay limited to 'self', and
+  the page renders only the OpenAPI document from this repository.
 -->
 <html lang="en">
 <head>
