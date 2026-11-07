@@ -1,0 +1,85 @@
+name: docs
+
+# Publishes the user guide in docs/guides to GitHub Pages from main. The CI
+# workflow's Documentation job checks the same build on every pull request;
+# this one builds again from the merged commit and deploys it. A weekly run
+# checks the guide's external links, which pull requests never do, so an
+# outside site going down cannot block a merge.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  JUST_VERSION: 1.57.0
+
+jobs:
+  build:
+    name: Build the guide
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          go-cache: 'false'
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Restore documentation tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .work/tools/zensical-*
+            .work/tools/lychee-*
+            .work/tools/redoc-*
+          key: docs-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('justfile', 'docs/requirements.txt') }}
+
+      - name: Build and check the guide
+        if: github.event_name != 'schedule'
+        run: just docs-check
+
+      - name: Check external links
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: just docs-links
+
+      - name: Upload the site
+        if: github.event_name != 'schedule'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .work/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'schedule' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
