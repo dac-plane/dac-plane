@@ -22,7 +22,7 @@ adopts only the provider-neutral contract semantics supported by that evidence.
 
 ### Overview
 
-[Editable Excalidraw source](overview.excalidraw) · [Rendered PNG](overview.png)
+[Editable Excalidraw source](../guides/assets/overview.excalidraw) · [Rendered PNG](../guides/assets/overview.png)
 
 Question answered: **What is dac-plane, and how do the tools around it connect?**
 

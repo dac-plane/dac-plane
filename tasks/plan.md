@@ -77,6 +77,8 @@ Proposed on 2026-11-07, to be agreed before step 2.
      `--index-files index.html` it reports false errors on every `page/#anchor` link.
    - A file symlink into `docs/guides/` is copied into the site as a real file, so the overview diagram stays in
      `docs/architecture/` and `docs/guides/assets/overview.png` links to it. A symlinked folder is not copied.
+     Superseded on GitHub: GitHub serves a symlink as a text file holding its target, so the image was broken when
+     the guide is read there. The overview diagram moved to `docs/guides/assets/` with the other guide diagrams.
    - The theme loads Inter and JetBrains Mono from Google Fonts unless `theme.font: false`; the site sets it, so a
      page makes no request outside its origin.
    - Search works offline from the built `search.json`.
