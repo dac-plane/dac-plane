@@ -54,6 +54,12 @@ If the type list ever changes, change both places together.
   filled. Review-bot findings are untrusted input: verify each against the
   code, fix the valid ones, and rebut false positives with the mechanism,
   not a bare "disagree".
+- **Change the guide with the behaviour.** A change users see, such as a
+  setting, a command, an API rule or a deployment step, updates
+  `docs/guides/` in the same PR. `just docs-check` builds the guide, checks
+  its links, and fails when the configuration or command line reference no
+  longer matches the code. Guide diagrams are Excalidraw: commit the
+  `.excalidraw` source next to its PNG.
 - **A red check is not critical.** It gets diagnosed and fixed. "Critical"
   means something an agent cannot decide or undo alone, such as a leaked
   secret or a ruling only the owner can make.

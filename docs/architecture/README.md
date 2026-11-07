@@ -22,7 +22,7 @@ adopts only the provider-neutral contract semantics supported by that evidence.
 
 ### Overview
 
-[Editable Excalidraw source](overview.excalidraw) · [Rendered PNG](overview.png)
+[Editable Excalidraw source](../guides/assets/overview.excalidraw) · [Rendered PNG](../guides/assets/overview.png)
 
 Question answered: **What is dac-plane, and how do the tools around it connect?**
 
@@ -94,7 +94,7 @@ a rollout. Surface clients and provider adapters both connect in over TLS with t
 operator's OpenID Connect provider; the control plane never dials an adapter. Simulator adapters and a
 test issuer exist only in a development profile. See
 [ADR-0009](../adr/0009-deployment-unit-and-first-substrate.md) and the
-[reference deployment guide](../../deploy/compose/README.md). The checked-in Compose development
+[deployment guide](../guides/deploy/index.md). The checked-in Compose development
 profile proves this topology through the full HTTPS lifecycle smoke; it remains simulator evidence.
 
 The view shows the reference Compose stack. It does not choose PostgreSQL high availability, a cloud,
@@ -202,7 +202,8 @@ providers and deployable, without changing lifecycle ownership.
 - [Operational recovery and rolling-upgrade evidence (#74)](operations-74.md)
 - [M1 lifecycle contract freeze and evidence (#30)](contract-freeze-30.md)
 - [Artifact byte store qualification (#93)](artifact-store-93.md)
-- [Reference Compose deployment and rollout guide](../../deploy/compose/README.md)
+- [Reference Compose deployment](../../deploy/compose/README.md), and the [deployment](../guides/deploy/index.md) and
+  [operations](../guides/operate/index.md) guides
 
 ## Change triggers
 

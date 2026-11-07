@@ -26,17 +26,9 @@ Creates set `autoPause=false`, so an expired sandbox is killed. A paused sandbox
 
 ## Configuration
 
-| Setting | Purpose |
-|---|---|
-| `DAC_ADAPTER_URL` | DAC adapter WebSocket endpoint |
-| `DAC_PROVIDER_ID` | registered environment provider UUID |
-| `DAC_ADAPTER_TOKEN_FILE` or client-credentials settings | adapter authentication |
-| `DAC_E2B_BASE_URL` | E2B Cloud API origin; defaults to `https://api.e2b.app` in qualification |
-| `DAC_E2B_API_KEY_FILE` | file-mounted E2B Cloud team key for the adapter process |
-| `DAC_E2B_TEMPLATE_ID` | E2B Cloud template ID; qualification defaults to `base` |
-| `DAC_E2B_STATE` | persistent bbolt state path |
-| `DAC_E2B_SANDBOX_TIMEOUT` | sandbox lifetime as a Go duration such as `1h`; defaults to `1h` |
-| `DAC_ENVIRONMENT_ATTACH_KEY_FILE` | key shared with the runtime adapter; set, each task sandbox starts exec-server, which needs the template below |
+Every setting the executable reads is in the [configuration reference](../../docs/guides/reference/configuration.md#dac-e2b-adapter), with the
+[settings every adapter shares](../../docs/guides/reference/configuration.md#every-adapter). Setting `DAC_ENVIRONMENT_ATTACH_KEY_FILE` makes each task
+sandbox start exec-server, which needs the template below.
 
 `just build-e2b-codex-template` builds [`template/e2b.Dockerfile`](template/e2b.Dockerfile) with the pinned CLI. See
 [ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md).

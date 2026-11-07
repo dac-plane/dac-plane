@@ -1,0 +1,41 @@
+# The documentation site. Zensical reads this file; build it with `just docs-build`
+# and check it with `just docs-check`. Only docs/guides/ is built: ADRs, the
+# architecture baseline and evidence notes stay on GitHub and are linked from it.
+site_name: dac-plane
+site_description: The durable record of work you delegate to AI agents.
+site_url: https://dac-plane.github.io/dac-plane/
+repo_url: https://github.com/dac-plane/dac-plane
+repo_name: dac-plane/dac-plane
+edit_uri: edit/main/docs/guides/
+docs_dir: docs/guides
+site_dir: .work/site
+
+theme:
+  # The theme fetches fonts from Google unless this is off; the site makes no
+  # request outside its own origin.
+  font: false
+  features:
+    - content.code.copy
+    - navigation.sections
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts: concepts.md
+  - Deploy: deploy/index.md
+  - Operate: operate/index.md
+  - Use the Surface API: use/surface-api.md
+  - Write an adapter: extend/adapters.md
+  - Reference:
+      - Configuration: reference/configuration.md
+      - Command line: reference/cli.md
+      - Surface API: reference/api.html

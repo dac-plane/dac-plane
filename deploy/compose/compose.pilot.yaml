@@ -3,7 +3,7 @@
 # (ADR-0017). Unlike the qualification overlays it needs no development
 # profile: every image is published and named by digest, the operator's OIDC
 # issuer mints the adapters' tokens, and the operator provisions identities
-# with the `provision` tool service. deploy/compose/PILOT.md is the runbook.
+# with the `provision` tool service. docs/guides/deploy/index.md is the runbook.
 #
 # One trust bundle (DAC_TRUST_BUNDLE_FILE) holds every private root the stack
 # needs: the control plane's and artifact store's certificate issuer, and the

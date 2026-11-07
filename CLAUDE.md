@@ -38,6 +38,7 @@ Read, in this order:
 
 ```text
 docs/architecture/    the baseline: README, views (.drawio/.svg/.png), responsibility map
+docs/guides/          the user guide, published to GitHub Pages by mkdocs.yml (Zensical)
 docs/adr/             accepted architecture decisions, numbered sequentially
 cmd/dac-plane/        the control-plane process entry point
 adapterkit/           the separate adapter kit module (ADR-0008): wire codec, client, handler
@@ -83,6 +84,10 @@ A change to the baseline is a change to what future implementation builds agains
 
 - **Diagrams have sources.** Edit the `.drawio` sources and re-export the `.svg`/`.png`
   rather than editing an export alone, so the next edit has a source to edit.
+- **The user guide changes with the behaviour.** A change users see updates `docs/guides/` in the
+  same PR; `just docs-check` fails when the configuration or command line reference drifts from
+  the code. Guide diagrams are Excalidraw, with the `.excalidraw` source next to its PNG in
+  `docs/guides/assets/`.
 - **New decisions get ADRs.** Follow the numbering and heading style of the existing files
   in `docs/adr/`; do not restart numbering or introduce a second scheme.
 - **Say what changed and why in the PR.** A baseline change without a stated reason is a
@@ -107,6 +112,7 @@ only, and CI pins the version of just.
 just test-codex-adapter  # deterministic Codex adapter and race tests
 just test-conformance    # published adapter protocol conformance
 just ci-fast             # broad local checks without deployment/integration suites
+just docs-check          # build the user guide, check its links and its reference drift tests
 just ci                  # all CI recipes serially; use for full local diagnosis
 just test-contracts      # schema conformance and the contract coverage guards only
 just fmt                 # rewrite Go files into gofmt style

@@ -12,35 +12,13 @@ mode-`0600` bbolt database under the configured Codex home.
 
 ## Configuration
 
-The executable requires:
+Every setting the executable reads is in the [configuration reference](../../docs/guides/reference/configuration.md#dac-codex-adapter), with the
+[settings every adapter shares](../../docs/guides/reference/configuration.md#every-adapter).
 
-| Setting | Purpose |
-|---|---|
-| `DAC_ADAPTER_URL` | DAC adapter WebSocket endpoint |
-| `DAC_PROVIDER_ID` | registered runtime provider identifier |
-| `DAC_CODEX_APP_SERVER` | absolute path to the pinned app-server binary |
-| `DAC_CODEX_HOME` | persistent, isolated Codex home |
-| `DAC_CODEX_STATE` | persistent bbolt journal path |
-| `DAC_CODEX_WORKSPACE` | absolute disposable workspace path |
-| `DAC_CODEX_MODEL` | deployment-selected model |
-| `DAC_CODEX_MODEL_PROVIDER` | Codex provider configuration name |
-| `DAC_CODEX_BASE_URL` | HTTPS Responses endpoint |
-| `DAC_CODEX_API_KEY_FILE` | file-mounted provider credential |
-
-Commands run beside the adapter unless both of these are set, and then only in the environment assigned to the
-Attempt ([ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md)):
-
-| Setting | Purpose |
-|---|---|
-| `DAC_CODEX_EXEC_SERVER_URL` | a resource's exec-server address, with `{resource}` for its identifier |
-| `DAC_ENVIRONMENT_ATTACH_KEY_FILE` | key shared with the environment adapter |
-
-`DAC_CODEX_WORKSPACE` is then a path inside the environment.
-
-Adapter authentication uses either `DAC_ADAPTER_TOKEN_FILE`, or the existing client-credentials
-settings `DAC_ADAPTER_TOKEN_URL`, `DAC_ADAPTER_CLIENT_ID`,
-`DAC_ADAPTER_CLIENT_SECRET_FILE` and `DAC_ADAPTER_SCOPE`. `DAC_ADAPTER_CA_FILE` adds private roots
-for the DAC endpoint. Credentials are read from files, passed only in the child process environment
+Commands run beside the adapter unless `DAC_CODEX_EXEC_SERVER_URL` and `DAC_ENVIRONMENT_ATTACH_KEY_FILE` are both set,
+and then only in the environment assigned to the Attempt
+([ADR-0016](../../docs/adr/0016-run-agent-commands-inside-the-environment.md)); `DAC_CODEX_WORKSPACE` is then a path
+inside the environment. Credentials are read from files, passed only in the child process environment
 and redacted from app-server stderr.
 
 The first qualification configuration is `camer`, `https://api.ai.camer.digital/v1`, Responses wire

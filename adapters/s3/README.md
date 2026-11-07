@@ -63,18 +63,8 @@ reports an error rather than inventing a receipt.
 
 ## Configuration
 
-| Setting | Purpose |
-|---|---|
-| `DAC_S3_ENDPOINT` | HTTPS origin where the adapter reaches the store |
-| `DAC_S3_PUBLIC_ENDPOINT` | HTTPS origin where the runtime reaches it. Presigned URLs are signed for this host. Defaults to `DAC_S3_ENDPOINT` |
-| `DAC_S3_REGION` | Signing region; defaults to `us-east-1` |
-| `DAC_S3_ACCESS_KEY_ID`, `DAC_S3_SECRET_ACCESS_KEY_FILE` | The adapter key, or the operator key for `provision` |
-| `DAC_S3_STAGING_BUCKET`, `DAC_S3_OBJECTS_BUCKET` | Two distinct buckets |
-| `DAC_S3_CA_FILE` | CA for the store's certificate; system roots when unset |
-| `DAC_S3_UPLOAD_TTL` | Capability lifetime as a Go duration; defaults to `15m` |
-| `DAC_S3_RETENTION_DAYS`, `DAC_S3_STAGING_DAYS` | `provision` only; default `30` and `2`. Staging must outlast the 24-hour artifact deadline plus the capability lifetime |
-| `DAC_PROVIDER_ID`, `DAC_ADAPTER_URL`, `DAC_ADAPTER_CA_FILE` | Control-plane registration and endpoint |
-| `DAC_ADAPTER_TOKEN_FILE` or the `DAC_ADAPTER_*` client-credentials settings | Adapter authentication |
+Every setting the executable reads is in the [configuration reference](../../docs/guides/reference/configuration.md#dac-s3-adapter), with the
+[settings every adapter shares](../../docs/guides/reference/configuration.md#every-adapter).
 
 ## Verification
 

@@ -11,63 +11,22 @@ The base stack is production-shaped, not a production platform. It deliberately 
 high availability, backup and restore, ingress, certificate issuance, secret distribution and
 orchestration to the operator.
 
-## Configuration
+## Deploying and operating
 
-Pass an env file to Compose. Every path below is a host path; Compose mounts the contents into the
-container as a secret or config.
+The user guide covers deploying and running this stack: the Compose settings, the database roles, upgrade and
+rollback, and the procedure with real providers. See [Deploy](../../docs/guides/deploy/index.md) and
+[Operate](../../docs/guides/operate/index.md). This file describes the Compose files and the test profiles built on
+them.
 
-| Variable | Required | Purpose |
-|---|---:|---|
-| `DAC_PLANE_IMAGE` | no | Published `dac-plane` image; defaults to the local `dac-plane:dev` build. |
-| `DAC_DEPLOYMENT` | no | `production` by default. Only `development` accepts a development issuer. |
-| `DAC_SURFACE_PORT` | no | Published Surface HTTPS port; defaults to `8443`. |
-| `DAC_ADAPTER_PORT` | no | Published adapter WebSocket TLS port; defaults to `9443`. |
-| `DAC_IDENTITY_CONFIG_FILE` | yes | OIDC issuer configuration. |
-| `DAC_TLS_CERT_FILE` | yes | PEM server certificate. |
-| `DAC_TLS_KEY_FILE` | yes | PEM server private key. |
-| `DAC_POSTGRES_MIGRATE_PASSWORD_FILE` | yes | Password used by the schema-owning role. |
-| `DAC_POSTGRES_SERVE_PASSWORD_FILE` | yes | Password used by the DML-only serving role. |
-| `DAC_MIGRATE_DATABASE_URL_FILE` | yes | PostgreSQL URL for the migration job. |
-| `DAC_SERVE_DATABASE_URL_FILE` | yes | PostgreSQL URL for serving replicas. |
-
-The image also accepts the corresponding process settings described by `dac-plane help`. Secret
-values belong in files, not in this table, the environment file, logs or command arguments.
-
-## Database privileges
-
-On first database initialization, `init-db.sh` creates two roles:
-
-- `dac_migrate` owns the database and runs schema migrations under the migration advisory lock.
-- `dac_serve` receives connect, schema usage, table DML and sequence-use privileges through default
-  privileges. It has no schema-creation or migration privilege.
-
-The migration job initializes a fresh database before its first serving replica starts. During an
-upgrade, follow ADR-0011's binary-first sequence below. Serving replicas never run migrations and
-refuse a schema older than `MinServeVersion` or newer than `CurrentVersion`.
-
-## Upgrade and rollback
-
-Use expand-then-contract migrations. First verify that the new image serves the current database
-schema, then roll every `serve` replica to that image while the schema remains unchanged. Confirm no
-old process or adapter connection remains, run the new image's `migrate up` job, and verify every
-replica is ready before completing the rollout. Do not mix a destructive contract migration into the
-same rollout that still has binaries which need the old shape.
-
-Before migration, rollback by restoring the old image against the unchanged schema. After migration,
-a binary rollback is safe only while the database remains inside that binary's declared serving
-range. Check with `dac-plane migrate status` before rolling back. `migrate down-to` refuses a
-downgrade when it would discard durable evidence; that refusal is an operator stop condition, not a
-prompt to delete data.
-
-TLS certificates are reloaded from their mounted files for new connections. Rotate the certificate
-and key atomically and keep the old certificate valid long enough for existing connections to drain.
-
-## Pilot with real providers
-
-`compose.pilot.yaml` layers Codex, E2B and the S3 artifact store over the base stack alone, with published images by
-digest and the operator's own issuer; `compose.keycloak.yaml` adds Keycloak as a reference issuer.
-[PILOT.md](PILOT.md) is the runbook, and `generate-pilot-config.sh` and `configure-pilot.sh` generate the
-configuration and provision the pilot. `just check-pilot-compose` keeps the overlay production-shaped.
+| File | What it is |
+|---|---|
+| `compose.yaml` | The base stack: PostgreSQL, the `migrate` job and `dac-plane serve`. |
+| `init-db.sh` | Creates the `dac_migrate` and `dac_serve` roles on first initialization. |
+| `compose.pilot.yaml`, `compose.keycloak.yaml`, `artifact-store-haproxy.cfg` | Real providers by digest, Keycloak as a reference issuer, and the artifact store's TLS proxy. `just check-pilot-compose` keeps the overlay production-shaped. |
+| `generate-pilot-config.sh`, `configure-pilot.sh` | Generate the pilot's configuration and provision it. |
+| `compose.dev.yaml` | The development profile, below. |
+| `compose.operations.yaml` | The operations test profile, below. |
+| `compose.codex.yaml`, `compose.e2b.yaml`, `compose.containment.yaml`, `compose.artifacts.yaml`, `compose.artifacts.codex.yaml`, `compose.artifacts.dev.yaml` | Provider qualification overlays, below. |
 
 ## Development profile
 
