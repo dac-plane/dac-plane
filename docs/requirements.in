@@ -1,0 +1,3 @@
+# Documentation site build tool. Compile docs/requirements.txt from this file with
+# `just docs-lock`; the build installs only the hashed, pinned set.
+zensical==0.1.0

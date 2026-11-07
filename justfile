@@ -13,6 +13,12 @@ tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
 trivy_version := "0.76.1"
+lychee_version := "0.24.2"
+redoc_version := "2.5.4"
+# The documentation build tools: Zensical and its dependencies, pinned with hashes
+# in docs/requirements.txt, installed into a virtualenv named by that file's hash.
+zensical_dir := tools_dir / "zensical-" + sha256_file("docs/requirements.txt")
+site_dir := ".work/site"
 recovery_tests := "Recovery|Reconcil|Replay|Restart|Duplicate|ChangedPayload|Stale|Fence|Lost|Shadow|Redeliver|ReceiptRehydrat|RechecksQueuedAuthority"
 migration_tests := "Migration"
 hook_lifecycle_tests := "GovernedAction(PostHook|FailureHook|LostPostHook)|HookStageEvidence"
@@ -29,7 +35,7 @@ default:
 
 # Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci-fast: fmt-check mod-check notices-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-conformance vuln lint-workflows
+ci-fast: fmt-check mod-check notices-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-conformance vuln lint-workflows docs-check
 
 # Full local equivalent of the parallel GitHub PR checks. This is intentionally
 # slower and is best used for final local verification or CI diagnosis.
@@ -707,6 +713,83 @@ vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_versi
     cd {{ codex_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ e2b_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ s3_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
+
+# Zensical renders the pages and warnings fail the build. The Surface API
+# reference also needs the OpenAPI document, the JSON Schemas it references and
+# the pinned Redoc bundle, copied in afterwards.
+# Build the documentation site from docs/guides/ into .work/site
+[group('docs')]
+docs-build: _zensical _redoc
+    rm -rf {{ site_dir }}
+    {{ zensical_dir }}/bin/zensical build --strict
+    mkdir -p {{ site_dir }}/assets/redoc
+    cp {{ tools_dir }}/redoc-{{ redoc_version }}/* {{ site_dir }}/assets/redoc/
+    cp contracts/openapi/surface-v1.json {{ site_dir }}/reference/
+    cp -R contracts/jsonschema {{ site_dir }}/jsonschema
+
+# External links are checked by a scheduled workflow, so an outside site never
+# fails a PR. The 404 page links absolutely under the published path /dac-plane/,
+# which the remap points back at the build directory.
+# Build the documentation site and check every internal link, anchor and image
+[group('docs')]
+docs-check: docs-build _lychee
+    {{ tools_dir }}/lychee-{{ lychee_version }}/lychee --offline --no-progress --include-fragments --index-files index.html \
+      --root-dir "$PWD/{{ site_dir }}" --remap "file://$PWD/{{ site_dir }}/dac-plane(/|\$) file://$PWD/{{ site_dir }}/" \
+      '{{ site_dir }}/**/*.html'
+
+# The Surface API reference page needs the files docs-build copies.
+# Serve the documentation with live reload at http://127.0.0.1:8000
+[group('docs')]
+docs-serve: _zensical
+    {{ zensical_dir }}/bin/zensical serve
+
+# Re-pin the documentation build tools after editing docs/requirements.in (needs uv)
+[group('docs')]
+docs-lock:
+    uv pip compile docs/requirements.in --generate-hashes --universal --python-version 3.11 --no-header -o docs/requirements.txt
+
+[private]
+_zensical:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{ zensical_dir }}"
+    if [[ -x "$dir/bin/zensical" ]]; then exit 0; fi
+    python3 -m venv "$dir"
+    "$dir/bin/pip" install --quiet --disable-pip-version-check --require-hashes --only-binary :all: -r docs/requirements.txt
+
+[private]
+_lychee:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{ tools_dir }}/lychee-{{ lychee_version }}"
+    if [[ -x "$dir/lychee" ]]; then exit 0; fi
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64) target=x86_64-unknown-linux-gnu; sum=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a ;;
+      Linux-aarch64) target=aarch64-unknown-linux-gnu; sum=91a7bd65685da41b90ccb9bc867a3d649a7818042dae04ff405e55a25bddee4c ;;
+      Darwin-arm64) target=aarch64-apple-darwin; sum=c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977 ;;
+      Darwin-x86_64) target=x86_64-apple-darwin; sum=887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978 ;;
+      *) echo "no pinned lychee build for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+    esac
+    mkdir -p "$dir"
+    curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 -o "$dir/lychee.tar.gz" "https://github.com/lycheeverse/lychee/releases/download/lychee-v{{ lychee_version }}/lychee-$target.tar.gz"
+    echo "$sum  $dir/lychee.tar.gz" | shasum -a 256 -c -
+    tar -xzf "$dir/lychee.tar.gz" -C "$dir" --strip-components=1 "lychee-$target/lychee"
+    rm "$dir/lychee.tar.gz"
+
+# Redoc's standalone bundle, from the npm registry tarball, checked against the
+# registry's published sha512 integrity (shown here as its sha256).
+[private]
+_redoc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{ tools_dir }}/redoc-{{ redoc_version }}"
+    if [[ -f "$dir/redoc.standalone.js" && -f "$dir/LICENSE" ]]; then exit 0; fi
+    mkdir -p "$dir"
+    curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 -o "$dir/redoc.tgz" "https://registry.npmjs.org/redoc/-/redoc-{{ redoc_version }}.tgz"
+    echo "44922df4d0eb45c1b066c09ec251e6bd9bd7ded16bc69e87613337b9d911a56e  $dir/redoc.tgz" | shasum -a 256 -c -
+    tar -xzf "$dir/redoc.tgz" -C "$dir" --strip-components=2 package/bundles/redoc.standalone.js package/bundles/redoc.standalone.js.LICENSE.txt
+    tar -xzf "$dir/redoc.tgz" -C "$dir" --strip-components=1 package/LICENSE
+    rm "$dir/redoc.tgz"
 
 # Lint GitHub Actions workflows
 [group('check')]

@@ -20,3 +20,6 @@ architecture-explore/plane-bot-explore/evidence/rea-js-analysis.stderr.log
 architecture-explore/plane-bot-explore/evidence/extracted/
 architecture-explore/plane-bot-explore/evidence/extracted-beautified/
 architecture-explore/plane-bot-explore/evidence/analysis/native-thin/
+
+# Zensical build cache, written next to mkdocs.yml
+/.cache/

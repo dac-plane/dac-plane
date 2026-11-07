@@ -191,6 +191,43 @@ jobs:
       - name: Run actionlint
         run: just lint-workflows
 
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tools
+        id: setup
+        uses: ./.github/actions/setup
+        with:
+          # The shared Go cache is left to the build jobs, so its contents
+          # do not depend on which job finishes first.
+          go-cache: 'false'
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      # The justfile pins lychee and Redoc, and docs/requirements.txt pins
+      # Zensical with hashes, so those two files key the tools.
+      - name: Restore documentation tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .work/tools/zensical-*
+            .work/tools/lychee-*
+            .work/tools/redoc-*
+          key: docs-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('justfile', 'docs/requirements.txt') }}
+
+      - name: Build and check the documentation
+        run: just docs-check
+
   stack:
     name: Image and deployment stack
     runs-on: ubuntu-latest
