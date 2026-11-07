@@ -733,6 +733,7 @@ docs-build: _zensical _redoc
 # Build the documentation site and check every internal link, anchor and image
 [group('docs')]
 docs-check: docs-build _lychee
+    go test -count=1 ./internal/testsupport/docstest/
     {{ tools_dir }}/lychee-{{ lychee_version }}/lychee --offline --no-progress --include-fragments --index-files index.html \
       --root-dir "$PWD/{{ site_dir }}" --remap "file://$PWD/{{ site_dir }}/dac-plane(/|\$) file://$PWD/{{ site_dir }}/" \
       '{{ site_dir }}/**/*.html'

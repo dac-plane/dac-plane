@@ -102,6 +102,12 @@ Proposed on 2026-11-07, to be agreed before step 2.
 3. **Write the configuration and CLI references and the drift test.** Every name, the binary that reads it, whether it
    is required, its default and an example, from the source. The CLI page from each command's flags.
    Verify: the test passes; removing one row fails it; adding a `DAC_` read in a binary without a row fails it.
+
+   **Done, 2026-11-07.** Every variable a released binary reads is in `internal/config` or one adapter module, so the
+   test scans those packages (skipping test support, the stack test, qualification runners and examples) and needs
+   one exception: `DAC_CODEX_PROVIDER_API_KEY`, the name the Codex adapter gives the key in its child process.
+   A second test checks the CLI page against the usage text of `dac-plane` and `provision`. Both were shown to fail
+   on a removed row, an undocumented read and a misnamed section. `docs-check` runs them too.
 4. **Write the guide.** In order, each page tested as it is written:
    - `index.md`: what dac-plane is, the overview diagram, where to go next.
    - `getting-started.md`: the simulator stack with `just stack-up`, then submit a task, follow its events, answer an
