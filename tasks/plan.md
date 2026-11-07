@@ -132,6 +132,26 @@ Proposed on 2026-11-07, to be agreed before step 2.
    Verify: after the owner enables Pages, the workflow deploys; the site opens, search works, the diagram and API page
    render; a PR that breaks a link fails `docs-check`.
 
+**Steps 4 to 6, done 2026-11-07.**
+
+- Getting started was verified by extracting the page's `bash` blocks and running them in order against
+  `just stack-up`: token, submission, attention request, decision, review, `succeeded`, events, and the SSE stream.
+  Running it found three faults the page now avoids: an attention request appears seconds after submission (the
+  page waits for it), an older task's request can be first in the list (the page filters by task), and two `jq`
+  paths (`artifact_ids`, the decision body). The issuer's default port 18080 was held by OrbStack on this laptop, so
+  the run used `DAC_ISSUER_PORT=19080`; the page says how to change a taken port.
+- The deploy and operate pages are `PILOT.md` steps 1 to 12 with their numbers kept, plus the base stack's settings
+  and database roles from `deploy/compose/README.md`. Their commands are cited from the #96 pilot evidence, not run
+  again. The concepts page's task states were checked against `internal/lifecycle/task.go`; the first draft had
+  rework returning to `running` and every cancel passing through `cancelling`, both wrong.
+- Diagrams are Excalidraw, at the owner's direction, not ASCII: `task-lifecycle` and `deployment` in
+  `docs/guides/assets/`, each `.excalidraw` source next to its PNG.
+- `PILOT.md` maps each former step to its page; `deploy/compose/README.md` keeps the file map and the test profiles;
+  the three adapter READMEs link to their configuration sections instead of repeating them.
+- `.github/workflows/docs.yml` builds and deploys from `main` and runs `just docs-links` weekly. That recipe excluded
+  the site's own pages (not yet published) and hosts that exist only inside a deployment; `just.systems` was
+  unreachable from this network, so the guide links just's repository instead.
+
 ## Owner decisions
 
 - **Which ref the site shows.** Recommended: `main`, with the home page naming the latest release and each page that

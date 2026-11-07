@@ -3,7 +3,7 @@
 # a private CA, one server certificate for every TLS listener of the stack,
 # database, S3, Keycloak and attach-key secrets, the identity configuration and
 # the env file Compose reads. It never overwrites a secret, key or certificate
-# that already exists, so it is safe to run again. deploy/compose/PILOT.md is
+# that already exists, so it is safe to run again. docs/guides/deploy/index.md is
 # the runbook.
 #
 # usage: generate-pilot-config.sh PILOT_HOME RELEASE_MANIFEST [EXTRA_HOST_NAME...]

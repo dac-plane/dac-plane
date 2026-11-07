@@ -738,6 +738,17 @@ docs-check: docs-build _lychee
       --root-dir "$PWD/{{ site_dir }}" --remap "file://$PWD/{{ site_dir }}/dac-plane(/|\$) file://$PWD/{{ site_dir }}/" \
       '{{ site_dir }}/**/*.html'
 
+# Run by the weekly docs workflow, not on pull requests. Hosts that only exist
+# inside a deployment, documentation placeholders and the site's own pages,
+# which docs-check covers offline, are excluded.
+# Build the documentation site and check its external links online
+[group('docs')]
+docs-links: docs-build _lychee
+    {{ tools_dir }}/lychee-{{ lychee_version }}/lychee --no-progress --max-retries 3 --index-files index.html \
+      --root-dir "$PWD/{{ site_dir }}" --remap "file://$PWD/{{ site_dir }}/dac-plane(/|\$) file://$PWD/{{ site_dir }}/" \
+      --exclude '^https?://(127\.0\.0\.1|localhost|dac-plane|issuer|keycloak)[:/]' --exclude 'example\.com' --exclude '^https://dac-plane\.github\.io/dac-plane/' \
+      '{{ site_dir }}/**/*.html'
+
 # The Surface API reference page needs the files docs-build copies.
 # Serve the documentation with live reload at http://127.0.0.1:8000
 [group('docs')]

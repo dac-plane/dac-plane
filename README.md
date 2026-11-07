@@ -8,9 +8,16 @@ It currently runs Codex in E2B sandboxes with S3-compatible artifact storage, an
 
 ## Documentation
 
-* [Deployment guide](deploy/compose/README.md) - configuring, upgrading and rolling back a deployment
-* [Surface API](contracts/openapi/surface-v1.json) - the OpenAPI document for the public API
-* [Adapter kit](adapterkit/README.md) - connecting a new runtime, environment or artifact store
+The [user guide](https://dac-plane.github.io/dac-plane/) is published from [`docs/guides`](docs/guides/index.md):
+
+* [Getting started](docs/guides/getting-started.md) - run it locally and take one task from submission to review
+* [Deploy](docs/guides/deploy/index.md) and [operate](docs/guides/operate/index.md) - a deployment with real providers: configuring, backing up, upgrading and rotating credentials
+* [Use the Surface API](docs/guides/use/surface-api.md) - the public API, with the [OpenAPI document](contracts/openapi/surface-v1.json)
+* [Write an adapter](docs/guides/extend/adapters.md) - connecting a new runtime, environment or artifact store
+* [Configuration](docs/guides/reference/configuration.md) and [command line](docs/guides/reference/cli.md) references
+
+Beyond the guide:
+
 * [Architecture](docs/architecture/README.md) - how the system is built, and the [decisions](docs/adr) behind it
 * [Releases](RELEASES.md) - versioning, compatibility and how to verify a release
 
@@ -24,13 +31,10 @@ If you believe you have found a defect, open [an issue](https://github.com/dac-p
 
 ## Getting started
 
-Each [release](https://github.com/dac-plane/dac-plane/releases/latest) lists its images by digest in `release-manifest.json`, and the images are published as [packages](https://github.com/dac-plane/dac-plane/packages). To deploy them, follow the [deployment guide](deploy/compose/README.md).
+Each [release](https://github.com/dac-plane/dac-plane/releases/latest) lists its images by digest in `release-manifest.json`, and the images are published as [packages](https://github.com/dac-plane/dac-plane/packages). To deploy them, follow [Deploy](docs/guides/deploy/index.md).
 
-To try it from source against simulated providers, with no provider accounts:
-
-```sh
-just stack-up
-```
+To try it from source against simulated providers, with no provider accounts, follow
+[Getting started](docs/guides/getting-started.md).
 
 ## Building from source
 
