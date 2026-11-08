@@ -1,7 +1,8 @@
 // Package provision is the trusted provisioning ADR-0007 and ADR-0008
 // define: the only way to create tenants and principals, bind external
 // identities to principals, grant or revoke the tenant-reader permission,
-// register providers and bind adapter identities to them. The Surface
+// register providers and bind adapter identities to them, and set a tenant's
+// authority policy. The Surface
 // API exposes none of it. An operator runs it with database access, which in a
 // self-hosted deployment is already the root of trust, so the first binding
 // needs no pre-existing administrator.
@@ -14,6 +15,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,6 +37,9 @@ var ErrConflict = errors.New("provisioning conflicts with an existing record")
 type Provisioner struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
+	// beforePolicyUpdate, when set by a test, runs between reading a policy
+	// and updating it, so a concurrent change can be made in that window.
+	beforePolicyUpdate func()
 }
 
 // New returns a provisioner. now stamps binding and permission updates.
@@ -286,6 +292,49 @@ func (p *Provisioner) QualifyHarness(ctx context.Context, tenant ids.TenantID, p
 		return store.RecordProvisioningChange(ctx, u, store.ProvisioningChange{Operation: store.ProvisionQualifyHarness, Tenant: tenant, Provider: provider})
 	})
 	return harness, err
+}
+
+// SetPolicy replaces tenant's authority policy with settings, ceiling and
+// denies, advancing its generation so authority issued under the previous
+// policy stops being honoured. The same settings, ceiling and denies (in the
+// same order) change nothing. A policy changed concurrently, between this
+// call's read and its update, is ErrConflict.
+func (p *Provisioner) SetPolicy(ctx context.Context, tenant ids.TenantID, settings, ceiling map[identity.ActionClass]identity.Permission, denies []identity.DenyPolicy) (identity.Policy, error) {
+	if err := validatePolicy(tenant, settings, ceiling, denies); err != nil {
+		return identity.Policy{}, err
+	}
+	var policy identity.Policy
+	err := p.inTransaction(ctx, func(u *store.UnitOfWork) error {
+		current, err := store.GetPolicy(ctx, u, tenant)
+		if err != nil {
+			return err
+		}
+		if maps.Equal(current.Settings, settings) && maps.Equal(current.Ceiling, ceiling) && slices.Equal(current.Denies, denies) {
+			policy = current
+			return nil
+		}
+		if p.beforePolicyUpdate != nil {
+			p.beforePolicyUpdate()
+		}
+		policy, err = store.UpdatePolicyGeneration(ctx, u, store.PolicyUpdate{
+			Tenant: tenant, ExpectedGeneration: current.Generation, NextGeneration: current.Generation + 1,
+			Settings: settings, Ceiling: ceiling, Denies: denies, At: p.now().UTC(),
+		})
+		if errors.Is(err, store.ErrStaleVersion) {
+			return fmt.Errorf("%w: the policy of tenant %s changed concurrently; repeat the operation", ErrConflict, tenant)
+		}
+		if err != nil {
+			return err
+		}
+		return store.RecordProvisioningChange(ctx, u, store.ProvisioningChange{Operation: store.ProvisionSetPolicy, Tenant: tenant})
+	})
+	return policy, err
+}
+
+// validatePolicy reports whether settings, ceiling and denies form a valid
+// policy for tenant, so a caller can refuse them before opening a database.
+func validatePolicy(tenant ids.TenantID, settings, ceiling map[identity.ActionClass]identity.Permission, denies []identity.DenyPolicy) error {
+	return identity.Policy{Tenant: tenant, Generation: 1, Settings: settings, Ceiling: ceiling, Denies: denies}.Validate()
 }
 
 func (p *Provisioner) requireTenant(ctx context.Context, u *store.UnitOfWork, tenant ids.TenantID) error {

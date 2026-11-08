@@ -12,36 +12,47 @@ func TestRunRefusesInvalidArgumentsBeforeOpeningTheDatabase(t *testing.T) {
 	const tenant = "01a167fd-51d9-76ba-b563-496e2bd89646"
 	const principal = "01a167fd-51d9-76be-8ef5-39a7e14723c0"
 	for name, args := range map[string][]string{
-		"no operation":             nil,
-		"unknown operation":        {"delete-tenant"},
-		"tenant with a stray":      {"tenant", "extra"},
-		"tenant malformed id":      {"tenant", "-id", "not-a-uuid"},
-		"tenant non-v7 id":         {"tenant", "-id", "01928f6e-7c3a-4b1e-9f00-0123456789ab"},
-		"principal without kind":   {"principal", "-tenant", tenant},
-		"principal stray issuer":   {"principal", "-tenant", tenant, "-kind", "human", "-issuer", "https://a.example"},
-		"bind without subject":     {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example"},
-		"unbind with principal":    {"unbind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example", "-subject", "s"},
-		"grant without tenant":     {"grant-reader", "-principal", principal},
-		"unknown flag":             {"tenant", "-password", "x"},
-		"principal unknown kind":   {"principal", "-tenant", tenant, "-kind", "admin"},
-		"bind plaintext issuer":    {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "http://a.example", "-subject", "s"},
-		"bind issuer with query":   {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example/?x", "-subject", "s"},
-		"bind subject with space":  {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example", "-subject", "a b"},
-		"unbind empty subject":     {"unbind", "-tenant", tenant, "-issuer", "https://a.example", "-subject", ""},
-		"register without role":    {"register-provider", "-tenant", tenant},
-		"register unknown role":    {"register-provider", "-tenant", tenant, "-role", "scheduler"},
-		"store on environment":     {"register-provider", "-tenant", tenant, "-role", "environment", "-artifact-store", principal},
-		"register malformed store": {"register-provider", "-tenant", tenant, "-role", "runtime", "-artifact-store", "x"},
-		"register with issuer":     {"register-provider", "-tenant", tenant, "-role", "runtime", "-issuer", "https://a.example"},
-		"qualify without mode":     {"qualify-harness", "-tenant", tenant, "-provider", principal},
-		"qualify off":              {"qualify-harness", "-tenant", tenant, "-provider", principal, "-mode", "off"},
-		"qualify malformed":        {"qualify-harness", "-tenant", tenant, "-provider", "x", "-mode", "live"},
-		"qualify with role":        {"qualify-harness", "-tenant", tenant, "-provider", principal, "-mode", "live", "-role", "runtime"},
-		"bind-adapter no provider": {"bind-adapter", "-tenant", tenant, "-issuer", "https://a.example", "-subject", "s"},
-		"bind-adapter principal":   {"bind-adapter", "-tenant", tenant, "-provider", principal, "-principal", principal, "-issuer", "https://a.example", "-subject", "s"},
-		"bind-adapter http issuer": {"bind-adapter", "-tenant", tenant, "-provider", principal, "-role", "runtime", "-issuer", "http://a.example", "-subject", "s"},
-		"bind-adapter no role":     {"bind-adapter", "-tenant", tenant, "-provider", principal, "-issuer", "https://a.example", "-subject", "s"},
-		"unbind-adapter tenant":    {"unbind-adapter", "-tenant", tenant, "-issuer", "https://a.example", "-subject", "s"},
+		"no operation":              nil,
+		"unknown operation":         {"delete-tenant"},
+		"tenant with a stray":       {"tenant", "extra"},
+		"tenant malformed id":       {"tenant", "-id", "not-a-uuid"},
+		"tenant non-v7 id":          {"tenant", "-id", "01928f6e-7c3a-4b1e-9f00-0123456789ab"},
+		"principal without kind":    {"principal", "-tenant", tenant},
+		"principal stray issuer":    {"principal", "-tenant", tenant, "-kind", "human", "-issuer", "https://a.example"},
+		"bind without subject":      {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example"},
+		"unbind with principal":     {"unbind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example", "-subject", "s"},
+		"grant without tenant":      {"grant-reader", "-principal", principal},
+		"unknown flag":              {"tenant", "-password", "x"},
+		"principal unknown kind":    {"principal", "-tenant", tenant, "-kind", "admin"},
+		"bind plaintext issuer":     {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "http://a.example", "-subject", "s"},
+		"bind issuer with query":    {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example/?x", "-subject", "s"},
+		"bind subject with space":   {"bind", "-tenant", tenant, "-principal", principal, "-issuer", "https://a.example", "-subject", "a b"},
+		"unbind empty subject":      {"unbind", "-tenant", tenant, "-issuer", "https://a.example", "-subject", ""},
+		"register without role":     {"register-provider", "-tenant", tenant},
+		"register unknown role":     {"register-provider", "-tenant", tenant, "-role", "scheduler"},
+		"store on environment":      {"register-provider", "-tenant", tenant, "-role", "environment", "-artifact-store", principal},
+		"register malformed store":  {"register-provider", "-tenant", tenant, "-role", "runtime", "-artifact-store", "x"},
+		"register with issuer":      {"register-provider", "-tenant", tenant, "-role", "runtime", "-issuer", "https://a.example"},
+		"qualify without mode":      {"qualify-harness", "-tenant", tenant, "-provider", principal},
+		"qualify off":               {"qualify-harness", "-tenant", tenant, "-provider", principal, "-mode", "off"},
+		"qualify malformed":         {"qualify-harness", "-tenant", tenant, "-provider", "x", "-mode", "live"},
+		"qualify with role":         {"qualify-harness", "-tenant", tenant, "-provider", principal, "-mode", "live", "-role", "runtime"},
+		"bind-adapter no provider":  {"bind-adapter", "-tenant", tenant, "-issuer", "https://a.example", "-subject", "s"},
+		"bind-adapter principal":    {"bind-adapter", "-tenant", tenant, "-provider", principal, "-principal", principal, "-issuer", "https://a.example", "-subject", "s"},
+		"bind-adapter http issuer":  {"bind-adapter", "-tenant", tenant, "-provider", principal, "-role", "runtime", "-issuer", "http://a.example", "-subject", "s"},
+		"bind-adapter no role":      {"bind-adapter", "-tenant", tenant, "-provider", principal, "-issuer", "https://a.example", "-subject", "s"},
+		"unbind-adapter tenant":     {"unbind-adapter", "-tenant", tenant, "-issuer", "https://a.example", "-subject", "s"},
+		"policy without ceiling":    {"set-policy", "-tenant", tenant, "-settings", `{}`},
+		"policy without tenant":     {"set-policy", "-settings", `{}`, "-ceiling", `{}`},
+		"policy with provider":      {"set-policy", "-tenant", tenant, "-settings", `{}`, "-ceiling", `{}`, "-provider", principal},
+		"policy settings not JSON":  {"set-policy", "-tenant", tenant, "-settings", `process.exec=ask`, "-ceiling", `{}`},
+		"policy settings an array":  {"set-policy", "-tenant", tenant, "-settings", `[]`, "-ceiling", `{}`},
+		"policy trailing value":     {"set-policy", "-tenant", tenant, "-settings", `{} {}`, "-ceiling", `{}`},
+		"policy unknown permission": {"set-policy", "-tenant", tenant, "-settings", `{"fs.write":"sometimes"}`, "-ceiling", `{}`},
+		"policy bad action class":   {"set-policy", "-tenant", tenant, "-settings", `{}`, "-ceiling", `{"Not An Action":"ask"}`},
+		"policy deny extra field":   {"set-policy", "-tenant", tenant, "-settings", `{}`, "-ceiling", `{}`, "-denies", `[{"action":"fs.write","target":"/etc","why":"x"}]`},
+		"policy deny no target":     {"set-policy", "-tenant", tenant, "-settings", `{}`, "-ceiling", `{}`, "-denies", `[{"action":"fs.write"}]`},
+		"policy denies an object":   {"set-policy", "-tenant", tenant, "-settings", `{}`, "-ceiling", `{}`, "-denies", `{}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -73,5 +84,25 @@ func TestRunReportsOpenFailures(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "DAC_DATABASE_URL is required") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunAcceptsAValidPolicy(t *testing.T) {
+	const tenant = "01a167fd-51d9-76ba-b563-496e2bd89646"
+	for name, args := range map[string][]string{
+		"empty":       {"set-policy", "-tenant", tenant, "-settings", `{}`, "-ceiling", `{}`},
+		"with denies": {"set-policy", "-tenant", tenant, "-settings", `{"process.exec":"ask","fs.write":"always"}`, "-ceiling", `{"process.exec":"ask","fs.write":"ask"}`, "-denies", `[{"action":"fs.write","target":"/etc"}]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			opened := false
+			open := func(context.Context) (*Provisioner, func(), error) {
+				opened = true
+				return nil, nil, errors.New("stop after parsing")
+			}
+			if code := Run(context.Background(), args, &stdout, &stderr, open); code != ExitError || !opened {
+				t.Fatalf("Run() = %d, opened %v; stderr %s", code, opened, stderr.String())
+			}
+		})
 	}
 }

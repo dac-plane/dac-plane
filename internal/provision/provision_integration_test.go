@@ -362,3 +362,89 @@ func TestProvisionQualifyHarnessSeedsOnce(t *testing.T) {
 		t.Fatalf("qualify_harness changes = %d, %v; want one", changes, err)
 	}
 }
+
+func TestProvisionSetPolicyAdvancesTheGenerationOnce(t *testing.T) {
+	ctx, pool, p := setup(t)
+	tenant, err := p.CreateTenant(ctx, ids.TenantID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := map[identity.ActionClass]identity.Permission{"process.exec": identity.PermissionAsk, "fs.write": identity.PermissionAsk}
+	denies := []identity.DenyPolicy{{Action: "fs.write", Target: "/etc"}}
+	policy, err := p.SetPolicy(ctx, tenant, ask, ask, denies)
+	if err != nil || policy.Generation != 2 {
+		t.Fatalf("SetPolicy() = %+v, %v; want generation 2", policy, err)
+	}
+	stored, err := store.GetPolicy(ctx, pool, tenant)
+	if err != nil || stored.Generation != 2 || stored.Effective("process.exec") != identity.PermissionAsk || !slices.Equal(stored.Denies, denies) {
+		t.Fatalf("GetPolicy() = %+v, %v", stored, err)
+	}
+	if again, err := p.SetPolicy(ctx, tenant, ask, ask, denies); err != nil || again.Generation != 2 {
+		t.Fatalf("repeated SetPolicy() = %+v, %v; want generation 2 unchanged", again, err)
+	}
+	if got := changes(t, ctx, pool, tenant); !slices.Equal(got, []string{"create_tenant", "set_policy"}) {
+		t.Fatalf("changes after a repeat = %v", got)
+	}
+	cleared, err := p.SetPolicy(ctx, tenant, nil, nil, nil)
+	if err != nil || cleared.Generation != 3 || cleared.Effective("process.exec") != identity.PermissionNever || len(cleared.Denies) != 0 {
+		t.Fatalf("clearing SetPolicy() = %+v, %v", cleared, err)
+	}
+	if got := changes(t, ctx, pool, tenant); !slices.Equal(got, []string{"create_tenant", "set_policy", "set_policy"}) {
+		t.Fatalf("changes = %v", got)
+	}
+	if _, err := p.SetPolicy(ctx, mustID[ids.Tenant](t), ask, ask, nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetPolicy(unknown tenant) error = %v, want ErrNotFound", err)
+	}
+	if _, err := p.SetPolicy(ctx, tenant, map[identity.ActionClass]identity.Permission{"fs.write": "sometimes"}, ask, nil); !errors.Is(err, identity.ErrInvalid) {
+		t.Fatalf("SetPolicy(unknown permission) error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestProvisionSetPolicyRefusesAStaleGeneration(t *testing.T) {
+	ctx, pool, p := setup(t)
+	tenant, err := p.CreateTenant(ctx, ids.TenantID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provision.SetBeforePolicyUpdate(p, func() {
+		if _, err := pool.Exec(ctx, `update policy set generation = generation + 1 where tenant_id = $1`, tenant.String()); err != nil {
+			t.Errorf("concurrent policy change: %v", err)
+		}
+	})
+	ask := map[identity.ActionClass]identity.Permission{"process.exec": identity.PermissionAsk}
+	if _, err := p.SetPolicy(ctx, tenant, ask, ask, nil); !errors.Is(err, provision.ErrConflict) {
+		t.Fatalf("SetPolicy() under a concurrent change error = %v, want ErrConflict", err)
+	}
+	stored, err := store.GetPolicy(ctx, pool, tenant)
+	if err != nil || stored.Generation != 2 || len(stored.Settings) != 0 {
+		t.Fatalf("policy after the conflict = %+v, %v; want only the concurrent change", stored, err)
+	}
+	if got := changes(t, ctx, pool, tenant); !slices.Equal(got, []string{"create_tenant"}) {
+		t.Fatalf("changes after the conflict = %v", got)
+	}
+}
+
+func TestProvisionSetPolicyCommandWritesJSON(t *testing.T) {
+	ctx, _, p := setup(t)
+	open := func(context.Context) (*provision.Provisioner, func(), error) { return p, func() {}, nil }
+	run := func(args ...string) map[string]string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := provision.Run(ctx, args, &stdout, &stderr, open); code != provision.ExitOK {
+			t.Fatalf("Run(%v) = %d: %s", args, code, stderr.String())
+		}
+		var result map[string]string
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+			t.Fatalf("output %q: %v", stdout.String(), err)
+		}
+		return result
+	}
+	tenant := run("tenant")["tenant_id"]
+	policy := []string{"set-policy", "-tenant", tenant, "-settings", `{"process.exec":"ask","fs.write":"ask"}`, "-ceiling", `{"process.exec":"ask","fs.write":"ask"}`}
+	if got := run(policy...); got["tenant_id"] != tenant || got["generation"] != "2" {
+		t.Fatalf("set-policy = %v", got)
+	}
+	if got := run(policy...); got["generation"] != "2" {
+		t.Fatalf("repeated set-policy = %v", got)
+	}
+}

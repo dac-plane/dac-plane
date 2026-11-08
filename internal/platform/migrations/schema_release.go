@@ -15,7 +15,7 @@ var embedded embed.FS
 var Source = mustSub(embedded, "migrations")
 
 // CurrentVersion is the latest released migration version.
-const CurrentVersion int64 = 15
+const CurrentVersion int64 = 16
 
 // MinServeVersion is the oldest schema this release serves (ADR-0011).
 const MinServeVersion int64 = 13

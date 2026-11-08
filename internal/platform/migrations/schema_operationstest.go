@@ -14,11 +14,11 @@ import (
 //go:embed migrations/*.sql operationstest/*.sql
 var operationsEmbedded embed.FS
 
-// Source contains released migrations plus the isolated schema-16 probe.
+// Source contains released migrations plus the isolated schema-17 probe.
 var Source = operationsSource()
 
 // CurrentVersion is the next-release fixture's migration version.
-const CurrentVersion int64 = 16
+const CurrentVersion int64 = 17
 
 // MinServeVersion keeps the next image compatible with the current schema
 // while every binary is rolled before migration (ADR-0011).
