@@ -631,6 +631,44 @@ func TestMigrationQualifyHarnessAndRefuseDowngrade(t *testing.T) {
 	}
 }
 
+// TestMigrationSetPolicyAndRefuseDowngrade checks that a policy provisioning
+// change names only its tenant and that version 16 cannot be dropped while one
+// is recorded.
+func TestMigrationSetPolicyAndRefuseDowngrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	db := openMigrated(t, ctx)
+	f := seedCore(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `insert into provisioning_change (operation, tenant_id, provider_id) values ('set_policy', $1, $2)`, f.tenant, f.provider); err == nil {
+		t.Fatal("set_policy recorded with a provider")
+	}
+	provider, err := migrations.NewProvider(db, migrations.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 16); err != nil {
+		t.Fatalf("DownTo(16) before testing version 16: %v", err)
+	}
+	if _, err := provider.ApplyVersion(ctx, 16, false); err != nil {
+		t.Fatalf("ApplyVersion(16, down) on an empty history: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `insert into provisioning_change (operation, tenant_id) values ('set_policy', $1)`, f.tenant); err == nil {
+		t.Fatal("version 15 accepted set_policy")
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `insert into provisioning_change (operation, tenant_id) values ('set_policy', $1)`, f.tenant); err != nil {
+		t.Fatalf("record set_policy: %v", err)
+	}
+	if _, err := provider.DownTo(ctx, 16); err != nil {
+		t.Fatalf("DownTo(16) before testing version 16 refusal: %v", err)
+	}
+	if _, err = provider.ApplyVersion(ctx, 16, false); err == nil || !strings.Contains(err.Error(), "cannot downgrade while version 16 policy changes exist") {
+		t.Fatalf("ApplyVersion(16, down) error = %v, want policy-change-preserving refusal", err)
+	}
+}
+
 // TestLockedMigrationRunsWaitAndSchemaVersionReadsWithoutDDL runs two locked
 // migrators at once against a fresh database: both finish at the current
 // version, neither fails on a half-applied schema, and the serve-time read

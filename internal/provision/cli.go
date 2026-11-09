@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/identity"
@@ -31,6 +33,10 @@ operations:
   unbind-adapter -issuer URL -subject SUB
   qualify-harness -tenant TENANT -provider ID -mode live|shadow
                  seed a registered runtime's first harness qualification
+  set-policy     -tenant TENANT -settings JSON -ceiling JSON [-denies JSON]
+                 replace a tenant's authority policy; settings and ceiling map
+                 action classes to never, ask or always, denies is a list of
+                 {"action": CLASS, "target": TARGET}
 
 Operations are idempotent; pass -id to make creation repeatable. Output is one
 JSON object naming the affected records.`
@@ -81,6 +87,7 @@ func parse(args []string) (operation, error) {
 	flags := flag.NewFlagSet("provision "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var tenantText, principalText, providerText, storeText, idText, kind, role, issuer, subject, mode string
+	var settingsText, ceilingText, deniesText string
 	flags.StringVar(&tenantText, "tenant", "", "tenant identifier")
 	flags.StringVar(&principalText, "principal", "", "principal identifier")
 	flags.StringVar(&idText, "id", "", "identifier for the record to create")
@@ -91,6 +98,9 @@ func parse(args []string) (operation, error) {
 	flags.StringVar(&issuer, "issuer", "", "OpenID Connect issuer URL")
 	flags.StringVar(&subject, "subject", "", "subject identifier within the issuer")
 	flags.StringVar(&mode, "mode", "", "harness mode: live or shadow")
+	flags.StringVar(&settingsText, "settings", "", "policy settings as a JSON object")
+	flags.StringVar(&ceilingText, "ceiling", "", "policy ceiling as a JSON object")
+	flags.StringVar(&deniesText, "denies", "", "policy deny rules as a JSON array")
 	if err := flags.Parse(args[1:]); err != nil {
 		return nil, fmt.Errorf("%w: %v", errUsage, err)
 	}
@@ -267,8 +277,50 @@ func parse(args []string) (operation, error) {
 			harness, err := p.QualifyHarness(ctx, tenant, provider, lifecycle.HarnessMode(mode))
 			return map[string]string{"tenant_id": tenant.String(), "provider_id": provider.String(), "mode": string(harness.Mode)}, err
 		}, nil
+	case "set-policy":
+		if err := need([]string{"tenant", "settings", "ceiling"}, "denies"); err != nil {
+			return nil, err
+		}
+		tenant, err := requiredID[ids.Tenant]("tenant", tenantText)
+		if err != nil {
+			return nil, err
+		}
+		var settings, ceiling map[identity.ActionClass]identity.Permission
+		var denies []identity.DenyPolicy
+		if err := decodeStrict("settings", settingsText, &settings); err != nil {
+			return nil, err
+		}
+		if err := decodeStrict("ceiling", ceilingText, &ceiling); err != nil {
+			return nil, err
+		}
+		if set["denies"] {
+			if err := decodeStrict("denies", deniesText, &denies); err != nil {
+				return nil, err
+			}
+		}
+		if err := validatePolicy(tenant, settings, ceiling, denies); err != nil {
+			return nil, fmt.Errorf("%w: %v", errUsage, err)
+		}
+		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
+			policy, err := p.SetPolicy(ctx, tenant, settings, ceiling, denies)
+			return map[string]string{"tenant_id": tenant.String(), "generation": strconv.FormatUint(policy.Generation, 10)}, err
+		}, nil
 	}
 	return nil, fmt.Errorf("%w: unknown operation %q", errUsage, args[0])
+}
+
+// decodeStrict decodes one JSON value from the flag name's text, refusing
+// unknown fields and anything after the value.
+func decodeStrict(name, text string, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(text)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("%w: -%s is not valid JSON of the expected shape: %v", errUsage, name, err)
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: -%s holds more than one JSON value", errUsage, name)
+	}
+	return nil
 }
 
 func tenantAndPrincipal(tenantText, principalText string) (ids.TenantID, ids.PrincipalID, error) {

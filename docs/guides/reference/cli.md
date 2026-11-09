@@ -147,3 +147,25 @@ Seeds a registered runtime's first harness qualification, which dispatch needs b
 In `live` mode the runtime's work counts. In `shadow` mode it may record comparison evidence but cannot change the
 record or perform governed actions outside. Repeating it in the same mode changes nothing.
 Later changes of mode go through migration passes, not provisioning.
+
+### `set-policy`
+
+```text
+dac-plane provision set-policy -tenant TENANT -settings JSON -ceiling JSON [-denies JSON]
+```
+
+Replaces a tenant's authority policy. `-settings` holds the tenant's chosen permission for each action class and
+`-ceiling` the most it may be given, both as JSON objects from action class to `never`, `ask` or `always`. The
+permission that applies is the lower of the two, and an action class missing from either is never permitted.
+`-denies` is a JSON array of `{"action": CLASS, "target": TARGET}` rules that refuse that action on that target
+whatever the permissions say; without it the policy has none.
+
+```sh
+dac-plane provision set-policy -tenant TENANT \
+  -settings '{"process.exec":"ask","fs.write":"ask"}' \
+  -ceiling '{"process.exec":"ask","fs.write":"ask"}'
+```
+
+Each change advances the policy's generation, which the output reports, and authority granted under an earlier
+generation is no longer honoured. Repeating the same policy changes nothing. A change made by someone else between
+this command reading the policy and updating it is a conflict; run the command again.

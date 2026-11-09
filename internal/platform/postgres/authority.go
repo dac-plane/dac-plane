@@ -190,6 +190,9 @@ func marshalPolicyPart(value any) (*string, error) {
 	return &text, nil
 }
 
+// ProvisionSetPolicy records trusted provisioning replacing a tenant's policy.
+const ProvisionSetPolicy ProvisioningOperation = "set_policy"
+
 // PolicyUpdate advances a tenant's policy, invalidating authority issued
 // under earlier generations.
 type PolicyUpdate struct {

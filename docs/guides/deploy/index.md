@@ -109,9 +109,9 @@ This starts Keycloak and PostgreSQL, then:
 It is safe to run again: recorded identifiers are reused and every provisioning operation is idempotent.
 
 Keycloak issues `sub` as the service account's user id, not the client id, so the bindings name those ids. The
-policy step is a direct database update, because v0.1.0 has no provisioning command for policy
-([#115](https://github.com/dac-plane/dac-plane/issues/115)); it only applies to the empty policy tenant creation
-wrote.
+policy step is a direct database update, because v0.1.0 has no
+[`provision set-policy`](../reference/cli.md#set-policy) ([#115](https://github.com/dac-plane/dac-plane/issues/115));
+it only applies to the empty policy tenant creation wrote.
 
 ## 5. Deploy
 

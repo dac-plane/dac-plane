@@ -209,7 +209,7 @@ qualify-codex-runtime: stack-certs
     "${compose[@]}" up -d --build --scale sim-adapter=0
     # A live harness needs an explicit tenant policy before approval-once can
     # issue a grant. Keep this qualification-only policy out of product setup.
-    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" run --rm --no-deps -T provision-tenant provision set-policy -tenant 01a167fd-51d9-76ba-b563-496e2bd89646 -settings '{"process.exec":"ask","fs.write":"ask"}' -ceiling '{"process.exec":"ask","fs.write":"ask"}'
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/codex-qualification/version.txt
     docker image inspect dac-codex-adapter:qualification | jq -r '.[0].Id' | tee .work/codex-qualification/image-id.txt
@@ -234,7 +234,7 @@ qualify-codex-artifact-store: stack-certs
     "${compose[@]}" up -d --build --scale sim-adapter=0
     # A live harness needs an explicit tenant policy before approval-once can
     # issue a grant. Keep this qualification-only policy out of product setup.
-    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" run --rm --no-deps -T provision-tenant provision set-policy -tenant 01a167fd-51d9-76ba-b563-496e2bd89646 -settings '{"process.exec":"ask","fs.write":"ask"}' -ceiling '{"process.exec":"ask","fs.write":"ask"}'
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/codex-store-qualification/version.txt
     set -a
@@ -261,7 +261,7 @@ qualify-task-cancellation: stack-certs
     trap cleanup EXIT
     "${compose[@]}" down -v --remove-orphans
     "${compose[@]}" up -d --build --scale sim-adapter=0
-    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" run --rm --no-deps -T provision-tenant provision set-policy -tenant 01a167fd-51d9-76ba-b563-496e2bd89646 -settings '{"process.exec":"ask","fs.write":"ask"}' -ceiling '{"process.exec":"ask","fs.write":"ask"}'
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee .work/cancellation-qualification/codex-version.txt
     for image in dac-codex-adapter:qualification dac-e2b-adapter:qualification; do docker image inspect "$image" | jq -r '.[0].Id'; done | tee .work/cancellation-qualification/image-ids.txt
@@ -367,7 +367,7 @@ qualify-codex-containment: stack-certs
     trap cleanup EXIT
     "${compose[@]}" down -v --remove-orphans
     "${compose[@]}" up -d --build --scale sim-adapter=0
-    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" run --rm --no-deps -T provision-tenant provision set-policy -tenant 01a167fd-51d9-76ba-b563-496e2bd89646 -settings '{"process.exec":"ask","fs.write":"ask"}' -ceiling '{"process.exec":"ask","fs.write":"ask"}'
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
     for image in dac-codex-adapter:containment dac-e2b-adapter:qualification; do docker image inspect "$image" | jq -r '.[0].Id'; done | tee "$work/image-ids.txt"
@@ -404,7 +404,7 @@ qualify-providers: stack-certs
     else
       "${compose[@]}" up -d --build --scale sim-adapter=0
     fi
-    "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U dac_migrate -d dac -c "update policy set generation = generation + 1, settings = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb, ceiling = '{\"process.exec\":\"ask\",\"fs.write\":\"ask\"}'::jsonb where tenant_id = '01a167fd-51d9-76ba-b563-496e2bd89646'"
+    "${compose[@]}" run --rm --no-deps -T provision-tenant provision set-policy -tenant 01a167fd-51d9-76ba-b563-496e2bd89646 -settings '{"process.exec":"ask","fs.write":"ask"}' -ceiling '{"process.exec":"ask","fs.write":"ask"}'
     "${compose[@]}" exec -T dac-plane /dac-plane health ready
     "${compose[@]}" exec -T codex-adapter /codex-app-server --version | tee "$work/codex-version.txt"
     # An image ID changes on every local build; its layers identify the content.

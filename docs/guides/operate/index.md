@@ -125,7 +125,8 @@ Never paste a credential into a command line, log or ticket; write it to its fil
 - The Surface API caller is a service account bound to a human principal. Interactive login for people belongs to the
   reference application ([#97](https://github.com/dac-plane/dac-plane/issues/97)).
 - Keycloak access tokens also carry its `account` audience; dac-plane checks only for its own.
-- The first policy is set by a direct update ([#115](https://github.com/dac-plane/dac-plane/issues/115)).
+- On v0.1.0 the pilot sets the first policy by a direct update, because that release has no
+  [`provision set-policy`](../reference/cli.md#set-policy) ([#115](https://github.com/dac-plane/dac-plane/issues/115)).
 - No metrics endpoint.
 - Only Codex, E2B and SeaweedFS have run live, and only together. The
   [v0.1.0 release notes](https://github.com/dac-plane/dac-plane/blob/main/docs/releases/v0.1.0.md#known-limits) list
