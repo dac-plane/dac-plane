@@ -5,7 +5,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 ARG KIT_VERSION=dev
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS build
+FROM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS build
 
 WORKDIR /src
 
@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-sim-adapter ./cmd/dac-sim-adapter
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS codex-adapter-build
+FROM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS codex-adapter-build
 
 WORKDIR /src
 COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
@@ -72,7 +72,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-codex-adapter ./cmd/dac-codex-adapter
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS e2b-adapter-build
+FROM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS e2b-adapter-build
 
 WORKDIR /src
 COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
@@ -93,7 +93,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-e2b-adapter ./cmd/dac-e2b-adapter
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS s3-adapter-build
+FROM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS s3-adapter-build
 
 WORKDIR /src
 COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
@@ -163,7 +163,7 @@ ENTRYPOINT ["/dac-codex-adapter"]
 
 # Never published. Codex runs commands in this container, for the recipes that
 # qualify the runtime without a sandbox.
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS dac-codex-adapter-local
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS dac-codex-adapter-local
 
 COPY --from=codex-adapter-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=codex-adapter-build --chown=65532:65532 /out/dac-codex-adapter /dac-codex-adapter
