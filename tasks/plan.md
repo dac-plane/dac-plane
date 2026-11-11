@@ -1,7 +1,7 @@
 # Define agents in dac-plane and delegate work to them
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/136
-Branch: `docs/adr-0020-agents`, from `main` at `fbcff36`. This branch carries the decision only.
+Branch: `feat/136-agent-contracts`, from `main` at `aa2de04`. This branch carries step 2, the contracts.
 
 The v0.2.0 release (#134) is still in progress beside this; its remaining steps are in `docs/releases/README.md`.
 
@@ -21,13 +21,23 @@ Surveyed on 2026-11-11.
 
 ## Decisions
 
-Recorded in `docs/adr/0020-agents-are-product-records.md`, status Proposed. Implementation starts only after it is
-accepted.
+Recorded in `docs/adr/0020-agents-are-product-records.md`, accepted by the project owner on 2026-11-11.
+
+For step 2:
+
+- The profile (name, role, instructions, default providers) is revisioned as a whole. `Revision` counts profile
+  changes and `Version` every change, so retiring advances `Version` alone.
+- Only the creating principal revises or retires; another actor is refused as `unauthorized_actor`, and the refusal
+  is auditable like any other.
+- A task carries an optional agent reference. Nothing sets it until step 4.
+- `agent` joins the audit record kinds here. The SQL check constraints that list record kinds change in step 3, and
+  nothing writes the kind before then.
 
 ## Steps
 
-1. ADR-0020 as Proposed. Verify: `just docs-check`, `just ci-fast`. Review and accept.
+1. ADR-0020. Done in #138.
 2. Contracts: the agent and revision records, their transitions and audit, JSON Schemas and agreement tests.
+   Verify: `just test-contracts`, `just ci-fast`, `just docs-check`.
 3. Persistence: the migration, the store, the rollout probe moved up one version.
 4. Application and Surface API: the agent operations, submission to an agent, OpenAPI 1.1.0.
 5. Wire and adapters: the capability, the kit field, the Codex adapter and the simulator.

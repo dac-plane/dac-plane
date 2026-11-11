@@ -35,6 +35,8 @@ var (
 	artifactContract      = schematest.GoContract[Artifact](filepath.Join(schemaDir, "artifact.schema.json"))
 	revisionContract      = schematest.GoContract[ResultRevision](filepath.Join(schemaDir, "result-revision.schema.json"))
 	reviewContract        = schematest.GoContract[ResultReview](filepath.Join(schemaDir, "result-review.schema.json"))
+	agentContract         = schematest.GoContract[Agent](filepath.Join(schemaDir, "agent.schema.json"))
+	agentRevisionContract = schematest.GoContract[AgentRevision](filepath.Join(schemaDir, "agent-revision.schema.json"))
 )
 
 type record struct {
@@ -95,6 +97,21 @@ func validRecords(t *testing.T) map[string]record {
 	}
 
 	reviewTask, firstRevision := reviewable(t)
+
+	agent, _ := newAgent(t)
+	bare := agent.AgentProfile
+	bare.Instructions = ""
+	agent, agentRevision, _, err := agent.Revise(agent.CreatedBy, bare, agent.Version, testNow)
+	if err != nil {
+		t.Fatalf("Revise() error = %v", err)
+	}
+	retired, _, err := agent.Retire(agent.CreatedBy, agent.Version, testNow)
+	if err != nil {
+		t.Fatalf("Retire() error = %v", err)
+	}
+	delegated := task
+	reference := agent.Reference()
+	delegated.Agent = &reference
 	manifest := newManifest(t, reviewTask)
 	manifest.SourceRevision = "9fceb02"
 	artifact := commit(t, manifest)
@@ -135,6 +152,10 @@ func validRecords(t *testing.T) map[string]record {
 		"scheduled claim":     {claimContract, schematest.Marshal(t, newClaim(t))},
 		"held claim":          {claimContract, schematest.Marshal(t, claimed)},
 		"task":                {taskContract, schematest.Marshal(t, task)},
+		"delegated task":      {taskContract, schematest.Marshal(t, delegated)},
+		"agent":               {agentContract, schematest.Marshal(t, agent)},
+		"retired agent":       {agentContract, schematest.Marshal(t, retired)},
+		"agent revision":      {agentRevisionContract, schematest.Marshal(t, agentRevision)},
 		"cancelling attempt":  {attemptContract, schematest.Marshal(t, attempt)},
 		// An attempt that has not stopped omits both flags; the schema's
 		// stop-flag condition must not apply to it.
@@ -181,6 +202,25 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"task criteria without objective", "task", func(d map[string]any) { d["acceptance_criteria"] = []any{"done"} }},
 		{"task unknown field", "task", func(d map[string]any) { d["unexpected"] = "x" }},
 		{"task auto accept field", "task", func(d map[string]any) { d["auto_accept"] = true }},
+		{"task empty agent", "task", func(d map[string]any) { d["agent"] = map[string]any{} }},
+		{"task agent without revision", "delegated task", func(d map[string]any) { delete(d["agent"].(map[string]any), "revision") }},
+		{"task agent zero revision", "delegated task", func(d map[string]any) { d["agent"].(map[string]any)["revision"] = 0 }},
+		{"task agent unknown field", "delegated task", func(d map[string]any) { d["agent"].(map[string]any)["name"] = "x" }},
+		{"agent unknown state", "agent", func(d map[string]any) { d["state"] = "paused" }},
+		{"agent zero revision", "agent", func(d map[string]any) { d["revision"] = 0 }},
+		{"agent missing creator", "agent", func(d map[string]any) { delete(d, "created_by") }},
+		{"agent blank name", "agent", func(d map[string]any) { d["name"] = " " }},
+		{"agent padded name", "agent", func(d map[string]any) { d["name"] = "Reviewer " }},
+		{"agent two line name", "agent", func(d map[string]any) { d["name"] = "Code\nreviewer" }},
+		{"agent long name", "agent", func(d map[string]any) { d["name"] = strings.Repeat("n", MaxAgentNameCharacters+1) }},
+		{"agent blank role", "agent", func(d map[string]any) { d["role"] = "\t" }},
+		{"agent blank instructions", "agent", func(d map[string]any) { d["instructions"] = "  " }},
+		{"agent missing provider", "agent", func(d map[string]any) { delete(d, "provider_id") }},
+		{"agent missing environment provider", "agent", func(d map[string]any) { delete(d, "environment_provider_id") }},
+		{"agent model field", "agent", func(d map[string]any) { d["model"] = "x" }},
+		{"agent revision zero number", "agent revision", func(d map[string]any) { d["revision"] = 0 }},
+		{"agent revision missing role", "agent revision", func(d map[string]any) { delete(d, "role") }},
+		{"agent revision state field", "agent revision", func(d map[string]any) { d["state"] = "active" }},
 		{"attempt zero number", "cancelling attempt", func(d map[string]any) { d["number"] = 0 }},
 		{"attempt removed lost state", "cancelling attempt", func(d map[string]any) { d["state"] = "lost" }},
 		{"attempt stop outside cancellation", "cancelling attempt", func(d map[string]any) { d["state"] = "executing" }},
@@ -301,6 +341,8 @@ func TestSchemaEnumsMatchGoConstants(t *testing.T) {
 	}{
 		{"task.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(TaskStates())},
 		{"task.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(TaskEvents())},
+		{"agent.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(AgentStates())},
+		{"agent.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(AgentEvents())},
 		{"attempt.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(AttemptStates())},
 		{"attempt.schema.json", []string{"$defs", "event", "enum"}, schematest.Strings(AttemptEvents())},
 		{"attention-request.schema.json", []string{"properties", "state", "enum"}, schematest.Strings(AttentionStates())},

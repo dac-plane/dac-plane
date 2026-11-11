@@ -187,7 +187,7 @@ providers and deployable, without changing lifecycle ownership.
 - [ADR-0014: stop an Attempt's environment when the Attempt ends](../adr/0014-stop-environments-when-attempts-end.md)
 - [ADR-0018: version a release as one compatibility set, behind one gate](../adr/0018-release-versioning-and-gate.md)
 - [ADR-0019: publish a final release from its tag](../adr/0019-publish-a-final-release-from-its-tag.md)
-- [ADR-0020: agents are product records that tasks are delegated to](../adr/0020-agents-are-product-records.md) (proposed)
+- [ADR-0020: agents are product records that tasks are delegated to](../adr/0020-agents-are-product-records.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

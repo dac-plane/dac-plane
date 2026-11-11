@@ -23,6 +23,7 @@ type (
 	Operation    struct{}
 	Grant        struct{}
 	Task         struct{}
+	Agent        struct{}
 	Attention    struct{}
 	Decision     struct{}
 	Audit        struct{}
@@ -51,6 +52,7 @@ type (
 	OperationID    = ID[Operation]
 	GrantID        = ID[Grant]
 	TaskID         = ID[Task]
+	AgentID        = ID[Agent]
 	AttentionID    = ID[Attention]
 	DecisionID     = ID[Decision]
 	AuditID        = ID[Audit]

@@ -29,6 +29,7 @@ const (
 	RecordArtifact       RecordKind = "artifact"
 	RecordAuthorityUse   RecordKind = "authority_use"
 	RecordAuthorityGrant RecordKind = "authority_grant"
+	RecordAgent          RecordKind = "agent"
 )
 
 // RecordKinds lists every valid RecordKind.
@@ -36,6 +37,7 @@ func RecordKinds() []RecordKind {
 	return []RecordKind{
 		RecordTask, RecordAttempt, RecordAttention, RecordOperation, RecordHarness, RecordMigration, RecordClaim,
 		RecordBudget, RecordReservation, RecordSpend, RecordArtifact, RecordAuthorityUse, RecordAuthorityGrant,
+		RecordAgent,
 	}
 }
 

@@ -1,6 +1,6 @@
 # ADR-0020: Agents are product records that tasks are delegated to
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-11
 - Issue: [#136](https://github.com/dac-plane/dac-plane/issues/136)
 
@@ -40,8 +40,8 @@ default environment provider and a state of `active` or `retired`. Name, role an
 name is unique among a tenant's active agents. It holds no model identifier, credential, tool list or vendor name;
 those stay with provider registration and adapter configuration, as ADR-0013 decided for the brief.
 
-**An agent has revisions.** Each change to its role, instructions or defaults produces the next revision, by a
-compare-and-set on the revision the caller read. Earlier revisions are kept, because tasks refer to them.
+**An agent has revisions.** Each change to its name, role, instructions or defaults produces the next revision, by a
+compare-and-set on the version the caller read. Earlier revisions are kept, because tasks refer to them.
 
 **A task may name an agent.** Submission accepts an agent in place of the two providers, which then come from the
 agent's defaults unless the request gives them. The task records the agent and the revision current at submission, and

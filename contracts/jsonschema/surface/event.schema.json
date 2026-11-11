@@ -34,7 +34,8 @@
         "spend_challenge",
         "artifact",
         "authority_use",
-        "authority_grant"
+        "authority_grant",
+        "agent"
       ]
     },
     "record_id": {
