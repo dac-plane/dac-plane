@@ -2,7 +2,7 @@ module github.com/dac-plane/dac-plane/adapters/e2b
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/dac-plane/dac-plane/adapterkit v0.1.0
