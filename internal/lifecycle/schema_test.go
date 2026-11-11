@@ -110,7 +110,8 @@ func validRecords(t *testing.T) map[string]record {
 		t.Fatalf("Retire() error = %v", err)
 	}
 	delegated := task
-	delegated.Agent = agent.Reference()
+	reference := agent.Reference()
+	delegated.Agent = &reference
 	manifest := newManifest(t, reviewTask)
 	manifest.SourceRevision = "9fceb02"
 	artifact := commit(t, manifest)
@@ -201,6 +202,7 @@ func TestSchemaAndGoRejectTheSameInvalidDocuments(t *testing.T) {
 		{"task criteria without objective", "task", func(d map[string]any) { d["acceptance_criteria"] = []any{"done"} }},
 		{"task unknown field", "task", func(d map[string]any) { d["unexpected"] = "x" }},
 		{"task auto accept field", "task", func(d map[string]any) { d["auto_accept"] = true }},
+		{"task empty agent", "task", func(d map[string]any) { d["agent"] = map[string]any{} }},
 		{"task agent without revision", "delegated task", func(d map[string]any) { delete(d["agent"].(map[string]any), "revision") }},
 		{"task agent zero revision", "delegated task", func(d map[string]any) { d["agent"].(map[string]any)["revision"] = 0 }},
 		{"task agent unknown field", "delegated task", func(d map[string]any) { d["agent"].(map[string]any)["name"] = "x" }},

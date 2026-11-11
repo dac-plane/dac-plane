@@ -97,13 +97,19 @@ func TestAgentReviseKeepsEveryRevision(t *testing.T) {
 		t.Fatalf("change = %+v", change)
 	}
 
-	if _, _, _, err := revised.Revise(agent.CreatedBy, profile, revised.Version, testNow); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("unchanged Revise() error = %v, want ErrInvalid", err)
-	}
 	invalid := profile
 	invalid.Role = ""
-	if _, _, _, err := revised.Revise(agent.CreatedBy, invalid, revised.Version, testNow); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("invalid Revise() error = %v, want ErrInvalid", err)
+	for name, refused := range map[string]AgentProfile{"unchanged": profile, "invalid": invalid} {
+		kept, revision, change, err := revised.Revise(agent.CreatedBy, refused, revised.Version, testNow)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s Revise() error = %v, want ErrInvalid", name, err)
+		}
+		if kept != revised || revision != (AgentRevision{}) {
+			t.Fatalf("%s Revise() changed the agent or returned a revision: %+v, %+v", name, kept, revision)
+		}
+		if change.To != "" || change.Version != revised.Version || change.From != string(AgentActive) {
+			t.Fatalf("%s Revise() change = %+v, want unapplied at version %d", name, change, revised.Version)
+		}
 	}
 	_, _, _, err = revised.Revise(agent.CreatedBy, newAgentProfile(t), agent.Version, testNow)
 	testRejectCode(t, err, RejectVersionConflict)
@@ -145,12 +151,17 @@ func TestRetiredAgentAcceptsNoChange(t *testing.T) {
 func TestTaskAgentReferenceIsValidated(t *testing.T) {
 	agent, _ := newAgent(t)
 	task := newTask(t)
-	task.Agent = agent.Reference()
+	reference := agent.Reference()
+	task.Agent = &reference
 	if err := task.Validate(); err != nil {
 		t.Fatalf("delegated task: %v", err)
 	}
-	task.Agent.Revision = 0
+	task.Agent = &AgentReference{Agent: agent.ID}
 	if err := task.Validate(); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("task with a half reference: error = %v, want ErrInvalid", err)
+	}
+	task.Agent = &AgentReference{}
+	if err := task.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("task with an empty reference: error = %v, want ErrInvalid", err)
 	}
 }

@@ -141,16 +141,18 @@ func (a Agent) Reference() AgentReference {
 // Revise replaces the profile if actor created the agent and it is still at
 // expectedVersion. It returns the next revision's record. A profile equal to
 // the current one is refused, so every revision differs from the one before.
+// A refused profile returns the unapplied change, so it cannot be audited as
+// an edit.
 func (a Agent) Revise(actor ids.PrincipalID, profile AgentProfile, expectedVersion uint64, at time.Time) (Agent, AgentRevision, Change, error) {
 	next, change, err := a.apply(AgentRevise, actor, expectedVersion, at)
 	if err != nil {
 		return a, AgentRevision{}, change, err
 	}
 	if err := profile.validate(); err != nil {
-		return a, AgentRevision{}, change, err
+		return a, AgentRevision{}, a.change(AgentRevise), err
 	}
 	if profile == a.AgentProfile {
-		return a, AgentRevision{}, change, fmt.Errorf("%w: revision changes nothing", ErrInvalid)
+		return a, AgentRevision{}, a.change(AgentRevise), fmt.Errorf("%w: revision changes nothing", ErrInvalid)
 	}
 	next.AgentProfile = profile
 	next.Revision++
@@ -163,11 +165,17 @@ func (a Agent) Retire(actor ids.PrincipalID, expectedVersion uint64, at time.Tim
 	return a.apply(AgentRetire, actor, expectedVersion, at)
 }
 
-func (a Agent) apply(event AgentEvent, actor ids.PrincipalID, expectedVersion uint64, at time.Time) (Agent, Change, error) {
-	change := Change{
+// change is event's decision context from the agent's current state, before
+// anything is applied.
+func (a Agent) change(event AgentEvent) Change {
+	return Change{
 		Tenant: a.Tenant, Record: RecordAgent, RecordID: a.ID.Untyped(),
 		Event: string(event), From: string(a.State), Version: a.Version,
 	}
+}
+
+func (a Agent) apply(event AgentEvent, actor ids.PrincipalID, expectedVersion uint64, at time.Time) (Agent, Change, error) {
+	change := a.change(event)
 	if actor.IsZero() || actor != a.CreatedBy {
 		return a, change, reject(change, RejectUnauthorizedActor)
 	}

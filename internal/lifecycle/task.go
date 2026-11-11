@@ -158,13 +158,14 @@ type Task struct {
 	Objective          string          `json:"objective,omitempty"`
 	AcceptanceCriteria []string        `json:"acceptance_criteria,omitempty"`
 	// Agent is the agent revision the task was delegated to, fixed at
-	// submission like the brief. It is absent for a task submitted without
-	// an agent.
-	Agent     AgentReference `json:"agent,omitzero"`
-	State     TaskState      `json:"state"`
-	Version   uint64         `json:"version"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	// submission like the brief. It is nil for a task submitted without an
+	// agent; a pointer keeps a supplied but empty reference distinguishable,
+	// so it is refused rather than read as no agent.
+	Agent     *AgentReference `json:"agent,omitempty"`
+	State     TaskState       `json:"state"`
+	Version   uint64          `json:"version"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // NewTask returns a draft Task at version 1.
@@ -209,7 +210,7 @@ func (t Task) Validate() error {
 			return err
 		}
 	}
-	if t.Agent != (AgentReference{}) {
+	if t.Agent != nil {
 		return t.Agent.Validate()
 	}
 	return nil
