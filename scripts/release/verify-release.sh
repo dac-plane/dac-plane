@@ -74,15 +74,20 @@ compose=(docker compose -p dac-release-verify --project-directory "$room/deploy/
 echo "migrated and ready"
 
 echo "== external adapter against the published kit"
-# The module proxy's first fetch of a new version can time out, and it answers
-# with that failure for some minutes before trying again.
-for attempt in {1..30}; do
-	go list -m "$kit_module@$kit" >/dev/null 2>&1 && break
-	if ((attempt == 30)); then
+# The module proxy and checksum database remember a lookup of the kit version
+# made before its tag existed, for example by a dependency scan of main, and
+# answer "not found" for some time after the tag is pushed. A first fetch can
+# also time out. Wait for both, with a download from an empty directory: run
+# inside this repository, a version query is answered by its replace directive
+# and would pass at once for any version.
+mkdir "$room/kit-check"
+for attempt in {1..60}; do
+	(cd "$room/kit-check" && go mod download "$kit_module@$kit") >/dev/null 2>&1 && break
+	if ((attempt == 60)); then
 		echo "the module proxy never served $kit_module@$kit" >&2
 		exit 1
 	fi
-	sleep 30
+	sleep 45
 done
 mkdir "$room/external"
 cp "$repo/adapterkit/examples/minimal/main.go" "$room/external/"
