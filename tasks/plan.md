@@ -1,7 +1,9 @@
-# Publish dac-plane v0.2.0
+# Define agents in dac-plane and delegate work to them
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/134
-Branch: `chore/release-v0.2.0`, from `main` at `3d6f640`.
+Tracker: https://github.com/dac-plane/dac-plane/issues/136
+Branch: `docs/adr-0020-agents`, from `main` at `fbcff36`. This branch carries the decision only.
+
+The v0.2.0 release (#134) is still in progress beside this; its remaining steps are in `docs/releases/README.md`.
 
 ## Where the tree stands
 
@@ -9,25 +11,24 @@ Surveyed on 2026-11-11.
 
 | Finding | Evidence | Consequence |
 |---|---|---|
-| `adapterkit/` differs from `adapterkit/v0.1.0` | `git diff adapterkit/v0.1.0 HEAD -- adapterkit`: the #123 session fix, the token error wording, dependency updates | `scripts/release/check-tag.sh` requires the kit tag to hold exactly this tree, so the kit needs a new version. |
-| The kit's Go API is unchanged | The diff adds only unexported names | A patch would do, but the kit takes the release's number, `v0.2.0`, so a release has one version to read. |
-| The control plane gained a command and a migration | #115, schema 16 | Control plane `v0.2.0`. |
-| The pilot overlay pins v0.1.0 digests | `deploy/compose/compose.pilot.yaml` | Stays as it is. Upgrading the pilot is separate work, and v0.2.0's digests do not exist before the release. |
+| Nothing names an agent | `contracts/openapi/surface-v1.json` has task, attention, event, migration and grant paths only | A new record and new operations. |
+| The brief is objective and acceptance criteria, immutable | `internal/lifecycle/task.go`, ADR-0013 | Standing instructions travel beside the brief, not inside the objective. |
+| ADR-0013 left a "product profile" for provider choices | `docs/adr/0013-product-owned-execution-briefs.md` | The agent is that profile: it holds the default providers. |
+| Principals are `human` or `service` | `internal/identity/principal.go` | An agent is not a principal in this step. |
+| Policy is per tenant; a budget is per task | `internal/identity/authority.go`, `internal/lifecycle/budget.go` | Per-agent authority and budgets are deferred, attachable by agent identifier. |
+| The wire codec refuses unknown fields | `adapterkit/wire/codec.go`, `internal/adapterwire/connection.go` | The new `start_turn` field is sent only under a negotiated capability, as `operation.replay` is. |
+| A new binary must serve the previous schema | ADR-0011 | Agent operations are unavailable until the migration runs; tasks without an agent are unaffected. |
 
 ## Decisions
 
-- The notes state the upgrade order from v0.1.0 and the rollback limit migration 16 creates.
-- The evidence note is `docs/architecture/release-134.md`. It starts with the live run of 2026-11-09 and gains the
-  rehearsal and release sections as they happen.
-- The pin in the `justfile` advances in a second pull request, after `just release-verify v0.2.0`.
+Recorded in `docs/adr/0020-agents-are-product-records.md`, status Proposed. Implementation starts only after it is
+accepted.
 
 ## Steps
 
-1. Notes, the kit requirement, the kit version in the two guides, the evidence note. Verify: `just ci-fast`,
-   `just docs-check`. Merge.
-2. `just release-tag v0.2.0-rc.1`. Verify: the release workflow passes and drafts a prerelease.
-3. `just release-qualify v0.2.0-rc.1` from a checkout of the tag. Record every run.
-4. `just release-tag v0.2.0` on the qualified commit. Verify: the workflow publishes the release.
-5. `just release-verify v0.2.0`. Record digests and results.
-6. Advance `previous_release` and `previous_release_image`; record the evidence. Verify:
-   `just test-operations-upgrade`.
+1. ADR-0020 as Proposed. Verify: `just docs-check`, `just ci-fast`. Review and accept.
+2. Contracts: the agent and revision records, their transitions and audit, JSON Schemas and agreement tests.
+3. Persistence: the migration, the store, the rollout probe moved up one version.
+4. Application and Surface API: the agent operations, submission to an agent, OpenAPI 1.1.0.
+5. Wire and adapters: the capability, the kit field, the Codex adapter and the simulator.
+6. The user guide, and the upgrade scenario exercising the new schema.
