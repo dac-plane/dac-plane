@@ -171,12 +171,12 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")
-	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "17" {
-		t.Fatalf("schema version = %q, want 17", version)
+	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "18" {
+		t.Fatalf("schema version = %q, want 18", version)
 	}
 	output, err := h.composeOutput("run", "--rm", "--no-deps", "old-schema-check")
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
-		t.Fatalf("old image at schema 17 = %v, output %q", err, output)
+		t.Fatalf("old image at schema 18 = %v, output %q", err, output)
 	}
 	h.decide(attention)
 	ready := h.waitTask(submitted.Task.ID, lifecycle.TaskReadyForReview)
@@ -193,7 +193,7 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	if changes := h.sql(fmt.Sprintf(`select count(*) from provisioning_change where tenant_id='%s'::uuid and operation='set_policy'`, tenantID)); changes != "1" {
 		t.Fatalf("recorded set_policy changes = %q, want 1", changes)
 	}
-	t.Logf("upgrade evidence: schema=17 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
+	t.Logf("upgrade evidence: schema=18 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
 }
 
 func newHarness(t *testing.T, replicaA, replicaB string) *harness {

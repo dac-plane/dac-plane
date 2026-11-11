@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -75,15 +76,17 @@ func GetTask(ctx context.Context, q Querier, tenant ids.TenantID, id ids.TaskID)
 	var task lifecycle.Task
 	var state string
 	var idText, tenantText, ownerText string
-	var objective *string
+	var objective, agentText *string
 	var criteria []byte
+	var agentRevision *int64
 	err := q.QueryRow(ctx, `
 		select task_id::text, tenant_id::text, owner_id::text,
 		       to_jsonb(t)->>'objective', coalesce(to_jsonb(t)->'acceptance_criteria', 'null'::jsonb),
+		       to_jsonb(t)->>'agent_id', (to_jsonb(t)->>'agent_revision')::bigint,
 		       state, version, created_at, updated_at
 		from task t where tenant_id = $1 and task_id = $2`,
 		tenant.String(), id.String(),
-	).Scan(&idText, &tenantText, &ownerText, &objective, &criteria, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
+	).Scan(&idText, &tenantText, &ownerText, &objective, &criteria, &agentText, &agentRevision, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.Task{}, ErrNotFound
@@ -103,6 +106,9 @@ func GetTask(ctx context.Context, q Querier, tenant ids.TenantID, id ids.TaskID)
 	if err := decodeTaskBrief(&task, objective, criteria); err != nil {
 		return lifecycle.Task{}, err
 	}
+	if task.Agent, err = decodeTaskAgent(agentText, agentRevision); err != nil {
+		return lifecycle.Task{}, err
+	}
 	if err := task.Validate(); err != nil {
 		return lifecycle.Task{}, err
 	}
@@ -119,8 +125,30 @@ func InsertTask(ctx context.Context, u *UnitOfWork, task lifecycle.Task) (lifecy
 	if err != nil {
 		return lifecycle.Task{}, false, err
 	}
+	if task.Agent != nil && version < agentSchemaVersion {
+		return lifecycle.Task{}, false, ErrSchemaUnavailable
+	}
 	var inserted bool
-	if version >= 14 {
+	if version >= agentSchemaVersion {
+		var criteria any
+		if task.AcceptanceCriteria != nil {
+			encoded, marshalErr := json.Marshal(task.AcceptanceCriteria)
+			if marshalErr != nil {
+				return lifecycle.Task{}, false, marshalErr
+			}
+			criteria = encoded
+		}
+		var agentID, agentRevision any
+		if task.Agent != nil {
+			agentID, agentRevision = task.Agent.Agent.String(), int64(task.Agent.Revision)
+		}
+		inserted, err = insertReturning(ctx, u, `
+			insert into task (tenant_id, task_id, owner_id, objective, acceptance_criteria, agent_id, agent_revision, state, version, created_at, updated_at)
+			values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11)`,
+			task.Tenant.String(), task.ID.String(), task.Owner.String(), textOrNil(task.Objective), criteria,
+			agentID, agentRevision, string(task.State), int64(task.Version), task.CreatedAt, task.UpdatedAt,
+		)
+	} else if version >= 14 {
 		var criteria any
 		if task.AcceptanceCriteria != nil {
 			encoded, marshalErr := json.Marshal(task.AcceptanceCriteria)
@@ -158,10 +186,18 @@ func InsertTask(ctx context.Context, u *UnitOfWork, task lifecycle.Task) (lifecy
 	}
 	if stored.Tenant != task.Tenant || stored.Owner != task.Owner ||
 		stored.Objective != task.Objective || !slices.Equal(stored.AcceptanceCriteria, task.AcceptanceCriteria) ||
+		!agentReferencesEqual(stored.Agent, task.Agent) ||
 		stored.State != task.State || stored.Version != task.Version {
 		return lifecycle.Task{}, false, ErrPayloadMismatch
 	}
 	return stored, true, nil
+}
+
+func agentReferencesEqual(a, b *lifecycle.AgentReference) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // ApplyTask performs a task event at the expected version and atomically
@@ -171,15 +207,17 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 	var task lifecycle.Task
 	var state string
 	var idText, tenantText, ownerText string
-	var objective *string
+	var objective, agentText *string
 	var criteria []byte
+	var agentRevision *int64
 	err := u.QueryRow(ctx, `
 		select task_id::text, tenant_id::text, owner_id::text,
 		       to_jsonb(t)->>'objective', coalesce(to_jsonb(t)->'acceptance_criteria', 'null'::jsonb),
+		       to_jsonb(t)->>'agent_id', (to_jsonb(t)->>'agent_revision')::bigint,
 		       state, version, created_at, updated_at
 		from task t where tenant_id = $1 and task_id = $2 for update`,
 		tenant.String(), id.String(),
-	).Scan(&idText, &tenantText, &ownerText, &objective, &criteria, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
+	).Scan(&idText, &tenantText, &ownerText, &objective, &criteria, &agentText, &agentRevision, &state, &task.Version, &task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return lifecycle.Task{}, false, ErrNotFound
@@ -199,6 +237,9 @@ func ApplyTask(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.T
 	task.State = lifecycle.TaskState(state)
 	if err := decodeTaskBrief(&task, objective, criteria); err != nil {
 		return lifecycle.Task{}, false, err
+	}
+	if task.Agent, parseErr = decodeTaskAgent(agentText, agentRevision); parseErr != nil {
+		return lifecycle.Task{}, false, parseErr
 	}
 	if err := task.Validate(); err != nil {
 		return lifecycle.Task{}, false, err
@@ -251,6 +292,22 @@ func decodeTaskBrief(task *lifecycle.Task, objective *string, raw []byte) error 
 	}
 	task.Objective = *objective
 	return nil
+}
+
+// decodeTaskAgent reads the task's agent reference from its row's JSON form,
+// which has neither key before the agent schema. Both or neither are set.
+func decodeTaskAgent(agent *string, revision *int64) (*lifecycle.AgentReference, error) {
+	if agent == nil && revision == nil {
+		return nil, nil
+	}
+	if agent == nil || revision == nil || *revision <= 0 || *revision > math.MaxUint32 {
+		return nil, corruptRow("task.agent", errors.New("agent and revision are not paired"))
+	}
+	id, err := parseID[ids.Agent]("task.agent_id", *agent)
+	if err != nil {
+		return nil, err
+	}
+	return &lifecycle.AgentReference{Agent: id, Revision: uint32(*revision)}, nil
 }
 
 // GetTaskForUpdate locks a task row for the caller's read-modify-write.

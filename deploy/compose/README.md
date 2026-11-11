@@ -76,7 +76,7 @@ The upgrade scenario starts from the last published release, pulled by the diges
 replicas roll to the next-release binary, and its migration then crosses every schema the tree adds.
 [The release procedure](../../docs/releases/README.md#cutting-a-release) advances the pin.
 
-The tagged next-release binary, schema-17 probe migration and simulator evidence listener exist
+The tagged next-release binary, schema-18 probe migration and simulator evidence listener exist
 only for this operations suite. They do not extend the release migration set or qualify a real
 provider.
 
