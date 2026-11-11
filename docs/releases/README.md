@@ -2,6 +2,7 @@
 
 ## Notes
 
+- [v0.2.0](v0.2.0.md)
 - [v0.1.0](v0.1.0.md)
 
 Copy [template.md](template.md) for a new release. The GitHub Release itself holds only a link to these notes and

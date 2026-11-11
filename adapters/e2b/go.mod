@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.27.4
 
 require (
-	github.com/dac-plane/dac-plane/adapterkit v0.1.0
+	github.com/dac-plane/dac-plane/adapterkit v0.2.0
 	go.etcd.io/bbolt v1.5.0
 )
 

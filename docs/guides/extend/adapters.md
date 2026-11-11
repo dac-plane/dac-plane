@@ -28,7 +28,7 @@ The [adapter kit](https://pkg.go.dev/github.com/dac-plane/dac-plane/adapterkit) 
 authentication, version negotiation, keep-alive, and reconnecting with backoff before the token expires.
 
 ```sh
-go get github.com/dac-plane/dac-plane/adapterkit@v0.1.0
+go get github.com/dac-plane/dac-plane/adapterkit@v0.2.0
 ```
 
 Implement `adapterkit.Handler`, with `Send` for requests, `Cancel` for cancels and `Subscribe` for streams, and
@@ -68,7 +68,7 @@ reconnects. For a Go adapter, call `conformance.Run` from a test. For one in any
 adapter as a command:
 
 ```sh
-go run github.com/dac-plane/dac-plane/adapterkit/cmd/adapter-conformance@v0.1.0 \
+go run github.com/dac-plane/dac-plane/adapterkit/cmd/adapter-conformance@v0.2.0 \
   -fixture fixture.json -- ./my-adapter
 ```
 
