@@ -1,39 +1,38 @@
-# Set a tenant's authority policy through trusted provisioning
+# Upgrade from the last published release in the operations suite
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/115
-Branch: `feat/provision-set-policy`, from `main` at `515f5e8`.
+Tracker: https://github.com/dac-plane/dac-plane/issues/116
+Branch: `test/operations-upgrade-from-release`, from `main` at `1ae44c7`.
 
 ## Where the tree stands
 
-Surveyed on 2026-11-08.
+Surveyed on 2026-11-11.
 
 | Finding | Evidence | Consequence |
 |---|---|---|
-| No operation changes a tenant's policy | `internal/provision/cli.go` lists ten operations; tenant creation writes an empty generation-1 policy | Add `set-policy`. |
-| Five qualification recipes update `policy` directly as `dac_migrate` | `justfile`: `qualify-codex-runtime`, `qualify-codex-artifact-store`, `qualify-task-cancellation`, `qualify-codex-containment`, `qualify-providers` | All five run the same update; switch all of them, not only `qualify-providers`. |
-| The pilot script makes the same update | `deploy/compose/configure-pilot.sh` runs the published v0.1.0 image | It cannot use the command until a release carries it. Out of scope here, as the issue says. |
-| `store.UpdatePolicyGeneration` already compares and sets the generation | `internal/platform/postgres/authority.go`; zero rows is `ErrStaleVersion` | The provisioner reads the policy, then updates under the generation it read. A concurrent change is a conflict. |
-| The operation constraint lists every operation | `00013_qualify_harness.sql`; the principal, provider and identity constraints already require NULLs for an operation they do not name | Migration 16 changes only `provisioning_change_operation`. |
-| The operations suite's rollout probe is schema 16 | `internal/platform/migrations/operationstest/00016_rollout_probe.sql`, `internal/operationstest/operations_test.go` | Move the probe to 17, as #100 and #106 did before. |
-| v0.1.0 serves 13 to 15 and refuses 16 | `docs/releases/v0.1.0.md`; `TestRollingUpgradeAcrossMigration` asserts the old image refuses the next schema | Under ADR-0011 the guarantee is the other way round: the new release keeps serving 15 (`MinServeVersion` stays 13) so binaries roll before the migration. The PR says so. |
+| The old side of the upgrade is built from source | `justfile`, `operations-images`: `git archive ca20b3e…` then `docker build` | Pull the published image by digest and tag it `dac-plane:operations-old`. No archive, no old build. |
+| v0.1.0's image is public and multi-architecture | An anonymous `docker manifest inspect` of the manifest's digest lists amd64 and arm64 | CI and a Mac pull the same pin with no login. |
+| v0.1.0 serves schema 13 to 15 | `docker run … version`: `schema_min=13`, `schema_current=15` | Its own `migrate up` leaves the database at 15; the tree's real 16 and the probe 17 are both ahead of it. |
+| v0.1.0 accepts today's submission body | `git show v0.1.0:internal/httpapi/bodies.go` | `submitLegacy` described `ca20b3e`'s older body. The scenario uses `submit` and the helper goes. |
+| `provision` does not gate on the schema range, but the suite's current image is not the binary that owns schema 17 | `internal/provision`; `compose.dev.yaml`'s `provision-tenant` uses `DAC_PLANE_IMAGE` | Add a `provision-next` service on the next-release image for the post-migration command. |
+| CI fetched full history only for the archive | `.github/workflows/ci.yml`, the `operations` job | Drop `fetch-depth: 0`. |
 
 ## Decisions
 
-- `set-policy` replaces the whole policy: settings, ceiling and denies. `-denies` defaults to none.
-- Validation is `identity.Policy.Validate` in `parse`, before the database opens, and again in the provisioner.
-  JSON is decoded strictly: unknown deny fields and trailing data are usage errors.
-- The same settings, ceiling and denies (denies in the same order) change nothing: no generation advance and no
-  recorded change.
-- A stale generation is `ErrConflict`. The integration test forces it through an unexported hook between the read and
-  the update, set from `export_test.go`.
-- Output: `{"tenant_id": ..., "generation": "N"}`.
+- The pin is two justfile variables, the version and the image reference by digest, copied from that release's
+  `release-manifest.json`. After the pull the recipe checks that the image reports the pinned version, so a digest
+  and a version that disagree fail before the suite starts.
+- The real schema 16 is exercised alongside the probe, in one roll: v0.1.0 at 15, replicas to the next-release
+  image, `migrate up` to 17. Keeping the probe means the scenario still crosses a migration when the pin advances
+  to a release whose schema equals the tree's.
+- After the migration the scenario runs `provision set-policy` and asserts the generation v0.1.0 wrote (1) advanced
+  to 2 with one recorded `set_policy` change.
+- `docs/architecture/operations-74.md` is dated evidence of the `ca20b3e` run and stays as it is.
+- Advancing the pin is a new last step of the release procedure, after the release is verified.
 
 ## Steps
 
-1. Migration 16, its down refusal, the store constant, schema tests, and the probe moved to 17.
-   Verify: `go test ./internal/platform/migrations/`, `just test-operations-fixture`, the schema integration test.
-2. `Provisioner.SetPolicy` and the `set-policy` CLI. Verify: unit tests for arguments; integration tests for the
-   generation advance, idempotency, the recorded change and the stale-generation conflict.
-3. The five recipes call `provision set-policy`; CLI reference section. Verify: `just docs-check`; the command
-   applied to the dev stack.
-4. `just ci-fast`, `git diff --check`, PR.
+1. `operations-images` pulls and checks the pin. Verify: the recipe runs with no `docker build` of old source.
+2. The scenario: `submit`, the policy assertions, `provision-next`. Verify: `just test-operations-upgrade`.
+3. Release procedure, compose README, operate guide, CI checkout. Verify: `just docs-check`, `just lint-actions`
+   or its equivalent.
+4. `just test-operations`, `just ci-fast`, `git diff --check`, PR.

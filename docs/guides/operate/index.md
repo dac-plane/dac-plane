@@ -83,8 +83,8 @@ prompt to delete data.
 
 v0.1.0 is the only release, so there is no newer one to upgrade to yet. The procedure can be exercised by rolling
 each service to the same digests in this order. Version-to-version safety is proven in CI by
-`just test-operations-upgrade` ([#116](https://github.com/dac-plane/dac-plane/issues/116) moves it to the published
-previous release).
+`just test-operations-upgrade`, which upgrades a deployment of the published v0.1.0 image to the current tree on every
+pull request.
 
 ## 11. Rotate credentials
 

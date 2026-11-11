@@ -24,6 +24,9 @@ You need a signing key that GitHub reports as verified.
    release publishes itself with nothing further to approve.
 5. **Check it as a stranger would.** From a checkout of the tag, run `just release-verify v0.1.0`. Record the digests
    and results in the evidence note.
+6. **Advance the upgrade test's pin.** Set `previous_release` and `previous_release_image` in the
+   [`justfile`](../../justfile) to the new version and the `dac-plane` digest from its `release-manifest.json`, and
+   merge that once `just test-operations-upgrade` passes. From then on every pull request upgrades from this release.
 
 A package new to this repository starts private, so the clean room's login passes and an anonymous pull fails. Make it
 public in [its settings](https://github.com/orgs/dac-plane/packages) when you add a new image.

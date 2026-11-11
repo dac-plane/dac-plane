@@ -152,7 +152,10 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h := newHarness(t, oldImage, oldImage)
 	h.start()
 	h.startSimulator()
-	submitted := h.submitLegacy()
+	if generation := h.policyGeneration(); generation != "1" {
+		t.Fatalf("policy generation written by the previous release = %q, want 1", generation)
+	}
+	submitted := h.submit()
 	attention := h.waitAttention()
 
 	h.replicaA = nextImage
@@ -175,12 +178,21 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
 		t.Fatalf("old image at schema 17 = %v, output %q", err, output)
 	}
-
 	h.decide(attention)
 	ready := h.waitTask(submitted.Task.ID, lifecycle.TaskReadyForReview)
 	h.review(submitted.Task.ID, ready)
 	h.waitTask(submitted.Task.ID, lifecycle.TaskSucceeded)
 	h.assertEffectKind(submitted.Operation.ID, "turn_started", 1)
+	// Schema 16 is the release's own migration: it admits the set_policy
+	// provisioning change, which the previous release could not record.
+	h.compose("run", "--rm", "--no-deps", "-T", "provision-next", "provision", "set-policy", "-tenant", tenantID,
+		"-settings", `{"process.exec":"ask"}`, "-ceiling", `{"process.exec":"ask"}`)
+	if generation := h.policyGeneration(); generation != "2" {
+		t.Fatalf("policy generation after set-policy = %q, want 2", generation)
+	}
+	if changes := h.sql(fmt.Sprintf(`select count(*) from provisioning_change where tenant_id='%s'::uuid and operation='set_policy'`, tenantID)); changes != "1" {
+		t.Fatalf("recorded set_policy changes = %q, want 1", changes)
+	}
 	t.Logf("upgrade evidence: schema=17 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
 }
 
@@ -434,6 +446,10 @@ func (h *harness) artifactMetadata(artifact ids.ArtifactID) string {
 	return h.sql(fmt.Sprintf(`select digest, size_bytes, writer_epoch, media_type, kind from artifact where artifact_id='%s'::uuid`, artifact))
 }
 
+func (h *harness) policyGeneration() string {
+	return h.sql(fmt.Sprintf(`select generation from policy where tenant_id='%s'::uuid`, tenantID))
+}
+
 func (h *harness) submit() httpapi.SubmissionBody {
 	return apiRequest[httpapi.SubmissionBody](h, "replica-a", http.MethodPost, "/tasks", map[string]string{
 		"Idempotency-Key": "ops-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
@@ -442,27 +458,6 @@ func (h *harness) submit() httpapi.SubmissionBody {
 		AcceptanceCriteria: []string{"The task reaches ready_for_review"},
 		Provider:           mustProviderID(h.t, providerID), EnvironmentProvider: mustProviderID(h.t, environmentProviderID),
 		Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
-		Unit: "tokens", Ceiling: 1000, Amount: 100,
-	}, http.StatusCreated).body
-}
-
-// submitLegacy uses the pinned release's pre-ADR-0013 request shape. The
-// rolling-upgrade case proves that the new binary preserves a task created by
-// the previous strict API rather than pretending that image accepted fields
-// it did not know.
-func (h *harness) submitLegacy() httpapi.SubmissionBody {
-	type legacySubmitTaskRequest struct {
-		Provider ids.ProviderID   `json:"provider_id"`
-		Demand   contracts.Demand `json:"demand,omitempty"`
-		Deadline time.Time        `json:"deadline"`
-		Unit     lifecycle.Unit   `json:"unit"`
-		Ceiling  uint64           `json:"ceiling"`
-		Amount   uint64           `json:"amount"`
-	}
-	return apiRequest[httpapi.SubmissionBody](h, "replica-a", http.MethodPost, "/tasks", map[string]string{
-		"Idempotency-Key": "ops-legacy-submit-" + strconv.FormatInt(time.Now().UnixNano(), 10),
-	}, legacySubmitTaskRequest{
-		Provider: mustProviderID(h.t, providerID), Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
 		Unit: "tokens", Ceiling: 1000, Amount: 100,
 	}, http.StatusCreated).body
 }
