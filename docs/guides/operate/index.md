@@ -81,10 +81,9 @@ rollback is safe only while the schema is inside the older release's range; chec
 `migrate down-to` refuses a downgrade that would discard recorded evidence. That refusal is a stop condition, not a
 prompt to delete data.
 
-v0.1.0 is the only release, so there is no newer one to upgrade to yet. The procedure can be exercised by rolling
-each service to the same digests in this order. Version-to-version safety is proven in CI by
-`just test-operations-upgrade`, which upgrades a deployment of the published v0.1.0 image to the current tree on every
-pull request.
+Version-to-version safety is proven in CI by `just test-operations-upgrade`, which upgrades a deployment of the last
+published release, v0.2.0, to the current tree on every pull request. The upgrade from v0.1.0 to v0.2.0 was proven the
+same way before v0.2.0 was released.
 
 ## 11. Rotate credentials
 

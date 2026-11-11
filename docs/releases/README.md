@@ -38,6 +38,7 @@ public in [its settings](https://github.com/orgs/dac-plane/packages) when you ad
 |---|---|
 | A rehearsal | Fix it on `main` and tag the next `-rc.N`. Delete its draft if it has one. |
 | A job, because of the runner or network | Rerun the failed jobs. Images are reproducible, so the digests must match. |
+| The clean room, because the module proxy does not serve the new kit version | A lookup made before the kit tag existed, such as a dependency scan of `main`, is remembered for a while. The clean room waits up to 45 minutes. If it still fails, rerun the failed job later. Do not retag. |
 | The scan, with a fix available | Update the dependency or base image. |
 | The scan, with no fix | Add the finding to `.trivyignore.yaml`, with a reason and an expiry date. |
 | A final tag | Do not retag. Fix `main` and release the next patch, and say in its notes why the number was skipped. |

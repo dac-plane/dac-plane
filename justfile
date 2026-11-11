@@ -18,8 +18,8 @@ redoc_version := "2.5.4"
 # The last published release, which the operations suite upgrades from. Both values
 # come from that release's release-manifest.json; docs/releases/README.md says when
 # they advance.
-previous_release := "v0.1.0"
-previous_release_image := "ghcr.io/dac-plane/dac-plane@sha256:ad1721deb432feb600783711ed164c8c51cb8540ad26d16dc83c871dede5d8c1"
+previous_release := "v0.2.0"
+previous_release_image := "ghcr.io/dac-plane/dac-plane@sha256:4ee1bbf220a4499810b7df9b6e37f04c6e2efa825adb7ada817ca952dcc6ae7d"
 # The documentation build tools: Zensical and its dependencies, pinned with hashes
 # in docs/requirements.txt, installed into a virtualenv named by that file's hash.
 zensical_dir := tools_dir / "zensical-" + sha256_file("docs/requirements.txt")
@@ -598,7 +598,7 @@ release-verify tag:
     set -euo pipefail
     work=".work/release/{{ tag }}"
     mkdir -p "$work"
-    gh release download "{{ tag }}" --clobber -p release-manifest.json -D "$work"
+    gh release download "{{ tag }}" --clobber -p release-manifest.json -p "dac-plane-compose-{{ tag }}.tar.gz" -D "$work"
     DAC_RELEASE_ANONYMOUS=1 scripts/release/verify-release.sh "$work/release-manifest.json"
 
 # Install the pinned scanner from its release, checking the published checksum.

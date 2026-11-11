@@ -183,8 +183,8 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.review(submitted.Task.ID, ready)
 	h.waitTask(submitted.Task.ID, lifecycle.TaskSucceeded)
 	h.assertEffectKind(submitted.Operation.ID, "turn_started", 1)
-	// Schema 16 is the release's own migration: it admits the set_policy
-	// provisioning change, which the previous release could not record.
+	// A provisioning change on the upgraded schema. Against v0.1.0 this was
+	// also the first use of schema 16, which admits set_policy.
 	h.compose("run", "--rm", "--no-deps", "-T", "provision-next", "provision", "set-policy", "-tenant", tenantID,
 		"-settings", `{"process.exec":"ask"}`, "-ceiling", `{"process.exec":"ask"}`)
 	if generation := h.policyGeneration(); generation != "2" {

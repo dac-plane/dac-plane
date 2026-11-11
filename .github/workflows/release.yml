@@ -212,7 +212,7 @@ jobs:
     name: Clean room
     needs: [identify, publish]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       contents: read
       packages: read
