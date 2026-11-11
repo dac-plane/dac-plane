@@ -18,20 +18,21 @@ var contractPackages = []string{"../../identity", "../../lifecycle", "../../cont
 // nested object inside a record schema, covered by that record's agreement
 // test. Listing one here names the schema definition that covers it.
 var nestedRecords = map[string]string{
-	"Scope":       "identity/common.schema.json#/$defs/scope",
-	"DenyPolicy":  "identity/policy.schema.json#/properties/denies",
-	"Actor":       "lifecycle/audit-event.schema.json#/$defs/actor",
-	"TurnFailure": "lifecycle/turn-end.schema.json#/properties/failure",
-	"SpendTerms":  "lifecycle/common.schema.json#/$defs/spendTerms",
-	"Failure":     "adapter/common.schema.json#/$defs/failure",
-	"Lifecycle":   "adapter/frame.schema.json#/$defs/lifecycle",
-	"Request":     "adapter/frame.schema.json#/$defs/request",
-	"Cancel":      "adapter/frame.schema.json#/$defs/cancel",
-	"Reply":       "adapter/frame.schema.json#/$defs/reply",
-	"Subscribe":   "adapter/frame.schema.json#/$defs/subscribe",
-	"Unsubscribe": "adapter/frame.schema.json#/$defs/unsubscribe",
-	"Entry":       "adapter/stream-frame.schema.json#/$defs/entry",
-	"Tombstone":   "adapter/stream-frame.schema.json#/$defs/tombstone",
+	"Scope":          "identity/common.schema.json#/$defs/scope",
+	"DenyPolicy":     "identity/policy.schema.json#/properties/denies",
+	"Actor":          "lifecycle/audit-event.schema.json#/$defs/actor",
+	"TurnFailure":    "lifecycle/turn-end.schema.json#/properties/failure",
+	"SpendTerms":     "lifecycle/common.schema.json#/$defs/spendTerms",
+	"AgentReference": "lifecycle/common.schema.json#/$defs/agentReference",
+	"Failure":        "adapter/common.schema.json#/$defs/failure",
+	"Lifecycle":      "adapter/frame.schema.json#/$defs/lifecycle",
+	"Request":        "adapter/frame.schema.json#/$defs/request",
+	"Cancel":         "adapter/frame.schema.json#/$defs/cancel",
+	"Reply":          "adapter/frame.schema.json#/$defs/reply",
+	"Subscribe":      "adapter/frame.schema.json#/$defs/subscribe",
+	"Unsubscribe":    "adapter/frame.schema.json#/$defs/unsubscribe",
+	"Entry":          "adapter/stream-frame.schema.json#/$defs/entry",
+	"Tombstone":      "adapter/stream-frame.schema.json#/$defs/tombstone",
 }
 
 var goContractPattern = regexp.MustCompile(`GoContract\[(\w+)\]`)

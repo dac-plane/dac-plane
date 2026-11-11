@@ -157,10 +157,14 @@ type Task struct {
 	Owner              ids.PrincipalID `json:"owner_id"`
 	Objective          string          `json:"objective,omitempty"`
 	AcceptanceCriteria []string        `json:"acceptance_criteria,omitempty"`
-	State              TaskState       `json:"state"`
-	Version            uint64          `json:"version"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	// Agent is the agent revision the task was delegated to, fixed at
+	// submission like the brief. It is absent for a task submitted without
+	// an agent.
+	Agent     AgentReference `json:"agent,omitzero"`
+	State     TaskState      `json:"state"`
+	Version   uint64         `json:"version"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // NewTask returns a draft Task at version 1.
@@ -204,6 +208,9 @@ func (t Task) Validate() error {
 		if err := brief.Validate(); err != nil {
 			return err
 		}
+	}
+	if t.Agent != (AgentReference{}) {
+		return t.Agent.Validate()
 	}
 	return nil
 }

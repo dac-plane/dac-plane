@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent",
+  "description": "What a tenant delegates work to: a named role with standing instructions and default providers. Not a principal; a task delegated to it is owned and authorised by the principal that submitted it. It holds no model identifier, credential or tool list.",
+  "type": "object",
+  "required": [
+    "agent_id", "tenant_id", "created_by", "name", "role", "provider_id", "environment_provider_id",
+    "revision", "state", "version", "created_at", "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "created_by": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "name": { "$ref": "common.schema.json#/$defs/agentName" },
+    "role": { "$ref": "common.schema.json#/$defs/agentRole" },
+    "instructions": { "$ref": "common.schema.json#/$defs/agentInstructions" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "environment_provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "revision": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "state": { "enum": ["active", "retired"] },
+    "version": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "event": {
+      "enum": ["revise", "retire"]
+    }
+  }
+}

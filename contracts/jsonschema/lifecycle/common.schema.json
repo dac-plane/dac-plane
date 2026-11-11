@@ -2,6 +2,36 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Shared lifecycle contract definitions",
   "$defs": {
+    "agentName": {
+      "description": "An agent's display name: one line with no surrounding space, unique among a tenant's active agents.",
+      "type": "string",
+      "maxLength": 100,
+      "pattern": "^\\S([^\\n\\r]*\\S)?$"
+    },
+    "agentRole": {
+      "description": "What the agent is for, in the tenant's words.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "\\S"
+    },
+    "agentInstructions": {
+      "description": "Standing instructions delivered to the runtime beside each task's brief.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "pattern": "\\S"
+    },
+    "agentReference": {
+      "description": "The agent revision a task was delegated to, fixed at submission.",
+      "type": "object",
+      "required": ["agent_id", "revision"],
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+        "revision": { "$ref": "../identity/common.schema.json#/$defs/generation" }
+      }
+    },
     "nativeRef": {
       "description": "A provider's opaque identifier for a native resource.",
       "type": "string",

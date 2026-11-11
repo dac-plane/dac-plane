@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent revision",
+  "description": "The immutable profile an agent had at one revision. Tasks refer to it, so it outlives later revisions and the agent's retirement.",
+  "type": "object",
+  "required": [
+    "tenant_id", "agent_id", "revision", "name", "role", "provider_id", "environment_provider_id",
+    "created_by", "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "agent_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "revision": { "$ref": "../identity/common.schema.json#/$defs/generation" },
+    "name": { "$ref": "common.schema.json#/$defs/agentName" },
+    "role": { "$ref": "common.schema.json#/$defs/agentRole" },
+    "instructions": { "$ref": "common.schema.json#/$defs/agentInstructions" },
+    "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "environment_provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "created_by": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "created_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+  }
+}
