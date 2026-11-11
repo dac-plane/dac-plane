@@ -15,6 +15,11 @@ actionlint_version := "v1.7.12"
 trivy_version := "0.76.1"
 lychee_version := "0.24.2"
 redoc_version := "2.5.4"
+# The last published release, which the operations suite upgrades from. Both values
+# come from that release's release-manifest.json; docs/releases/README.md says when
+# they advance.
+previous_release := "v0.1.0"
+previous_release_image := "ghcr.io/dac-plane/dac-plane@sha256:ad1721deb432feb600783711ed164c8c51cb8540ad26d16dc83c871dede5d8c1"
 # The documentation build tools: Zensical and its dependencies, pinned with hashes
 # in docs/requirements.txt, installed into a virtualenv named by that file's hash.
 zensical_dir := tools_dir / "zensical-" + sha256_file("docs/requirements.txt")
@@ -655,19 +660,19 @@ test-stack: stack-certs
     if refusal=$(DAC_SERVE_DATABASE_URL_FILE="$out_dsn" "${compose[@]}" run --rm --no-deps dac-plane serve 2>&1); then echo "serve accepted an out-of-range schema"; exit 1; fi
     case "$refusal" in *"schema version is outside the range"*) ;; *) echo "$refusal"; exit 1;; esac
 
-# Build the current, pinned-old, next-release fixture and simulator images used
-# only by the #74 operations suite. The archived checkout stays under ignored
-# scratch and is removed even when its build fails.
+# Pull the last published release by digest and build the current, next-release
+# fixture and simulator images used only by the #74 operations suite.
 [private]
 operations-images:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p .work/operations
-    old_src=$(mktemp -d "$PWD/.work/operations/old-src.XXXXXX")
-    cleanup() { rm -rf -- "$old_src"; }
-    trap cleanup EXIT
-    git archive ca20b3e7438707f58d8735251f8ffb8abc5a7a32 | tar -x -C "$old_src"
-    docker build --target dac-plane -t dac-plane:operations-old "$old_src"
+    docker pull --quiet "{{ previous_release_image }}"
+    reported=$(docker run --rm "{{ previous_release_image }}" version)
+    case "$reported" in
+        *"version={{ previous_release }}"$'\n'*) ;;
+        *) echo "{{ previous_release_image }} is not {{ previous_release }}: $reported"; exit 1;;
+    esac
+    docker tag "{{ previous_release_image }}" dac-plane:operations-old
     docker build --target dac-plane -t dac-plane:operations-current .
     docker build --target dac-plane-operationstest -t dac-plane:operations-next .
     docker build --target dac-sim-adapter -t dac-sim-adapter:operations .

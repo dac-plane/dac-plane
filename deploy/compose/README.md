@@ -71,9 +71,14 @@ an exact operation or the next operation to reach a boundary, which lets a test 
 submission. The overlay binds that listener to host loopback only. Do not enable or publish it in a
 production deployment.
 
-The tagged next-release binary, schema-17 probe migration, pinned-old image and simulator evidence
-listener exist only for this operations suite. They do not extend the release migration set or
-qualify a real provider.
+The upgrade scenario starts from the last published release, pulled by the digest pinned as
+`previous_release_image` in the `justfile`. That release migrates and provisions the database, the
+replicas roll to the next-release binary, and its migration then crosses every schema the tree adds.
+[The release procedure](../../docs/releases/README.md#cutting-a-release) advances the pin.
+
+The tagged next-release binary, schema-17 probe migration and simulator evidence listener exist
+only for this operations suite. They do not extend the release migration set or qualify a real
+provider.
 
 `compose.containment.yaml` layers over `compose.codex.yaml` and `compose.e2b.yaml` so Codex's commands run in the
 task's sandbox. `just qualify-codex-containment` uses it. See
