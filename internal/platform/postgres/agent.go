@@ -149,9 +149,17 @@ func GetAgentRevision(ctx context.Context, q Querier, tenant ids.TenantID, id id
 // be the principal that created the agent. A refusal by the lifecycle is
 // audited and returned; the row is unchanged.
 func ReviseAgent(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AgentID, profile lifecycle.AgentProfile, tr Transition) (lifecycle.Agent, bool, error) {
-	agent, replayed, err := lockAgentForTransition(ctx, u, tenant, id, lifecycle.AgentRevise, tr)
-	if err != nil || replayed {
-		return agent, replayed, err
+	agent, committed, err := lockAgentForTransition(ctx, u, tenant, id, lifecycle.AgentRevise, tr)
+	if err != nil {
+		return lifecycle.Agent{}, false, err
+	}
+	if committed && tr.Actor.Principal == agent.CreatedBy {
+		// The committed revision replays only for the same edit. A different
+		// one started from the same version lost the race.
+		if agent.AgentProfile == profile {
+			return agent, true, nil
+		}
+		return lifecycle.Agent{}, false, ErrStaleVersion
 	}
 	next, revision, change, err := agent.Revise(tr.Actor.Principal, profile, tr.ExpectedVersion, tr.At)
 	if err != nil {
@@ -195,9 +203,12 @@ func ReviseAgent(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids
 // RetireAgent stops new delegation to an agent at the expected version and
 // records audit and durable event rows. Its revisions and tasks are kept.
 func RetireAgent(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AgentID, tr Transition) (lifecycle.Agent, bool, error) {
-	agent, replayed, err := lockAgentForTransition(ctx, u, tenant, id, lifecycle.AgentRetire, tr)
-	if err != nil || replayed {
-		return agent, replayed, err
+	agent, committed, err := lockAgentForTransition(ctx, u, tenant, id, lifecycle.AgentRetire, tr)
+	if err != nil {
+		return lifecycle.Agent{}, false, err
+	}
+	if committed && tr.Actor.Principal == agent.CreatedBy {
+		return agent, true, nil
 	}
 	next, change, err := agent.Retire(tr.Actor.Principal, tr.ExpectedVersion, tr.At)
 	if err != nil {
@@ -216,9 +227,11 @@ func RetireAgent(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids
 	return next, false, nil
 }
 
-// lockAgentForTransition locks and loads the agent. When the stored version
-// is one past the expected one and that version carries event, the command
-// already committed and the stored agent replays.
+// lockAgentForTransition locks and loads the agent. committed reports that
+// the stored version is one past the expected one and carries event: the
+// same command may already have committed. The caller replays only after
+// checking that the request is that command; any other caller is refused by
+// the lifecycle, which checks the actor before the version.
 func lockAgentForTransition(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AgentID, event lifecycle.AgentEvent, tr Transition) (lifecycle.Agent, bool, error) {
 	if err := requireAgentSchema(ctx, u); err != nil {
 		return lifecycle.Agent{}, false, err

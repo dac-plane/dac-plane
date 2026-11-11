@@ -483,3 +483,59 @@ func TestAgentsRefuseDowngrade(t *testing.T) {
 		t.Fatalf("version after the refused downgrade = %d, %v", version, err)
 	}
 }
+
+// TestAgentReplayIsOnlyForTheSameCommand covers two edits racing from the same
+// version: the loser must not be told it succeeded, and a principal that may
+// not change the agent must not be handed the winner's result.
+func TestAgentReplayIsOnlyForTheSameCommand(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	f := seedAgentTenant(t, ctx, pool)
+	agent := createAgent(t, ctx, pool, f, "Code reviewer")
+	stranger := lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: mustID[ids.Principal](t)}
+	revise := func(actor lifecycle.Actor, name string, expected uint64) (bool, error) {
+		return tryTx(t, ctx, pool, func(uow *store.UnitOfWork) (bool, error) {
+			_, replayed, err := store.ReviseAgent(ctx, uow, f.tenant, agent.ID, f.profile(name), store.Transition{
+				ExpectedVersion: expected, At: time.Now().UTC(), Actor: actor, AuditID: newAuditID(t),
+			})
+			return replayed, err
+		})
+	}
+
+	if replayed, err := revise(f.actor, "First edit", 1); err != nil || replayed {
+		t.Fatalf("first edit = %v, %v", replayed, err)
+	}
+	if replayed, err := revise(f.actor, "Second edit", 1); !errors.Is(err, store.ErrStaleVersion) {
+		t.Fatalf("competing edit from the same version = %v, %v, want ErrStaleVersion", replayed, err)
+	}
+	if replayed, err := revise(f.actor, "First edit", 1); err != nil || !replayed {
+		t.Fatalf("the same edit again = %v, %v, want a replay", replayed, err)
+	}
+	if _, err := revise(stranger, "First edit", 1); lifecycle.RejectionOf(err) != lifecycle.RejectUnauthorizedActor {
+		t.Fatalf("another principal repeating the edit error = %v, want unauthorized_actor", err)
+	}
+	stored, err := store.GetAgent(ctx, pool, f.tenant, agent.ID)
+	if err != nil || stored.Name != "First edit" || stored.Version != 2 || stored.Revision != 2 {
+		t.Fatalf("agent after the race = %+v, %v", stored, err)
+	}
+
+	retire := func(actor lifecycle.Actor) (bool, error) {
+		return tryTx(t, ctx, pool, func(uow *store.UnitOfWork) (bool, error) {
+			_, replayed, err := store.RetireAgent(ctx, uow, f.tenant, agent.ID, store.Transition{
+				ExpectedVersion: 2, At: time.Now().UTC(), Actor: actor, AuditID: newAuditID(t),
+			})
+			return replayed, err
+		})
+	}
+	if replayed, err := retire(f.actor); err != nil || replayed {
+		t.Fatalf("retire = %v, %v", replayed, err)
+	}
+	if replayed, err := retire(f.actor); err != nil || !replayed {
+		t.Fatalf("retire again = %v, %v, want a replay", replayed, err)
+	}
+	if _, err := retire(stranger); lifecycle.RejectionOf(err) != lifecycle.RejectUnauthorizedActor {
+		t.Fatalf("another principal repeating the retire error = %v, want unauthorized_actor", err)
+	}
+	if _, err := revise(f.actor, "Third edit", 2); !errors.Is(err, store.ErrStaleVersion) {
+		t.Fatalf("an edit from before the retire error = %v, want ErrStaleVersion", err)
+	}
+}
