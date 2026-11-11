@@ -5,7 +5,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 ARG KIT_VERSION=dev
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS build
 
 WORKDIR /src
 
@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-sim-adapter ./cmd/dac-sim-adapter
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS codex-adapter-build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS codex-adapter-build
 
 WORKDIR /src
 COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
@@ -72,7 +72,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-codex-adapter ./cmd/dac-codex-adapter
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS e2b-adapter-build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS e2b-adapter-build
 
 WORKDIR /src
 COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
@@ -93,7 +93,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-e2b-adapter ./cmd/dac-e2b-adapter
 
-FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS s3-adapter-build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS s3-adapter-build
 
 WORKDIR /src
 COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/

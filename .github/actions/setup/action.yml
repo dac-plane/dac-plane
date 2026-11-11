@@ -4,7 +4,7 @@ description: Set up Go and just after checking out the repository.
 inputs:
   go-version:
     description: Go version to install.
-    default: 1.27.3
+    default: 1.27.4
   go-cache:
     description: Whether setup-go restores the module and build cache.
     default: 'true'
