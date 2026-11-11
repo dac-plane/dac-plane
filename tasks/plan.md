@@ -1,7 +1,7 @@
 # Upgrade from the last published release in the operations suite
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/116
-Branch: `test/operations-upgrade-from-release`, from `main` at `2c3019f`.
+Branch: `test/operations-upgrade-from-release`, from `main` at `1ae44c7`.
 
 ## Where the tree stands
 
