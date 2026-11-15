@@ -134,7 +134,10 @@ func ReviseAgent(ctx context.Context, pool *pgxpool.Pool, cmd ReviseAgentCommand
 		if err != nil {
 			return nil, err
 		}
-		agent, _, err := store.ReviseAgent(ctx, u.uow, tenant, cmd.Agent, cmd.Profile, tr)
+		agent, replayed, err := store.ReviseAgent(ctx, u.uow, tenant, cmd.Agent, cmd.Profile, tr)
+		if replayed {
+			err = store.ErrStaleVersion
+		}
 		if err != nil {
 			return nil, agentRefusal(ctx, u, tenant, cmd.Agent, lifecycle.AgentRevise, tr.ExpectedVersion, err)
 		}
@@ -162,7 +165,10 @@ func RetireAgent(ctx context.Context, pool *pgxpool.Pool, cmd RetireAgentCommand
 			return nil, err
 		}
 		tenant := cmd.Actor.Principal().Tenant
-		agent, _, err := store.RetireAgent(ctx, u.uow, tenant, cmd.Agent, tr)
+		agent, replayed, err := store.RetireAgent(ctx, u.uow, tenant, cmd.Agent, tr)
+		if replayed {
+			err = store.ErrStaleVersion
+		}
 		if err != nil {
 			return nil, agentRefusal(ctx, u, tenant, cmd.Agent, lifecycle.AgentRetire, tr.ExpectedVersion, err)
 		}
@@ -237,6 +243,9 @@ func GetAgentRevision(ctx context.Context, pool *pgxpool.Pool, actor identity.Au
 
 // agentRefusal turns the store's stale version into the lifecycle's version
 // conflict, so it is audited and answered as every other stale command is.
+// A store replay counts as stale here: execute already answered a retry of
+// this command from its nonce, so a replay reached inside a command is another
+// command decided on a version that has moved, as in CancelTask.
 // Anything else is returned unchanged.
 func agentRefusal(ctx context.Context, u *unit, tenant ids.TenantID, id ids.AgentID, event lifecycle.AgentEvent, expected uint64, err error) error {
 	if !errors.Is(err, store.ErrStaleVersion) {

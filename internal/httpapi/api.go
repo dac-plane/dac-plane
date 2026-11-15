@@ -34,9 +34,12 @@ import (
 const (
 	maxBodyBytes           = 64 << 10
 	maxSubmitTaskBodyBytes = 1 << 20
-	maxIdempotencyKey      = 128
-	defaultPageSize        = 100
-	prefix                 = "/v1/tenants/{tenant}"
+	// maxAgentBodyBytes fits a profile at its character bounds even when every
+	// character is four bytes, or escaped as a surrogate pair.
+	maxAgentBodyBytes = 1 << 20
+	maxIdempotencyKey = 128
+	defaultPageSize   = 100
+	prefix            = "/v1/tenants/{tenant}"
 )
 
 // Authenticator establishes the principal of a request for one tenant.

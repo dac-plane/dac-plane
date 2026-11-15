@@ -277,3 +277,33 @@ func TestCursorRoundTripAndRejection(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentDecoderAcceptsMaximumMultibyteProfile(t *testing.T) {
+	body := AgentRequest{
+		Name: strings.Repeat("😀", lifecycle.MaxAgentNameCharacters), Role: strings.Repeat("😀", lifecycle.MaxAgentRoleCharacters),
+		Instructions: strings.Repeat("😀", lifecycle.MaxAgentInstructionsCharacters),
+		Provider:     newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t),
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same body with every character escaped as a surrogate pair, the
+	// largest form a client may send.
+	escaped := bytes.ReplaceAll(raw, []byte("😀"), []byte(`😀`))
+	for name, encoded := range map[string][]byte{"utf-8": raw, "escaped": escaped} {
+		t.Run(name, func(t *testing.T) {
+			if len(encoded) <= maxBodyBytes || len(encoded) > maxAgentBodyBytes {
+				t.Fatalf("maximum profile encoded to %d bytes; want above default and within the agent limit", len(encoded))
+			}
+			request := httptest.NewRequest(http.MethodPost, "/agents", bytes.NewReader(encoded))
+			decoded, err := decodeLimited[AgentRequest](request, maxAgentBodyBytes)
+			if err != nil {
+				t.Fatalf("decode maximum profile: %v", err)
+			}
+			if decoded != body {
+				t.Fatal("maximum profile changed during decode")
+			}
+		})
+	}
+}

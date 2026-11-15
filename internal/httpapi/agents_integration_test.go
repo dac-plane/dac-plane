@@ -112,6 +112,11 @@ func TestSurfaceAgentsThroughHTTP(t *testing.T) {
 	if got := problemType(t, s.do(t, call{method: "PUT", path: path, as: "owner", key: "revise-2", ifMatch: `"1"`, body: stale}), 412); got != "stale-version" {
 		t.Fatalf("stale revise = %s", got)
 	}
+	// The same edit under a new key, from the version it already moved past, is
+	// stale too: only its own key replays it.
+	if got := problemType(t, s.do(t, call{method: "PUT", path: path, as: "owner", key: "revise-again", ifMatch: `"1"`, body: revised}), 412); got != "stale-version" {
+		t.Fatalf("repeated revise under a new key = %s", got)
+	}
 
 	// Earlier revisions stay readable.
 	first := decodeInto[lifecycle.AgentRevision](t, s.do(t, call{method: "GET", path: path + "/revisions/1", as: "other"}), 200)
@@ -186,6 +191,17 @@ func TestSurfaceAgentsThroughHTTP(t *testing.T) {
 	retired := decodeInto[lifecycle.Agent](t, s.do(t, call{method: "POST", path: path + "/retire", as: "owner", key: "retire-1", ifMatch: `"2"`, body: struct{}{}}), 200)
 	if retired.State != lifecycle.AgentRetired || retired.Version != 3 || retired.Revision != 2 {
 		t.Fatalf("retired agent = %+v", retired)
+	}
+	if got := problemType(t, s.do(t, call{method: "POST", path: path + "/retire", as: "owner", key: "retire-again", ifMatch: `"2"`, body: struct{}{}}), 412); got != "stale-version" {
+		t.Fatalf("repeated retire under a new key = %s", got)
+	}
+	var refusals int
+	if err := s.pool.QueryRow(s.ctx, `select count(*) from audit_event where tenant_id = $1 and record_kind = 'agent' and record_id = $2 and outcome = 'rejected' and reason = 'version_conflict'`,
+		s.tenant.String(), agent.ID.String()).Scan(&refusals); err != nil {
+		t.Fatal(err)
+	}
+	if refusals < 3 {
+		t.Fatalf("stale agent commands audited %d times, want at least 3", refusals)
 	}
 	if got := problemType(t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "delegate-3", body: submit}), 422); got != "no-agent" {
 		t.Fatalf("delegation to a retired agent = %s", got)

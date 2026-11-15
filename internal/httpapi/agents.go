@@ -19,7 +19,7 @@ func (a *API) createAgent(w http.ResponseWriter, r *http.Request, actor identity
 	if err != nil {
 		return err
 	}
-	body, err := decode[AgentRequest](r)
+	body, err := decodeLimited[AgentRequest](r, maxAgentBodyBytes)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func (a *API) reviseAgent(w http.ResponseWriter, r *http.Request, actor identity
 	if err != nil {
 		return err
 	}
-	body, err := decode[AgentRequest](r)
+	body, err := decodeLimited[AgentRequest](r, maxAgentBodyBytes)
 	if err != nil {
 		return err
 	}
