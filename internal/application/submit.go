@@ -30,6 +30,10 @@ type SubmitTask struct {
 	Command
 	// At is the command time.
 	At time.Time
+	// Agent, when set, delegates the task to that active agent at its current
+	// revision (ADR-0020). Provider and EnvironmentProvider then default to
+	// the revision's providers.
+	Agent ids.AgentID
 	// Provider selects the harness: it must have a qualification that is not
 	// off. No production provider is chosen here.
 	Provider ids.ProviderID
@@ -57,6 +61,7 @@ type SubmitTask struct {
 // submitPayload is the fingerprinted part of a submission: everything but
 // the nonce and the command time.
 type submitPayload struct {
+	Agent               string   `json:"agent_id,omitempty"`
 	Provider            string   `json:"provider"`
 	EnvironmentProvider string   `json:"environment_provider_id"`
 	Objective           string   `json:"objective"`
@@ -74,6 +79,8 @@ type submitPayload struct {
 // reference, and the selection it bound.
 type submission struct {
 	Task                 string   `json:"task"`
+	Agent                string   `json:"agent_id,omitempty"`
+	AgentRevision        uint32   `json:"agent_revision,omitempty"`
 	Attempt              string   `json:"attempt"`
 	Operation            string   `json:"operation"`
 	Budget               string   `json:"budget"`
@@ -145,9 +152,9 @@ func (c SubmitTask) validate() error {
 	switch {
 	case c.At.IsZero() || c.Deadline.IsZero():
 		return fmt.Errorf("%w: a command time and a deadline are required", ErrInvalidCommand)
-	case c.Provider.IsZero():
+	case c.Provider.IsZero() && c.Agent.IsZero():
 		return fmt.Errorf("%w: a provider is required", ErrInvalidCommand)
-	case c.EnvironmentProvider.IsZero():
+	case c.EnvironmentProvider.IsZero() && c.Agent.IsZero():
 		return fmt.Errorf("%w: an environment provider is required", ErrInvalidCommand)
 	case c.Brief.Validate() != nil:
 		return fmt.Errorf("%w: a valid execution brief is required", ErrInvalidCommand)
@@ -224,7 +231,7 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, cmd SubmitTask) (Submission
 		return Submission{}, err
 	}
 	digest, err := fingerprint(commandSubmitTask, submitPayload{
-		Provider: cmd.Provider.String(), EnvironmentProvider: cmd.EnvironmentProvider.String(), Objective: cmd.Brief.Objective, AcceptanceCriteria: cmd.Brief.AcceptanceCriteria,
+		Agent: cmd.Agent.String(), Provider: cmd.Provider.String(), EnvironmentProvider: cmd.EnvironmentProvider.String(), Objective: cmd.Brief.Objective, AcceptanceCriteria: cmd.Brief.AcceptanceCriteria,
 		Demand: string(cmd.Demand), Deadline: cmd.Deadline.Format(time.RFC3339Nano),
 		Unit: string(cmd.Unit), Ceiling: cmd.Ceiling, Amount: cmd.Amount, Spend: cmd.Spend,
 	})
@@ -256,6 +263,28 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	principal := cmd.Actor.Principal()
 	tenant := principal.Tenant
 
+	var delegated *lifecycle.AgentReference
+	if !cmd.Agent.IsZero() {
+		// The share lock holds the revision until commit: a concurrent revise
+		// or retire waits, so the task never pins a revision that was already
+		// superseded or an agent that was already retired.
+		agent, err := store.GetAgentForDelegation(ctx, u.uow, tenant, cmd.Agent)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && agent.State != lifecycle.AgentActive) {
+			return nil, ErrNoAgent
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cmd.Provider.IsZero() {
+			cmd.Provider = agent.Provider
+		}
+		if cmd.EnvironmentProvider.IsZero() {
+			cmd.EnvironmentProvider = agent.EnvironmentProvider
+		}
+		reference := agent.Reference()
+		delegated = &reference
+	}
+
 	harness, err := store.GetHarness(ctx, u.uow, tenant, cmd.Provider)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && harness.Mode == lifecycle.HarnessOff) {
 		return nil, ErrNoHarness
@@ -276,6 +305,12 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	task, err := lifecycle.NewTaskWithBrief(taskID, tenant, principal.ID, cmd.Brief, cmd.At)
 	if err != nil {
 		return nil, err
+	}
+	if delegated != nil {
+		task.Agent = delegated
+		if err := task.Validate(); err != nil {
+			return nil, err
+		}
 	}
 	if _, _, err := store.InsertTask(ctx, u.uow, task); err != nil {
 		return nil, err
@@ -319,6 +354,9 @@ func submit(ctx context.Context, u *unit, cmd SubmitTask) (json.RawMessage, erro
 	result, err := scheduleAttempt(ctx, u, task, attempt, budget, cmd, harness, commandSubmitTask)
 	if err != nil {
 		return nil, err
+	}
+	if delegated != nil {
+		result.Agent, result.AgentRevision = delegated.Agent.String(), delegated.Revision
 	}
 	return json.Marshal(result)
 }

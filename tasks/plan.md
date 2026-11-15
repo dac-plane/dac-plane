@@ -1,9 +1,8 @@
 # Define agents in dac-plane and delegate work to them
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/136
-Branch: `feat/136-agent-store`, from `main` at `f1002e7`. This branch carries step 3, persistence. Step 2 merged in #139.
-
-The v0.2.0 release (#134) is still in progress beside this; its remaining steps are in `docs/releases/README.md`.
+Branch: `feat/136-agent-surface`, from `main` at `4a8485f`. This branch carries step 4, the application commands
+and the Surface API. Step 2 merged in #139 and step 3 in #141. v0.2.0 is released (#134).
 
 ## Where the tree stands
 
@@ -48,13 +47,38 @@ For step 3:
 - A name another active agent holds is `ErrAgentNameTaken`, checked before the update so the transaction stays usable;
   the unique index still decides between concurrent writers.
 
+For step 4:
+
+- Commands `create_agent`, `revise_agent` and `retire_agent`, idempotent like every other command. Revise and retire
+  take the agent's version in `If-Match`; revise replaces the whole profile, so it is `PUT /agents/{agent}`, and
+  retire is `POST /agents/{agent}/retire`, as cancel is.
+- Every principal of the tenant reads its agents: `GET /agents`, `GET /agents/{agent}` and
+  `GET /agents/{agent}/revisions/{revision}`, the last so a surface can show the profile a task was delegated to. The
+  list is the tenant's agents, retired ones included, without paging, as the attention list is.
+- `POST /tasks` takes `agent_id`. With it the providers are optional and default to the agent's current revision;
+  without it both stay required. The agent row is read `for share`, so a concurrent retire either waits or is
+  waited on, and a retired or missing agent is `no-agent` (`422`). The fingerprint carries the request as given, and
+  the submission record carries the agent, the pinned revision and the resolved providers.
+- Rework and migration restarts keep the task's pinned revision; nothing in them changes.
+- New problems: `agent-name-taken` (`409`), `no-agent` and `no-runtime-provider` (`422`), and `not-migrated`
+  (`503`, for `ErrSchemaUnavailable` during an ADR-0011 rollout).
+- The runtime does not receive the role and instructions until step 5 adds the negotiated field, so until then the
+  worker refuses a delegated task's `start_turn` before sending it (`agent_instructions_unsupported`), which fails the
+  task, and holds a delegated migration restart unsent. `main` stays releasable; step 5 lets the send through to an
+  adapter that negotiated `agent.instructions`.
+- The guide's Surface API page lists the new operations and problems now; the agents guide is step 6.
+- A task's audit entries carry its agent and revision: migration 17 adds the columns to `audit_event`, and a trigger
+  fills them from the task row for every task entry, applied or refused, whichever binary writes it. Migration 17 is
+  unreleased (v0.2.0 ends at 16), so it is amended rather than followed by another.
+
 ## Steps
 
 1. ADR-0020. Done in #138.
-2. Contracts: the agent and revision records, their transitions and audit, JSON Schemas and agreement tests.
+2. Contracts: the agent and revision records, their transitions and audit, JSON Schemas and agreement tests. Done in #139.
    Verify: `just test-contracts`, `just ci-fast`, `just docs-check`.
-3. Persistence: the migration, the store, the rollout probe moved up one version.
+3. Persistence: the migration, the store, the rollout probe moved up one version. Done in #141.
    Verify: `just test-migration`, `just test-operations-fixture`, `just test-integration`, `just ci-fast`.
 4. Application and Surface API: the agent operations, submission to an agent, OpenAPI 1.1.0.
+   Verify: `just test-integration`, `just test-contracts`, `just docs-check`, `just ci-fast`.
 5. Wire and adapters: the capability, the kit field, the Codex adapter and the simulator.
 6. The user guide, and the upgrade scenario exercising the new schema.

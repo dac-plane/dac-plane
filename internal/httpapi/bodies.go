@@ -20,8 +20,11 @@ import (
 
 // SubmitTaskRequest is the body of POST /tasks.
 type SubmitTaskRequest struct {
-	Provider            ids.ProviderID   `json:"provider_id"`
-	EnvironmentProvider ids.ProviderID   `json:"environment_provider_id"`
+	// Agent, when set, delegates the task to that agent; the providers then
+	// default to its current revision's.
+	Agent               ids.AgentID      `json:"agent_id,omitzero"`
+	Provider            ids.ProviderID   `json:"provider_id,omitzero"`
+	EnvironmentProvider ids.ProviderID   `json:"environment_provider_id,omitzero"`
 	Objective           string           `json:"objective"`
 	AcceptanceCriteria  []string         `json:"acceptance_criteria"`
 	Demand              contracts.Demand `json:"demand,omitempty"`
@@ -36,10 +39,10 @@ type SubmitTaskRequest struct {
 func (r SubmitTaskRequest) Validate() error {
 	brief := lifecycle.ExecutionBrief{Objective: r.Objective, AcceptanceCriteria: r.AcceptanceCriteria}
 	switch {
-	case r.Provider.IsZero():
-		return fmt.Errorf("%w: provider_id is required", application.ErrInvalidCommand)
-	case r.EnvironmentProvider.IsZero():
-		return fmt.Errorf("%w: environment_provider_id is required", application.ErrInvalidCommand)
+	case r.Provider.IsZero() && r.Agent.IsZero():
+		return fmt.Errorf("%w: provider_id is required without agent_id", application.ErrInvalidCommand)
+	case r.EnvironmentProvider.IsZero() && r.Agent.IsZero():
+		return fmt.Errorf("%w: environment_provider_id is required without agent_id", application.ErrInvalidCommand)
 	case brief.Validate() != nil:
 		return fmt.Errorf("%w: a valid objective and acceptance criteria are required", application.ErrInvalidCommand)
 	case r.Demand != "" && !slices.Contains(contracts.Demands(), r.Demand):
@@ -328,4 +331,34 @@ func nonNil[T any](values []T) []T {
 		return []T{}
 	}
 	return values
+}
+
+// AgentRequest is the body of POST /agents and PUT /agents/{agent}: the whole
+// profile, since a revision replaces it as a whole (ADR-0020).
+type AgentRequest struct {
+	Name                string         `json:"name"`
+	Role                string         `json:"role"`
+	Instructions        string         `json:"instructions,omitempty"`
+	Provider            ids.ProviderID `json:"provider_id"`
+	EnvironmentProvider ids.ProviderID `json:"environment_provider_id"`
+}
+
+// Validate reports whether the body is a profile within its bounds.
+func (r AgentRequest) Validate() error {
+	if err := r.profile().Validate(); err != nil {
+		return fmt.Errorf("%w: %w", application.ErrInvalidCommand, err)
+	}
+	return nil
+}
+
+func (r AgentRequest) profile() lifecycle.AgentProfile {
+	return lifecycle.AgentProfile{
+		Name: r.Name, Role: r.Role, Instructions: r.Instructions,
+		Provider: r.Provider, EnvironmentProvider: r.EnvironmentProvider,
+	}
+}
+
+// AgentListBody is a tenant's agents.
+type AgentListBody struct {
+	Agents []lifecycle.Agent `json:"agents"`
 }

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dac-plane Surface API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Surface API v1 (ADR-0007). Commands map one-to-one onto application commands; mutating requests require Idempotency-Key, and commands that change an existing record require If-Match with its ETag. Errors are RFC 9457 problems."
   },
   "security": [
@@ -15,6 +15,7 @@
       "post": {
         "operationId": "submitTask",
         "summary": "Submit a task",
+        "description": "With agent_id the task is delegated to that active agent and records the revision current at submission; providers the body omits come from that revision. Delegation to a missing or retired agent is refused with 422, and with 503 until the database is migrated.",
         "parameters": [
           {
             "$ref": "#/components/parameters/Tenant"
@@ -65,6 +66,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
           }
         },
         "requestBody": {
@@ -883,6 +887,337 @@
           "500": { "$ref": "#/components/responses/Problem500" }
         }
       }
+    },
+    "/v1/tenants/{tenant}/agents": {
+      "post": {
+        "operationId": "createAgent",
+        "summary": "Create an agent",
+        "description": "Creates an active agent at revision 1. Its default providers must be registered for the tenant in the runtime and environment roles. Every principal of the tenant reads it; only its creator revises or retires it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/agent-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The agent. Replaying the same Idempotency-Key and body returns it again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/agent.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Location": {
+                "description": "URL of the created agent.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listAgents",
+        "summary": "List agents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tenant's agents, retired ones included, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/agent-list.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/agents/{agent}": {
+      "get": {
+        "operationId": "getAgent",
+        "summary": "Read an agent",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Agent"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent at its current revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/agent.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      },
+      "put": {
+        "operationId": "reviseAgent",
+        "summary": "Revise an agent",
+        "description": "Replaces the whole profile as the next revision. Tasks already delegated keep the revision they were delegated to. Only the principal that created the agent revises it, and a retired agent is not revised. If-Match carries the agent version.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Agent"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/agent-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The agent at its new revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/agent.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/agents/{agent}/retire": {
+      "post": {
+        "operationId": "retireAgent",
+        "summary": "Retire an agent",
+        "description": "Stops new delegation to the agent and frees its name. Its revisions and tasks stay readable. Only the principal that created the agent retires it. If-Match carries the agent version.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Agent"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyCommand"
+        },
+        "responses": {
+          "200": {
+            "description": "The retired agent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/agent.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/agents/{agent}/revisions/{revision}": {
+      "get": {
+        "operationId": "getAgentRevision",
+        "summary": "Read an agent revision",
+        "description": "The profile the agent had at one revision, such as the one a task was delegated to.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Agent"
+          },
+          {
+            "$ref": "#/components/parameters/AgentRevision"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/agent-revision.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -895,6 +1230,26 @@
       }
     },
     "parameters": {
+      "Agent": {
+        "name": "agent",
+        "in": "path",
+        "required": true,
+        "description": "The agent.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "AgentRevision": {
+        "name": "revision",
+        "in": "path",
+        "required": true,
+        "description": "The agent revision number, from 1.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      },
       "Tenant": {
         "name": "tenant",
         "in": "path",
@@ -1031,6 +1386,16 @@
       }
     },
     "responses": {
+      "Problem503": {
+        "description": "Not available until the database is migrated: the binary serves an earlier schema during a rollout (ADR-0011). Retry after the migration.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../jsonschema/surface/problem.schema.json"
+            }
+          }
+        }
+      },
       "MigrationView": {
         "description": "The updated migration pass and its current preview evidence, when present.",
         "content": {

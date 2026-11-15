@@ -24,6 +24,7 @@ var nestedRecords = map[string]string{
 	"TurnFailure":    "lifecycle/turn-end.schema.json#/properties/failure",
 	"SpendTerms":     "lifecycle/common.schema.json#/$defs/spendTerms",
 	"AgentReference": "lifecycle/common.schema.json#/$defs/agentReference",
+	"AgentProfile":   "surface/agent-request.schema.json",
 	"Failure":        "adapter/common.schema.json#/$defs/failure",
 	"Lifecycle":      "adapter/frame.schema.json#/$defs/lifecycle",
 	"Request":        "adapter/frame.schema.json#/$defs/request",

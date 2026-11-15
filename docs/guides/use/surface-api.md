@@ -25,7 +25,8 @@ Everything belongs to a tenant: `https://HOST:8443/v1/tenants/{tenant}/...`. Ide
 
 | Area | Operations |
 |---|---|
-| Tasks | Submit a task; read it with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
+| Agents | Create an agent; list, read, revise and retire agents; read an earlier revision of one. |
+| Tasks | Submit a task, to an agent or to providers you name; read it with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
 | Attention | List open attention requests; read one; decide it. |
 | Results | Review a revision: accept, request changes or reject. |
 | Budgets | Complete a submission or rework that is waiting on a spend challenge. |
@@ -36,12 +37,12 @@ Everything belongs to a tenant: `https://HOST:8443/v1/tenants/{tenant}/...`. Ide
 
 A request that changes something is a command, and two headers make commands safe to retry and to race.
 
-**`Idempotency-Key`** is required on every `POST`: 1 to 128 bytes you choose, such as a UUID. Repeating a command
+**`Idempotency-Key`** is required on every `POST` and `PUT`: 1 to 128 bytes you choose, such as a UUID. Repeating a command
 with the same key returns the original result instead of acting twice, so a client can retry after a timeout without
 submitting a task twice. Reusing a key with a different body is refused with `422`.
 
 **`If-Match`** is required on commands that change an existing record: deciding an attention request, reviewing,
-cancelling and completing a spend challenge. It carries the record version you based the command on, from the `ETag`
+cancelling, completing a spend challenge, and revising or retiring an agent. It carries the record version you based the command on, from the `ETag`
 of the response you read it in (attention requests also carry it as `version`). If the record changed since, the
 command is refused with `412` and you read it again; without the header, `428`.
 
@@ -56,10 +57,26 @@ Errors are [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem documents,
 | `401` | No valid token. | Get a new token. |
 | `403` | The token's principal may not do this. | Check the binding and permissions. |
 | `404` | No such record, or one this principal may not read: the two look the same, so a response never reveals what it hides. | |
-| `409` | The lifecycle refused the command in the record's current state; `detail` names the reason. | Read the record; the command may no longer apply. |
+| `409` | The lifecycle refused the command in the record's current state; `detail` names the reason. Or another active agent already has the name. | Read the record; the command may no longer apply. Choose another name. |
 | `412` | The record changed since you read it. | Read it again and decide again. |
-| `422` | Valid JSON that is not a valid command, a reused `Idempotency-Key`, or a provider with no qualified harness or environment. | Fix the command or the provisioning. |
+| `422` | Valid JSON that is not a valid command, a reused `Idempotency-Key`, a provider with no qualified harness or registration, or an agent that does not exist or is retired. | Fix the command or the provisioning. |
 | `428` | `If-Match` missing. | Send it. |
+| `503` | The operation needs a database migration that has not run yet, during an upgrade. | Retry after the upgrade completes. |
+
+## Agents
+
+An agent is a named role your tenant delegates work to: a name, a role, optional standing instructions, and the
+runtime and environment providers its work goes to by default. Every principal of the tenant can read and delegate to
+an agent; only the principal that created it can revise or retire it. An agent is not a principal: a task submitted to
+it is still owned by whoever submitted it.
+
+Submit a task to an agent by giving `agent_id` instead of `provider_id` and `environment_provider_id`. A provider you
+do give overrides the agent's default. The task records the agent and the revision it had at submission, and keeps that
+revision through rework, so revising the agent later does not change work already delegated. A retired agent takes no
+new tasks; its revisions and tasks stay readable.
+
+The runtime protocol does not carry an agent's role and instructions yet. Until it does, a task delegated to an agent
+fails before its turn starts, rather than running without them.
 
 ## Events
 

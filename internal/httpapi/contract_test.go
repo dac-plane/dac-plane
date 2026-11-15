@@ -38,6 +38,7 @@ var (
 	reviewContract    = schematest.GoContract[ReviewRequest](schemaPath("review-request.schema.json"))
 	migrationContract = schematest.GoContract[CreateMigrationRequest](schemaPath("create-migration-request.schema.json"))
 	emptyContract     = schematest.GoContract[EmptyCommandRequest](schemaPath("empty-command-request.schema.json"))
+	agentContract     = schematest.GoContract[AgentRequest](schemaPath("agent-request.schema.json"))
 )
 
 func newID[K any](t *testing.T) ids.ID[K] {
@@ -73,15 +74,19 @@ func validRequests(t *testing.T) map[string]struct {
 		"submit governed person": {submitContract, schematest.Marshal(t, SubmitTaskRequest{
 			Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
 		})},
-		"assert submission": {assertionContract, schematest.Marshal(t, SpendAssertionRequest{SubmissionKey: "submit-1", Assertion: assertion})},
-		"assert review":     {assertionContract, schematest.Marshal(t, SpendAssertionRequest{ReviewKey: "review-1", Assertion: assertion})},
-		"deny":              {decisionContract, schematest.Marshal(t, DecisionRequest{Kind: lifecycle.DecisionDeny})},
-		"answer":            {decisionContract, schematest.Marshal(t, DecisionRequest{Kind: lifecycle.DecisionAnswer, AnswerDigest: digestOf("answer")})},
-		"cancel":            {cancelContract, []byte(`{}`)},
-		"accept":            {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionAccept})},
-		"request changes":   {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionRequestChanges, Rework: rework})},
-		"create migration":  {migrationContract, schematest.Marshal(t, CreateMigrationRequest{From: newID[ids.Provider](t), To: newID[ids.Provider](t)})},
-		"empty command":     {emptyContract, []byte(`{}`)},
+		"assert submission":                  {assertionContract, schematest.Marshal(t, SpendAssertionRequest{SubmissionKey: "submit-1", Assertion: assertion})},
+		"assert review":                      {assertionContract, schematest.Marshal(t, SpendAssertionRequest{ReviewKey: "review-1", Assertion: assertion})},
+		"deny":                               {decisionContract, schematest.Marshal(t, DecisionRequest{Kind: lifecycle.DecisionDeny})},
+		"answer":                             {decisionContract, schematest.Marshal(t, DecisionRequest{Kind: lifecycle.DecisionAnswer, AnswerDigest: digestOf("answer")})},
+		"cancel":                             {cancelContract, []byte(`{}`)},
+		"accept":                             {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionAccept})},
+		"request changes":                    {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionRequestChanges, Rework: rework})},
+		"create migration":                   {migrationContract, schematest.Marshal(t, CreateMigrationRequest{From: newID[ids.Provider](t), To: newID[ids.Provider](t)})},
+		"empty command":                      {emptyContract, []byte(`{}`)},
+		"submit to agent":                    {submitContract, schematest.Marshal(t, SubmitTaskRequest{Agent: newID[ids.Agent](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
+		"submit to agent on another runtime": {submitContract, schematest.Marshal(t, SubmitTaskRequest{Agent: newID[ids.Agent](t), Provider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
+		"agent":                              {agentContract, schematest.Marshal(t, AgentRequest{Name: "Reviewer", Role: "Reviews changes for correctness", Instructions: "Read the whole change first.", Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t)})},
+		"agent without instructions":         {agentContract, schematest.Marshal(t, AgentRequest{Name: "Reviewer", Role: "Reviews changes", Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t)})},
 	}
 }
 
@@ -131,6 +136,19 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		{"migration without source", "create migration", func(d map[string]any) { delete(d, "from_provider_id") }},
 		{"migration without target", "create migration", func(d map[string]any) { delete(d, "to_provider_id") }},
 		{"empty command with field", "empty command", func(d map[string]any) { d["force"] = true }},
+		{"submit to agent without objective", "submit to agent", func(d map[string]any) { delete(d, "objective") }},
+		{"agent without name", "agent", func(d map[string]any) { delete(d, "name") }},
+		{"agent padded name", "agent", func(d map[string]any) { d["name"] = " Reviewer" }},
+		{"agent two-line name", "agent", func(d map[string]any) { d["name"] = "Code\nReviewer" }},
+		{"agent long name", "agent", func(d map[string]any) { d["name"] = strings.Repeat("n", lifecycle.MaxAgentNameCharacters+1) }},
+		{"agent blank role", "agent", func(d map[string]any) { d["role"] = "  " }},
+		{"agent blank instructions", "agent", func(d map[string]any) { d["instructions"] = " " }},
+		{"agent long instructions", "agent", func(d map[string]any) {
+			d["instructions"] = strings.Repeat("i", lifecycle.MaxAgentInstructionsCharacters+1)
+		}},
+		{"agent without provider", "agent", func(d map[string]any) { delete(d, "provider_id") }},
+		{"agent without environment provider", "agent", func(d map[string]any) { delete(d, "environment_provider_id") }},
+		{"agent with model", "agent", func(d map[string]any) { d["model"] = "x" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,6 +195,14 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 	rework := submissionBody(submission)
 	migration := lifecycle.MigrationPass{ID: newID[ids.Migration](t), Tenant: tenant, From: newID[ids.Provider](t), To: newID[ids.Provider](t), State: lifecycle.MigrationPreviewed, Version: 2, CreatedAt: testNow, UpdatedAt: testNow}
 	preview := store.MigrationPreview{FromVersion: 3, ToVersion: 4, At: testNow}
+	profile := lifecycle.AgentProfile{Name: "Reviewer", Role: "Reviews changes for correctness", Instructions: "Read the whole change first.", Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t)}
+	agent, agentRevision, err := lifecycle.NewAgent(newID[ids.Agent](t), tenant, owner, profile, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegated := taskRecord
+	reference := agent.Reference()
+	delegated.Agent = &reference
 	if strings.Contains(string(schematest.Marshal(t, rework)), "secret detail") {
 		t.Fatal("submission body exposes provider error text")
 	}
@@ -203,6 +229,11 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		"migration":            {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview})},
 		"migration no preview": {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration})},
 		"migration preview":    {"migration-preview.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview}).Preview},
+		"agent":                {"../lifecycle/agent.schema.json", agent},
+		"agent list":           {"agent-list.schema.json", AgentListBody{Agents: []lifecycle.Agent{agent}}},
+		"empty agent list":     {"agent-list.schema.json", AgentListBody{Agents: nonNil[lifecycle.Agent](nil)}},
+		"agent revision":       {"../lifecycle/agent-revision.schema.json", agentRevision},
+		"delegated task view":  {"task-view.schema.json", taskBody(application.TaskView{Task: delegated})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := schematest.Marshal(t, response.body)

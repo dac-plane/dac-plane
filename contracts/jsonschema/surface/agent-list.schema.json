@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentList",
+  "description": "The tenant's agents, retired ones included, oldest first.",
+  "type": "object",
+  "required": [
+    "agents"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "agents": {
+      "type": "array",
+      "items": {
+        "$ref": "../lifecycle/agent.schema.json"
+      }
+    }
+  }
+}

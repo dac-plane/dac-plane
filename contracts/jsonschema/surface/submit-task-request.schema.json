@@ -1,11 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SubmitTaskRequest",
-  "description": "Body of POST /v1/tenants/{tenant}/tasks.",
+  "description": "Body of POST /v1/tenants/{tenant}/tasks. With agent_id the task is delegated to that agent at its current revision, and each provider omitted defaults to that revision's.",
   "type": "object",
   "required": [
-    "provider_id",
-    "environment_provider_id",
     "objective",
     "acceptance_criteria",
     "deadline",
@@ -14,7 +12,23 @@
     "amount"
   ],
   "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "agent_id"
+      ]
+    },
+    {
+      "required": [
+        "provider_id",
+        "environment_provider_id"
+      ]
+    }
+  ],
   "properties": {
+    "agent_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
     "provider_id": {
       "$ref": "../identity/common.schema.json#/$defs/uuidv7"
     },
