@@ -290,7 +290,12 @@ func TestAgentDecoderAcceptsMaximumMultibyteProfile(t *testing.T) {
 	}
 	// The same body with every character escaped as a surrogate pair, the
 	// largest form a client may send.
-	escaped := bytes.ReplaceAll(raw, []byte("😀"), []byte(`😀`))
+	escaped := bytes.ReplaceAll(raw, []byte("😀"), []byte("\\ud83d\\ude00"))
+	// Each four-byte character becomes a twelve-byte escape; a replacement that
+	// left the body unchanged would test UTF-8 twice.
+	if len(escaped) <= len(raw) {
+		t.Fatalf("escaped profile is %d bytes, raw %d: nothing was escaped", len(escaped), len(raw))
+	}
 	for name, encoded := range map[string][]byte{"utf-8": raw, "escaped": escaped} {
 		t.Run(name, func(t *testing.T) {
 			if len(encoded) <= maxBodyBytes || len(encoded) > maxAgentBodyBytes {
