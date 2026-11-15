@@ -34,9 +34,12 @@ import (
 const (
 	maxBodyBytes           = 64 << 10
 	maxSubmitTaskBodyBytes = 1 << 20
-	maxIdempotencyKey      = 128
-	defaultPageSize        = 100
-	prefix                 = "/v1/tenants/{tenant}"
+	// maxAgentBodyBytes fits a profile at its character bounds even when every
+	// character is four bytes, or escaped as a surrogate pair.
+	maxAgentBodyBytes = 1 << 20
+	maxIdempotencyKey = 128
+	defaultPageSize   = 100
+	prefix            = "/v1/tenants/{tenant}"
 )
 
 // Authenticator establishes the principal of a request for one tenant.
@@ -125,6 +128,12 @@ func (a *API) routes() []route {
 		{"GET " + prefix + "/attention/{attention}", a.authenticated(a.getAttention)},
 		{"POST " + prefix + "/attention/{attention}/decisions", a.authenticated(a.decide)},
 		{"GET " + prefix + "/events", a.authenticated(a.tenantEvents)},
+		{"POST " + prefix + "/agents", a.authenticated(a.createAgent)},
+		{"GET " + prefix + "/agents", a.authenticated(a.listAgents)},
+		{"GET " + prefix + "/agents/{agent}", a.authenticated(a.getAgent)},
+		{"PUT " + prefix + "/agents/{agent}", a.authenticated(a.reviseAgent)},
+		{"POST " + prefix + "/agents/{agent}/retire", a.authenticated(a.retireAgent)},
+		{"GET " + prefix + "/agents/{agent}/revisions/{revision}", a.authenticated(a.getAgentRevision)},
 		{"POST " + prefix + "/migration-passes", a.authenticated(a.createMigration)},
 		{"GET " + prefix + "/migration-passes/{migration}", a.authenticated(a.getMigration)},
 		{"POST " + prefix + "/migration-passes/{migration}/preview", a.authenticated(a.previewMigration)},
@@ -296,6 +305,14 @@ func problemFor(err error) Problem {
 		return newProblem(http.StatusUnprocessableEntity, "no-harness", "No qualified harness for the provider", "")
 	case errors.Is(err, application.ErrNoEnvironment):
 		return newProblem(http.StatusUnprocessableEntity, "no-environment-provider", "No registered environment provider", "")
+	case errors.Is(err, application.ErrNoRuntime):
+		return newProblem(http.StatusUnprocessableEntity, "no-runtime-provider", "No registered runtime provider", "")
+	case errors.Is(err, application.ErrNoAgent):
+		return newProblem(http.StatusUnprocessableEntity, "no-agent", "No active agent", "")
+	case errors.Is(err, application.ErrAgentNameTaken):
+		return newProblem(http.StatusConflict, "agent-name-taken", "Agent name is taken", "Another active agent of this tenant has this name.")
+	case errors.Is(err, application.ErrSchemaUnavailable):
+		return newProblem(http.StatusServiceUnavailable, "not-migrated", "Not available until the database is migrated", "")
 	case errors.Is(err, application.ErrInvalidCommand), errors.Is(err, lifecycle.ErrInvalid), errors.Is(err, identity.ErrInvalid):
 		return newProblem(http.StatusUnprocessableEntity, "invalid-command", "Invalid command", "")
 	}

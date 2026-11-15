@@ -747,6 +747,11 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 	if port == nil {
 		return nil
 	}
+	// Held before anything is marked, as for a missing port: a delegated
+	// task's restart must not run without its agent's instructions (ADR-0020).
+	if delegated, err := w.delegatedToAgent(ctx, tenant, item.TargetAttempt); err != nil || delegated {
+		return err
+	}
 	if item.RestartEpoch == 0 {
 		item.RestartEpoch = item.ClaimEpoch
 	}

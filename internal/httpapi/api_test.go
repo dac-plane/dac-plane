@@ -45,6 +45,10 @@ func problemCases() []problemCase {
 		{"payload mismatch", application.ErrPayloadMismatch, http.StatusUnprocessableEntity},
 		{"no harness", application.ErrNoHarness, http.StatusUnprocessableEntity},
 		{"no environment", application.ErrNoEnvironment, http.StatusUnprocessableEntity},
+		{"no runtime", application.ErrNoRuntime, http.StatusUnprocessableEntity},
+		{"no agent", application.ErrNoAgent, http.StatusUnprocessableEntity},
+		{"agent name taken", application.ErrAgentNameTaken, http.StatusConflict},
+		{"not migrated", fmt.Errorf("wrapped: %w", application.ErrSchemaUnavailable), http.StatusServiceUnavailable},
 		{"invalid command", fmt.Errorf("%w: x", application.ErrInvalidCommand), http.StatusUnprocessableEntity},
 		{"invalid lifecycle value", lifecycle.ErrInvalid, http.StatusUnprocessableEntity},
 		{"invalid identity value", identity.ErrInvalid, http.StatusUnprocessableEntity},
@@ -271,5 +275,40 @@ func TestCursorRoundTripAndRejection(t *testing.T) {
 		if _, err := parseCursor(text); err == nil {
 			t.Errorf("parseCursor(%q) accepted", text)
 		}
+	}
+}
+
+func TestAgentDecoderAcceptsMaximumMultibyteProfile(t *testing.T) {
+	body := AgentRequest{
+		Name: strings.Repeat("😀", lifecycle.MaxAgentNameCharacters), Role: strings.Repeat("😀", lifecycle.MaxAgentRoleCharacters),
+		Instructions: strings.Repeat("😀", lifecycle.MaxAgentInstructionsCharacters),
+		Provider:     newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t),
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same body with every character escaped as a surrogate pair, the
+	// largest form a client may send.
+	escaped := bytes.ReplaceAll(raw, []byte("😀"), []byte("\\ud83d\\ude00"))
+	// Each four-byte character becomes a twelve-byte escape; a replacement that
+	// left the body unchanged would test UTF-8 twice.
+	if len(escaped) <= len(raw) {
+		t.Fatalf("escaped profile is %d bytes, raw %d: nothing was escaped", len(escaped), len(raw))
+	}
+	for name, encoded := range map[string][]byte{"utf-8": raw, "escaped": escaped} {
+		t.Run(name, func(t *testing.T) {
+			if len(encoded) <= maxBodyBytes || len(encoded) > maxAgentBodyBytes {
+				t.Fatalf("maximum profile encoded to %d bytes; want above default and within the agent limit", len(encoded))
+			}
+			request := httptest.NewRequest(http.MethodPost, "/agents", bytes.NewReader(encoded))
+			decoded, err := decodeLimited[AgentRequest](request, maxAgentBodyBytes)
+			if err != nil {
+				t.Fatalf("decode maximum profile: %v", err)
+			}
+			if decoded != body {
+				t.Fatal("maximum profile changed during decode")
+			}
+		})
 	}
 }

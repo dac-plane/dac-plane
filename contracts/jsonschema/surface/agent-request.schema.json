@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentRequest",
+  "description": "Body of POST /v1/tenants/{tenant}/agents and PUT /v1/tenants/{tenant}/agents/{agent}: the agent's whole profile. A revision replaces it as a whole. It holds no model identifier, credential or tool list.",
+  "type": "object",
+  "required": [
+    "name",
+    "role",
+    "provider_id",
+    "environment_provider_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/agentName"
+    },
+    "role": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/agentRole"
+    },
+    "instructions": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/agentInstructions"
+    },
+    "provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "environment_provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    }
+  }
+}

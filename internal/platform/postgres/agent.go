@@ -100,6 +100,44 @@ func GetAgent(ctx context.Context, q Querier, tenant ids.TenantID, id ids.AgentI
 		tenant.String(), id.String()))
 }
 
+// GetAgentForDelegation loads an agent and holds a share lock on its row
+// until the transaction ends, so a task delegated to it pins a revision that
+// a concurrent revise or retire cannot pass. Before the agent schema it is
+// ErrSchemaUnavailable: delegation to an agent waits for the migration.
+func GetAgentForDelegation(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.AgentID) (lifecycle.Agent, error) {
+	if err := requireAgentSchema(ctx, u); err != nil {
+		return lifecycle.Agent{}, err
+	}
+	return scanAgent(u.QueryRow(ctx, `select `+agentColumns+` from agent where tenant_id = $1 and agent_id = $2 for share`,
+		tenant.String(), id.String()))
+}
+
+// ListAgents lists a tenant's agents, retired ones included, oldest first.
+// A database before the agent schema has none.
+func ListAgents(ctx context.Context, q Querier, tenant ids.TenantID) ([]lifecycle.Agent, error) {
+	if err := requireAgentSchema(ctx, q); err != nil {
+		if errors.Is(err, ErrSchemaUnavailable) {
+			return []lifecycle.Agent{}, nil
+		}
+		return nil, err
+	}
+	rows, err := q.Query(ctx, `select `+agentColumns+` from agent where tenant_id = $1 order by created_at, agent_id`,
+		tenant.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	agents := []lifecycle.Agent{}
+	for rows.Next() {
+		agent, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, agent)
+	}
+	return agents, rows.Err()
+}
+
 // GetAgentRevision loads one revision of an agent.
 func GetAgentRevision(ctx context.Context, q Querier, tenant ids.TenantID, id ids.AgentID, number uint32) (lifecycle.AgentRevision, error) {
 	if err := requireAgentSchema(ctx, q); err != nil {

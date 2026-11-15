@@ -539,3 +539,57 @@ func TestAgentReplayIsOnlyForTheSameCommand(t *testing.T) {
 		t.Fatalf("an edit from before the retire error = %v, want ErrStaleVersion", err)
 	}
 }
+
+// TestAgentDelegationHoldsTheRevision checks the share lock a submission
+// takes: a retire that starts while a delegation is open waits for it, so the
+// task never pins an agent that was already retired. Listing sees both states.
+func TestAgentDelegationHoldsTheRevision(t *testing.T) {
+	ctx, pool := setupTestDB(t)
+	f := seedAgentTenant(t, ctx, pool)
+	agent := createAgent(t, ctx, pool, f, "Code reviewer")
+
+	delegation, err := store.Begin(ctx, pool)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	defer func() { _ = delegation.Rollback(ctx) }()
+	held, err := store.GetAgentForDelegation(ctx, delegation, f.tenant, agent.ID)
+	if err != nil || held.State != lifecycle.AgentActive {
+		t.Fatalf("GetAgentForDelegation() = %+v, %v", held, err)
+	}
+
+	retire := store.Transition{ExpectedVersion: agent.Version, At: time.Now().UTC(), Actor: f.actor, AuditID: newAuditID(t)}
+	retired := make(chan error, 1)
+	go func() {
+		uow, err := store.Begin(ctx, pool)
+		if err != nil {
+			retired <- err
+			return
+		}
+		defer func() { _ = uow.Rollback(ctx) }()
+		if _, _, err := store.RetireAgent(ctx, uow, f.tenant, agent.ID, retire); err != nil {
+			retired <- err
+			return
+		}
+		retired <- uow.Commit(ctx)
+	}()
+	select {
+	case err := <-retired:
+		t.Fatalf("RetireAgent() finished while a delegation held the agent: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := delegation.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if err := <-retired; err != nil {
+		t.Fatalf("RetireAgent() error = %v", err)
+	}
+
+	agents, err := store.ListAgents(ctx, pool, f.tenant)
+	if err != nil || len(agents) != 1 || agents[0].State != lifecycle.AgentRetired {
+		t.Fatalf("ListAgents() = %+v, %v", agents, err)
+	}
+	if others, err := store.ListAgents(ctx, pool, mustID[ids.Tenant](t)); err != nil || len(others) != 0 {
+		t.Fatalf("ListAgents() for another tenant = %+v, %v", others, err)
+	}
+}

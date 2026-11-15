@@ -33,6 +33,10 @@ const (
 	reasonNoOperation       = "no_operation"
 	reasonDecisionRejected  = "decision_rejected"
 	reasonAttemptCancelling = "attempt_cancelling"
+	// reasonAgentInstructions refuses a delegated task's start_turn: the
+	// adapter protocol cannot carry an agent's role and instructions yet
+	// (ADR-0020), and the turn must not run without them.
+	reasonAgentInstructions = "agent_instructions_unsupported"
 	reasonSendStarted       = "send_started"
 )
 
@@ -216,6 +220,17 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	}
 	if err := request.Validate(); err != nil {
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, false)
+	}
+	if body.Role == contracts.RoleRuntime && body.Method == contracts.MethodStartTurn {
+		delegated, err := w.delegatedToAgent(ctx, tenant, prepared.operation.Attempt)
+		if err != nil {
+			return errors.Join(err, w.releasePrepared(ctx, tenant, row, prepared, now, !prepared.replay))
+		}
+		if delegated {
+			// Refused before anything is sent, so the task fails visibly
+			// instead of running without its agent's instructions.
+			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonAgentInstructions, prepared.replay)
+		}
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
 	defer cancel()
@@ -1088,4 +1103,19 @@ func (w *Worker) releaseLease(ctx context.Context, uow *store.UnitOfWork, tenant
 		return err
 	}
 	return nil
+}
+
+// delegatedToAgent reports whether the attempt's task was delegated to an
+// agent. Until the adapter protocol carries an agent's role and instructions
+// (ADR-0020), such a task's start_turn is never sent.
+func (w *Worker) delegatedToAgent(ctx context.Context, tenant ids.TenantID, attempt ids.AttemptID) (bool, error) {
+	loaded, err := store.GetAttempt(ctx, w.pool, tenant, attempt)
+	if err != nil {
+		return false, err
+	}
+	task, err := store.GetTask(ctx, w.pool, tenant, loaded.Task)
+	if err != nil {
+		return false, err
+	}
+	return task.Agent != nil, nil
 }

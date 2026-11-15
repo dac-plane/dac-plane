@@ -45,6 +45,7 @@ const audience = "https://dac-plane.example/api"
 // Surface API served over HTTP with real access tokens.
 type surface struct {
 	ctx                 context.Context
+	databaseURL         string
 	pool                *pgxpool.Pool
 	server              *httptest.Server
 	issuer              *oidctest.Issuer
@@ -86,7 +87,7 @@ func newSurfaceWith(t *testing.T, options httpapi.Options) *surface {
 	}
 	t.Cleanup(pool.Close)
 
-	s := &surface{ctx: ctx, pool: pool, provider: mustID[ids.Provider](t), environmentProvider: mustID[ids.Provider](t), at: time.Now().UTC().Truncate(time.Microsecond)}
+	s := &surface{ctx: ctx, databaseURL: databaseURL, pool: pool, provider: mustID[ids.Provider](t), environmentProvider: mustID[ids.Provider](t), at: time.Now().UTC().Truncate(time.Microsecond)}
 	s.issuer = oidctest.New(t)
 	s.issuer.Audience = audience
 	key := oidctest.NewRSAKey(t)

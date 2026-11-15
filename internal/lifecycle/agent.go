@@ -67,7 +67,8 @@ type AgentProfile struct {
 	EnvironmentProvider ids.ProviderID `json:"environment_provider_id"`
 }
 
-func (p AgentProfile) validate() error {
+// Validate reports whether the profile is within its bounds.
+func (p AgentProfile) Validate() error {
 	if !utf8.ValidString(p.Name) || p.Name == "" || p.Name != strings.TrimSpace(p.Name) ||
 		strings.ContainsAny(p.Name, "\n\r") || utf8.RuneCountInString(p.Name) > MaxAgentNameCharacters {
 		return fmt.Errorf("%w: agent name must be one line of 1 to %d characters with no surrounding space", ErrInvalid, MaxAgentNameCharacters)
@@ -129,7 +130,7 @@ func (a Agent) Validate() error {
 	if a.CreatedAt.IsZero() || a.UpdatedAt.Before(a.CreatedAt) {
 		return fmt.Errorf("%w: agent timestamps are inconsistent", ErrInvalid)
 	}
-	return a.AgentProfile.validate()
+	return a.AgentProfile.Validate()
 }
 
 // Reference names the agent at its current revision, as a task delegated now
@@ -148,7 +149,7 @@ func (a Agent) Revise(actor ids.PrincipalID, profile AgentProfile, expectedVersi
 	if err != nil {
 		return a, AgentRevision{}, change, err
 	}
-	if err := profile.validate(); err != nil {
+	if err := profile.Validate(); err != nil {
 		return a, AgentRevision{}, a.change(AgentRevise), err
 	}
 	if profile == a.AgentProfile {
@@ -214,7 +215,7 @@ func (r AgentRevision) Validate() error {
 	if r.Tenant.IsZero() || r.Agent.IsZero() || r.CreatedBy.IsZero() || r.Number == 0 || r.CreatedAt.IsZero() {
 		return fmt.Errorf("%w: agent revision requires identifiers, a positive number and a timestamp", ErrInvalid)
 	}
-	return r.AgentProfile.validate()
+	return r.AgentProfile.Validate()
 }
 
 // AgentReference pins a task to the agent revision it was delegated to.

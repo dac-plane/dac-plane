@@ -74,6 +74,34 @@ ALTER TABLE task
 
 CREATE INDEX task_agent ON task (tenant_id, agent_id) WHERE agent_id IS NOT NULL;
 
+-- A task's audit entries carry the agent revision it was delegated to, so an
+-- entry reads on its own (ADR-0020). The database fills them from the task
+-- row, so every writer records them and none can record others.
+ALTER TABLE audit_event
+  ADD COLUMN agent_id uuid,
+  ADD COLUMN agent_revision integer,
+  ADD CONSTRAINT audit_event_agent_pair CHECK ((agent_id IS NULL) = (agent_revision IS NULL));
+
+-- +goose StatementBegin
+CREATE FUNCTION audit_event_task_agent() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.agent_id := NULL;
+  NEW.agent_revision := NULL;
+  IF NEW.record_kind = 'task' THEN
+    SELECT t.agent_id, t.agent_revision INTO NEW.agent_id, NEW.agent_revision
+    FROM task t WHERE t.tenant_id = NEW.tenant_id AND t.task_id = NEW.record_id;
+  END IF;
+  RETURN NEW;
+END
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER audit_event_task_agent
+  BEFORE INSERT ON audit_event
+  FOR EACH ROW EXECUTE FUNCTION audit_event_task_agent();
+
 ALTER TABLE audit_event DROP CONSTRAINT audit_event_record_kind_check;
 ALTER TABLE durable_event DROP CONSTRAINT durable_event_record_kind_check;
 ALTER TABLE outbox DROP CONSTRAINT outbox_record_kind_check;
@@ -90,6 +118,12 @@ DO $$ BEGIN
  END IF;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER audit_event_task_agent ON audit_event;
+DROP FUNCTION audit_event_task_agent();
+ALTER TABLE audit_event
+  DROP CONSTRAINT audit_event_agent_pair,
+  DROP COLUMN agent_revision,
+  DROP COLUMN agent_id;
 ALTER TABLE audit_event DROP CONSTRAINT audit_event_record_kind_check;
 ALTER TABLE durable_event DROP CONSTRAINT durable_event_record_kind_check;
 ALTER TABLE outbox DROP CONSTRAINT outbox_record_kind_check;
