@@ -57,7 +57,7 @@
     },
     "request": {
       "type": "object",
-      "required": ["operation_id", "delivery_id", "tenant_id", "attempt_id", "role", "method", "demand", "deadline"],
+      "required": ["operation_id", "delivery_id", "tenant_id", "role", "method", "demand", "deadline"],
       "additionalProperties": false,
       "properties": {
         "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
@@ -79,6 +79,15 @@
         "deadline": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
       },
       "allOf": [
+        {
+          "$comment": "Only a connector's connection requests stand outside an attempt.",
+          "if": {
+            "required": ["role", "method"],
+            "properties": { "role": { "const": "connector" }, "method": { "enum": ["list_tools", "begin_authorization", "complete_authorization", "revoke_connection"] } }
+          },
+          "then": { "not": { "required": ["attempt_id"] } },
+          "else": { "required": ["attempt_id"] }
+        },
         {
           "if": { "properties": { "role": { "const": "runtime" } } },
           "then": { "properties": { "method": { "enum": ["start_turn", "steer_turn", "interrupt", "export_artifacts"] } } }

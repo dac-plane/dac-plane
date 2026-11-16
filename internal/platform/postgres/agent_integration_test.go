@@ -479,7 +479,8 @@ func TestAgentsRefuseDowngrade(t *testing.T) {
 	if _, err := provider.DownTo(ctx, 16); err == nil || !strings.Contains(err.Error(), "cannot downgrade while version 17 agents exist") {
 		t.Fatalf("DownTo(16) with an agent error = %v, want the refusal", err)
 	}
-	if version, err := provider.GetDBVersion(ctx); err != nil || version != migrations.CurrentVersion {
+	// The connector schema above it, holding nothing, went down first.
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != 17 {
 		t.Fatalf("version after the refused downgrade = %d, %v", version, err)
 	}
 }

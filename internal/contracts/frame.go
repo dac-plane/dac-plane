@@ -243,12 +243,13 @@ func Demands() []Demand {
 
 // Request asks a provider to perform one operation. Operation is the stable
 // identity of the work and the provider's idempotency key: a redelivery keeps
-// it and gets a new Delivery. The request is bound to its tenant and Attempt.
+// it and gets a new Delivery. The request is bound to its tenant and Attempt;
+// only a connector's connection requests stand outside an attempt.
 type Request struct {
 	Operation ids.OperationID `json:"operation_id"`
 	Delivery  ids.DeliveryID  `json:"delivery_id"`
 	Tenant    ids.TenantID    `json:"tenant_id"`
-	Attempt   ids.AttemptID   `json:"attempt_id"`
+	Attempt   ids.AttemptID   `json:"attempt_id,omitzero"`
 	Role      Role            `json:"role"`
 	Method    Method          `json:"method"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -259,8 +260,11 @@ type Request struct {
 // Validate reports whether the request is complete, names a method of its
 // role, and carries bounded JSON-object arguments.
 func (r Request) Validate() error {
-	if r.Operation.IsZero() || r.Delivery.IsZero() || r.Tenant.IsZero() || r.Attempt.IsZero() || r.Deadline.IsZero() {
-		return fmt.Errorf("%w: request requires operation, delivery, tenant, attempt and deadline", ErrInvalid)
+	if r.Operation.IsZero() || r.Delivery.IsZero() || r.Tenant.IsZero() || r.Deadline.IsZero() {
+		return fmt.Errorf("%w: request requires operation, delivery, tenant and deadline", ErrInvalid)
+	}
+	if r.Attempt.IsZero() != ConnectionMethod(r.Role, r.Method) {
+		return fmt.Errorf("%w: a connector's connection requests name no attempt; every other request names one", ErrInvalid)
 	}
 	if !slices.Contains(Demands(), r.Demand) {
 		return fmt.Errorf("%w: unknown demand", ErrInvalid)
@@ -269,6 +273,13 @@ func (r Request) Validate() error {
 		return fmt.Errorf("%w: %s is not a %s method", ErrInvalid, r.Method, r.Role)
 	}
 	return validArguments(r.Arguments)
+}
+
+// ConnectionMethod reports whether method is one of a connector's requests
+// about a connection rather than about an attempt's work: they are sent
+// outside any attempt and never become provider operations.
+func ConnectionMethod(role Role, method Method) bool {
+	return role == RoleConnector && method != MethodCallTool && slices.Contains(Methods(RoleConnector), method)
 }
 
 func validArguments(arguments json.RawMessage) error {

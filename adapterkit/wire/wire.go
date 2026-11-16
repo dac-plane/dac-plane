@@ -172,7 +172,7 @@ type Request struct {
 	Operation string          `json:"operation_id"`
 	Delivery  string          `json:"delivery_id"`
 	Tenant    string          `json:"tenant_id"`
-	Attempt   string          `json:"attempt_id"`
+	Attempt   string          `json:"attempt_id,omitempty"`
 	Role      Role            `json:"role"`
 	Method    string          `json:"method"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`

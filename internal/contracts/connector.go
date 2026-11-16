@@ -244,13 +244,28 @@ func ConnectionScope(connection ids.ConnectionID) identity.Scope {
 	return identity.Scope{Class: identity.ScopeSubject, Target: "connection:" + connection.String()}
 }
 
-// ValidateToolInput reports whether input is a bounded JSON object.
+// ValidateToolInput reports whether input is a bounded JSON object in
+// canonical form.
 func ValidateToolInput(input json.RawMessage) error {
 	var object map[string]json.RawMessage
 	if len(input) == 0 || len(input) > MaxToolInputBytes || json.Unmarshal(input, &object) != nil || object == nil {
 		return fmt.Errorf("%w: tool input must be a JSON object of at most %d bytes", ErrInvalid, MaxToolInputBytes)
 	}
+	if canonical, err := CanonicalJSON(input); err != nil || !bytes.Equal(canonical, input) {
+		return fmt.Errorf("%w: tool input must be in canonical form", ErrInvalid)
+	}
 	return nil
+}
+
+// CanonicalJSON returns raw in the form encoding/json writes a
+// json.RawMessage: compact, with <, > and & escaped as \u003c, \u003e and
+// \u0026, and keys in their original order. A tool call's input digest covers
+// this form, so encoding a record that carries the input never changes it.
+func CanonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("%w: not JSON", ErrInvalid)
+	}
+	return json.Marshal(raw)
 }
 
 // ConnectorResult is a connector's reply to call_tool: the call's output

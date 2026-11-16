@@ -60,3 +60,16 @@ For stage 1:
 - The scope of a connector action is the subject `connection:<id>`.
 - A connection records its account only after consent; the grant names the tools as a sorted set and holds `ask` or
   `always`, never `never`, which the tenant policy expresses.
+
+For stage 2:
+
+- Migration 18 adds `connector` to the registration roles, `connection`, `connection_grant` and `connector_call`, and the
+  two record kinds. Its down migration refuses while a connection or a connector registration exists. The operations
+  probe moves to 19.
+- A connector call's execution and output are `text`, not `jsonb`: their digests cover exact bytes, which `jsonb`
+  rewrites. Tool input is canonical JSON, the form `encoding/json` writes a raw message in, so re-encoding a record
+  that carries it never changes its digest.
+- A connection's requests outside an attempt (`list_tools`, `begin_authorization`, `complete_authorization`,
+  `revoke_connection`) name no attempt and never become provider operations; the frame schema requires an attempt on
+  every other request. They are synchronous, idempotent by connection, and repeated by the command that needs them.
+- A connector call is recorded when the gateway decides it; one awaiting approval has no provider operation yet.

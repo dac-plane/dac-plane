@@ -106,6 +106,7 @@ func TestContractConformanceConnectorDocumentsRejected(t *testing.T) {
 		"pending with account":    {contract: authResultContract, data: []byte(`{"status":"pending","account":{"account":"octocat","permissions":[]}}`)},
 		"unknown status":          {contract: authResultContract, data: []byte(`{"status":"expired"}`)},
 		"input not an object":     {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = []any{1} })},
+		"input not canonical":     {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = json.RawMessage(`{"a": "<b>"}`) })},
 		"input digest mismatch":   {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = map[string]any{"number": 1} })},
 		"action of another tool":  {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["tool"] = "create_comment" })},
 		"scope of another target": {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["connection_id"] = newID[ids.Connection](t).String() })},
@@ -143,13 +144,51 @@ func TestRuntimeStartCarriesTheGatewayAgreement(t *testing.T) {
 
 func TestConnectorRequestsNeedTheConnectorRole(t *testing.T) {
 	for _, method := range []Method{MethodListTools, MethodBeginAuthorization, MethodCompleteAuthorization, MethodRevokeConnection, MethodCallTool} {
-		request := Request{Operation: newID[ids.Operation](t), Delivery: newID[ids.Delivery](t), Tenant: newID[ids.Tenant](t), Attempt: newID[ids.Attempt](t), Role: RoleConnector, Method: method, Demand: DemandPerson, Deadline: testNow}
+		request := Request{Operation: newID[ids.Operation](t), Delivery: newID[ids.Delivery](t), Tenant: newID[ids.Tenant](t), Role: RoleConnector, Method: method, Demand: DemandPerson, Deadline: testNow}
+		if method == MethodCallTool {
+			request.Attempt = newID[ids.Attempt](t)
+		}
 		if err := request.Validate(); err != nil {
 			t.Fatalf("%s: %v", method, err)
+		}
+		withAttempt := request
+		withAttempt.Attempt = newID[ids.Attempt](t)
+		withoutAttempt := request
+		withoutAttempt.Attempt = ids.AttemptID{}
+		if (method == MethodCallTool && withoutAttempt.Validate() == nil) || (method != MethodCallTool && withAttempt.Validate() == nil) {
+			t.Fatalf("%s: attempt rule not enforced", method)
+		}
+		frame := schematest.Marshal(t, Frame{Kind: FrameRequest, Request: &request})
+		if err := frameContract.GoAccept(frame); err != nil {
+			t.Fatalf("%s frame: %v", method, err)
+		}
+		if err := schematest.Accepts(t, schematest.Compile(t, frameContract.Schema), frame); err != nil {
+			t.Fatalf("%s frame schema: %v", method, err)
+		}
+		if method != MethodCallTool {
+			bad := schematest.Marshal(t, Frame{Kind: FrameRequest, Request: &withAttempt})
+			if schematest.Accepts(t, schematest.Compile(t, frameContract.Schema), bad) == nil {
+				t.Fatalf("%s frame schema accepted an attempt", method)
+			}
 		}
 		request.Role = RoleEnforcement
 		if request.Validate() == nil {
 			t.Fatalf("%s accepted for the enforcement role", method)
 		}
+	}
+}
+
+func TestToolInputMustBeCanonical(t *testing.T) {
+	for _, raw := range []string{`{"a": 1}`, `{"a":"<b>"}`, "{\n\"a\":1}"} {
+		if ValidateToolInput(json.RawMessage(raw)) == nil {
+			t.Errorf("accepted non-canonical input %q", raw)
+		}
+		canonical, err := CanonicalJSON(json.RawMessage(raw))
+		if err != nil || ValidateToolInput(canonical) != nil {
+			t.Errorf("canonical form of %q = %s, %v", raw, canonical, err)
+		}
+	}
+	if _, err := CanonicalJSON(json.RawMessage(`{"a":`)); err == nil {
+		t.Error("CanonicalJSON accepted invalid JSON")
 	}
 }
