@@ -37,7 +37,8 @@ endpoint and bearer token. Before `thread/start` the adapter lists the attempt's
 each as a dynamic tool named `dac_<tool>_<digest>`, which the model sees as a plain function. Codex sends each call
 back as `item/tool/call`; the adapter relays it to the gateway's `tools/call` with the token and answers with the
 tool's text. The gateway authorizes every call. The token never enters a prompt, the workspace or `thread/resume`; the
-journal keeps it to relay calls after a restart.
+journal keeps it to relay calls after a restart. The adapter sends the token only to the origin of its
+`DAC_ADAPTER_URL`, where the control plane serves the gateway, and refuses a start that names a gateway elsewhere.
 
 The gateway is not given to Codex as an MCP server: Codex 0.165.0 sends MCP tools to the model inside a Responses API
 `namespace` tool, which Camer and other OpenAI-compatible providers drop without an error

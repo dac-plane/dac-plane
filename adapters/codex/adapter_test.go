@@ -691,7 +691,7 @@ func TestRestartResumesADelegatedThreadWithItsInstructions(t *testing.T) {
 	}
 	defer store.Close()
 	native := newFakeNative()
-	first, err := New(Config{Native: native, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022"})
+	first, err := New(Config{Native: native, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022", GatewayOrigin: "https://dac.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1124,6 +1124,7 @@ func TestStartRelaysGatewayToolsAsDynamicTools(t *testing.T) {
 	}))
 	defer gateway.Close()
 	f := setup(t)
+	f.adapter.config.GatewayOrigin = gateway.URL
 	request := startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"` + gateway.URL + `/connectors/mcp","token":"` + token + `"}}`)
 	reply, err := f.adapter.Send(context.Background(), request)
 	if err != nil || reply.Outcome != wire.OutcomeOK {
@@ -1188,6 +1189,7 @@ func TestStartWithoutAReachableGatewayStartsWithoutTools(t *testing.T) {
 	}))
 	defer gateway.Close()
 	f := setup(t)
+	f.adapter.config.GatewayOrigin = gateway.URL
 	reply, err := f.adapter.Send(context.Background(), startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"`+gateway.URL+`/connectors/mcp","token":"dacg1.t.a.m"}}`))
 	if err != nil || reply.Outcome != wire.OutcomeOK {
 		t.Fatalf("reply=%+v err=%v", reply, err)
@@ -1221,6 +1223,7 @@ func TestGatewayRequestsDoNotFollowRedirects(t *testing.T) {
 	}))
 	defer gateway.Close()
 	f := setup(t)
+	f.adapter.config.GatewayOrigin = gateway.URL
 	reply, err := f.adapter.Send(context.Background(), startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"`+gateway.URL+`/connectors/mcp","token":"dacg1.t.a.m"}}`))
 	if err != nil || reply.Outcome != wire.OutcomeOK {
 		t.Fatalf("reply=%+v err=%v", reply, err)
@@ -1229,5 +1232,32 @@ func TestGatewayRequestsDoNotFollowRedirects(t *testing.T) {
 	defer leaked.Unlock()
 	if reached {
 		t.Fatal("a request carrying the attempt token followed a redirect away from the gateway")
+	}
+}
+
+func TestStartRefusesAGatewayAtAnotherOrigin(t *testing.T) {
+	f := setup(t)
+	f.adapter.config.GatewayOrigin = "https://dac-plane:9443"
+	for _, url := range []string{"https://evil.example/connectors/mcp", "https://dac-plane:9444/connectors/mcp", "http://dac-plane:9443/connectors/mcp", "https://dac-plane.evil.example:9443/connectors/mcp"} {
+		reply, err := f.adapter.Send(context.Background(), startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"`+url+`","token":"dacg1.t.a.m"}}`))
+		if err != nil || reply.Outcome != wire.OutcomeFailed || reply.Failure == nil || reply.Failure.Code != wire.FailureInvalidArguments {
+			t.Fatalf("gateway %s: reply=%+v err=%v, want invalid arguments", url, reply, err)
+		}
+	}
+	if f.native.count("thread/start") != 0 {
+		t.Fatal("a thread started for a gateway at another origin")
+	}
+}
+
+func TestGatewayOriginFollowsTheAdapterURL(t *testing.T) {
+	for in, want := range map[string]string{"wss://dac-plane:9443": "https://dac-plane:9443", "ws://127.0.0.1:19443/": "http://127.0.0.1:19443"} {
+		if got, err := GatewayOrigin(in); err != nil || got != want {
+			t.Fatalf("GatewayOrigin(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"https://dac-plane:9443", "dac-plane:9443", ""} {
+		if _, err := GatewayOrigin(in); err == nil {
+			t.Fatalf("GatewayOrigin(%q) accepted", in)
+		}
 	}
 }

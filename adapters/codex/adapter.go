@@ -55,6 +55,11 @@ type Config struct {
 	AttachKey []byte
 	// EnvironmentGrace is how long a lost environment may take to return.
 	EnvironmentGrace time.Duration
+	// GatewayOrigin is the only origin, scheme://host:port, the adapter sends
+	// an attempt's gateway token to. The gateway is served on the control
+	// plane's adapter listener, so the executable derives it from
+	// DAC_ADAPTER_URL. Empty, no gateway is accepted.
+	GatewayOrigin string
 }
 
 type Adapter struct {
@@ -500,7 +505,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		(agent.Instructions != "" && strings.TrimSpace(agent.Instructions) == "") || utf8.RuneCountInString(agent.Instructions) > 20_000) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid agent instructions"), nil
 	}
-	if input.Gateway != nil && !validGateway(input.Gateway) {
+	if input.Gateway != nil && !validGateway(input.Gateway, a.config.GatewayOrigin) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid connector gateway"), nil
 	}
 	if input.Environment != nil && (strings.TrimSpace(input.Environment.ProviderID) == "" || strings.TrimSpace(input.Environment.ResourceRef) == "" || len(input.Environment.ResourceRef) > 2048) {
@@ -1298,9 +1303,15 @@ func snapshot(root string) (map[string]string, error) {
 	return out, err
 }
 
-func validGateway(g *journal.GatewayAccess) bool {
+// validGateway accepts a gateway only at the configured origin: the attempt
+// token is sent to this URL, so an allowlist of the one known destination
+// keeps it from any other host, whatever a start_turn names.
+func validGateway(g *journal.GatewayAccess, origin string) bool {
 	u, err := url.Parse(g.URL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1"))) {
+		return false
+	}
+	if origin == "" || !strings.EqualFold(u.Scheme+"://"+u.Host, origin) {
 		return false
 	}
 	if g.Token == "" || len(g.Token) > 512 {
@@ -1308,6 +1319,23 @@ func validGateway(g *journal.GatewayAccess) bool {
 	}
 	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
 }
+// GatewayOrigin is the origin of the connector gateway on the control plane
+// whose adapter endpoint is adapterURL: the same host and port, over HTTPS for
+// wss and HTTP for ws.
+func GatewayOrigin(adapterURL string) (string, error) {
+	u, err := url.Parse(adapterURL)
+	if err != nil || u.Host == "" {
+		return "", errors.New("adapter URL must be absolute")
+	}
+	switch u.Scheme {
+	case "wss":
+		return "https://" + u.Host, nil
+	case "ws":
+		return "http://" + u.Host, nil
+	}
+	return "", errors.New("adapter URL must use wss or ws")
+}
+
 func (a *Adapter) logger() *slog.Logger {
 	if a.config.Logger == nil {
 		return slog.New(slog.DiscardHandler)

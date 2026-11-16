@@ -117,7 +117,11 @@ func run() error {
 		return err
 	}
 	httpClient := clientForTLS(tlsConfig)
-	handler, err := codex.New(codex.Config{Native: native, Journal: state, Workspace: workspace, Model: model, Provider: modelProvider, ProviderID: providerID, HTTPClient: httpClient, Logger: logger, ExecServerURL: execServerURL, AttachKey: attachKey})
+	gatewayOrigin, err := codex.GatewayOrigin(adapterURL)
+	if err != nil {
+		return err
+	}
+	handler, err := codex.New(codex.Config{Native: native, Journal: state, Workspace: workspace, Model: model, Provider: modelProvider, ProviderID: providerID, HTTPClient: httpClient, Logger: logger, ExecServerURL: execServerURL, AttachKey: attachKey, GatewayOrigin: gatewayOrigin})
 	if err != nil {
 		return err
 	}

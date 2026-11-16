@@ -156,6 +156,9 @@ It also reads the variables in [Every adapter](#every-adapter).
 
 `DAC_CONNECTOR_GATEWAY_URL` enables the connector MCP endpoint. Set it to the
 runtime-reachable HTTPS URL ending in `/connectors/mcp` on the adapter listener.
+Use the scheme, host and port the runtime adapters connect to: the Codex adapter
+sends an attempt's token only to the origin of its own `DAC_ADAPTER_URL`, and
+refuses a start that names a gateway anywhere else.
 Configure `DAC_CONNECTOR_GATEWAY_KEY` with at least 32 random bytes, or provide
 its file through `DAC_CONNECTOR_GATEWAY_KEY_FILE`. All replicas must use the same
 key. Configure URL and key together; omitting both disables runtime gateway
