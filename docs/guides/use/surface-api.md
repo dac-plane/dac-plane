@@ -93,3 +93,37 @@ client then reads the record again rather than assuming it missed nothing.
 
 A result revision lists its artifacts by identifier. Version 1 of the Surface API does not serve artifact bytes; they
 stay in the artifact store.
+
+## Connections and grants
+
+A connection names an external account whose credential stays with its connector
+adapter. Register one with `POST /connections`, specifying `provider_id` and
+`name`. The response includes the connection and, when the adapter is reachable,
+an `authorization` URL. Open that URL to consent at the connector, then send
+`POST /connections/{connection}/complete` with the connection's ETag in
+`If-Match`. Pending consent returns `409 authorization-pending`.
+
+If the initial response has no URL, request one with
+`POST /connections/{connection}/authorize` and an empty JSON object. This command
+requires `Idempotency-Key`: retrying it returns the same URL, while a new key starts
+consent again. It also renews an active connection's consent. Consent URLs are
+returned only to the connection's owner.
+
+The tenant can read `/connections`, `/connections/{connection}` and
+`/connections/{connection}/tools`. Only the owner can grant access with
+`POST /connections/{connection}/grants`. Supply exactly one of `agent_id` and
+`task_id`, distinct `tools`, `permission` (`ask` or `always`), `call_limit` per task
+and `expires_at`. An agent must be active; a task must belong to the connection's
+owner. Grants apply only to work owned by that same principal.
+
+Read grants at `/connections/{connection}/grants` or
+`/connection-grants/{grant}`. Revoke one with
+`POST /connection-grants/{grant}/revoke`, an empty JSON object, an
+`Idempotency-Key` and its `If-Match` ETag. Remove a connection with
+`POST /connections/{connection}/remove` using the same command headers.
+Removal revokes its grants atomically. A `202` response means the connection is
+`removing`: the adapter has not confirmed credential revocation. Retry removal
+until it returns `200` with state `removed`.
+
+Connector writes return `503 not-migrated` until schema 18 is installed. Reads
+on the previous schema return empty connection lists or `404` for a named record.

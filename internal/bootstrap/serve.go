@@ -85,7 +85,7 @@ func (application *Application) Serve(ctx context.Context, cfg config.Config, op
 	if err != nil {
 		return err
 	}
-	api, err := httpapi.New(application.pool, authenticator, logger.With("component", "surface"), httpapi.Options{})
+	api, err := httpapi.New(application.pool, authenticator, logger.With("component", "surface"), httpapi.Options{Connectors: application.adapters})
 	if err != nil {
 		return err
 	}

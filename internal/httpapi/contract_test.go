@@ -31,14 +31,16 @@ var testNow = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 func schemaPath(name string) string { return filepath.Join(surfaceSchemas, name) }
 
 var (
-	submitContract    = schematest.GoContract[SubmitTaskRequest](schemaPath("submit-task-request.schema.json"))
-	assertionContract = schematest.GoContract[SpendAssertionRequest](schemaPath("spend-assertion-request.schema.json"))
-	decisionContract  = schematest.GoContract[DecisionRequest](schemaPath("decision-request.schema.json"))
-	cancelContract    = schematest.GoContract[CancelRequest](schemaPath("cancel-request.schema.json"))
-	reviewContract    = schematest.GoContract[ReviewRequest](schemaPath("review-request.schema.json"))
-	migrationContract = schematest.GoContract[CreateMigrationRequest](schemaPath("create-migration-request.schema.json"))
-	emptyContract     = schematest.GoContract[EmptyCommandRequest](schemaPath("empty-command-request.schema.json"))
-	agentContract     = schematest.GoContract[AgentRequest](schemaPath("agent-request.schema.json"))
+	submitContract     = schematest.GoContract[SubmitTaskRequest](schemaPath("submit-task-request.schema.json"))
+	assertionContract  = schematest.GoContract[SpendAssertionRequest](schemaPath("spend-assertion-request.schema.json"))
+	decisionContract   = schematest.GoContract[DecisionRequest](schemaPath("decision-request.schema.json"))
+	cancelContract     = schematest.GoContract[CancelRequest](schemaPath("cancel-request.schema.json"))
+	reviewContract     = schematest.GoContract[ReviewRequest](schemaPath("review-request.schema.json"))
+	migrationContract  = schematest.GoContract[CreateMigrationRequest](schemaPath("create-migration-request.schema.json"))
+	emptyContract      = schematest.GoContract[EmptyCommandRequest](schemaPath("empty-command-request.schema.json"))
+	connectionContract = schematest.GoContract[ConnectionRequest](schemaPath("connection-request.schema.json"))
+	connGrantContract  = schematest.GoContract[ConnectionGrantRequest](schemaPath("connection-grant-request.schema.json"))
+	agentContract      = schematest.GoContract[AgentRequest](schemaPath("agent-request.schema.json"))
 )
 
 func newID[K any](t *testing.T) ids.ID[K] {
@@ -70,7 +72,9 @@ func validRequests(t *testing.T) map[string]struct {
 		contract schematest.Contract
 		data     []byte
 	}{
-		"submit": {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
+		"connection":       {connectionContract, schematest.Marshal(t, ConnectionRequest{Provider: newID[ids.Provider](t), Name: "My account"})},
+		"connection grant": {connGrantContract, schematest.Marshal(t, ConnectionGrantRequest{Task: task, Tools: []string{"read_issue"}, Permission: identity.PermissionAsk, CallLimit: 10, ExpiresAt: testNow.Add(time.Hour)})},
+		"submit":           {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
 		"submit governed person": {submitContract, schematest.Marshal(t, SubmitTaskRequest{
 			Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
 		})},
@@ -109,6 +113,15 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		name, base string
 		change     func(map[string]any)
 	}{
+		{"connection no provider", "connection", func(d map[string]any) { delete(d, "provider_id") }},
+		{"connection blank name", "connection", func(d map[string]any) { d["name"] = " " }},
+		{"connection credential", "connection", func(d map[string]any) { d["token"] = "canary" }},
+		{"grant both targets", "connection grant", func(d map[string]any) { d["agent_id"] = newID[ids.Agent](t).String() }},
+		{"grant no target", "connection grant", func(d map[string]any) { delete(d, "task_id") }},
+		{"grant duplicate tools", "connection grant", func(d map[string]any) { d["tools"] = []string{"read_issue", "read_issue"} }},
+		{"grant never", "connection grant", func(d map[string]any) { d["permission"] = "never" }},
+		{"grant no limit", "connection grant", func(d map[string]any) { d["call_limit"] = 0 }},
+		{"grant no expiry", "connection grant", func(d map[string]any) { delete(d, "expires_at") }},
 		{"submit without provider", "submit", func(d map[string]any) { delete(d, "provider_id") }},
 		{"submit without environment provider", "submit", func(d map[string]any) { delete(d, "environment_provider_id") }},
 		{"submit without objective", "submit", func(d map[string]any) { delete(d, "objective") }},
@@ -200,6 +213,10 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	connection, err := lifecycle.NewConnection(newID[ids.Connection](t), tenant, newID[ids.Provider](t), owner, "My account", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
 	delegated := taskRecord
 	reference := agent.Reference()
 	delegated.Agent = &reference
@@ -210,30 +227,33 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		schema string
 		body   any
 	}{
-		"submission":           {"submission.schema.json", submissionBody(submission)},
-		"revision view":        {"revision-view.schema.json", revisionBody(application.RevisionView{Revision: revision, Reviews: []lifecycle.ResultReview{review}})},
-		"review result":        {"review-result.schema.json", ReviewBody{Review: review, Rework: &rework}},
-		"accepted review":      {"review-result.schema.json", ReviewBody{Review: review}},
-		"full task view":       {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Attempt: &attempt, Revisions: []application.RevisionView{{Revision: revision}}})},
-		"task view":            {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord})},
-		"legacy task view":     {"task-view.schema.json", taskBody(application.TaskView{Task: legacyTask})},
-		"attention":            {"attention-list.schema.json", AttentionListBody{Attention: []lifecycle.AttentionRequest{}}},
-		"cancel":               {"cancel-result.schema.json", CancelBody{Task: task.String(), State: "cancelling"}},
-		"decision":             {"decision-result.schema.json", DecisionBody{Attention: newID[ids.Attention](t).String(), Decision: newID[ids.Decision](t).String(), Kind: "deny", State: "decided"}},
-		"event page":           {"event-page.schema.json", eventPageBody(application.EventPage{Events: []store.StreamEvent{event, outside}, Next: application.EventCursor{Generation: 1, Position: 8, Stream: application.StreamTag(tenant, ids.TaskID{})}})},
-		"reset page":           {"event-page.schema.json", eventPageBody(application.EventPage{Next: application.EventCursor{Generation: 1, Stream: application.StreamTag(tenant, task)}, Reset: true})},
-		"problem":              {"problem.schema.json", problemFor(application.ErrNotFound)},
-		"problem 412":          {"problem.schema.json", problemFor(&lifecycle.TransitionError{Code: lifecycle.RejectVersionConflict})},
-		"problem 500":          {"problem.schema.json", problemFor(os.ErrClosed)},
-		"empty revisions":      {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Revisions: nil})},
-		"migration":            {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview})},
-		"migration no preview": {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration})},
-		"migration preview":    {"migration-preview.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview}).Preview},
-		"agent":                {"../lifecycle/agent.schema.json", agent},
-		"agent list":           {"agent-list.schema.json", AgentListBody{Agents: []lifecycle.Agent{agent}}},
-		"empty agent list":     {"agent-list.schema.json", AgentListBody{Agents: nonNil[lifecycle.Agent](nil)}},
-		"agent revision":       {"../lifecycle/agent-revision.schema.json", agentRevision},
-		"delegated task view":  {"task-view.schema.json", taskBody(application.TaskView{Task: delegated})},
+		"connection created":    {"connection-created.schema.json", ConnectionCreatedBody{Connection: connection}},
+		"connection list":       {"connection-list.schema.json", ConnectionListBody{Connections: []lifecycle.Connection{connection}}},
+		"connection grant list": {"connection-grant-list.schema.json", ConnectionGrantListBody{Grants: []lifecycle.ConnectionGrant{}}},
+		"submission":            {"submission.schema.json", submissionBody(submission)},
+		"revision view":         {"revision-view.schema.json", revisionBody(application.RevisionView{Revision: revision, Reviews: []lifecycle.ResultReview{review}})},
+		"review result":         {"review-result.schema.json", ReviewBody{Review: review, Rework: &rework}},
+		"accepted review":       {"review-result.schema.json", ReviewBody{Review: review}},
+		"full task view":        {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Attempt: &attempt, Revisions: []application.RevisionView{{Revision: revision}}})},
+		"task view":             {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord})},
+		"legacy task view":      {"task-view.schema.json", taskBody(application.TaskView{Task: legacyTask})},
+		"attention":             {"attention-list.schema.json", AttentionListBody{Attention: []lifecycle.AttentionRequest{}}},
+		"cancel":                {"cancel-result.schema.json", CancelBody{Task: task.String(), State: "cancelling"}},
+		"decision":              {"decision-result.schema.json", DecisionBody{Attention: newID[ids.Attention](t).String(), Decision: newID[ids.Decision](t).String(), Kind: "deny", State: "decided"}},
+		"event page":            {"event-page.schema.json", eventPageBody(application.EventPage{Events: []store.StreamEvent{event, outside}, Next: application.EventCursor{Generation: 1, Position: 8, Stream: application.StreamTag(tenant, ids.TaskID{})}})},
+		"reset page":            {"event-page.schema.json", eventPageBody(application.EventPage{Next: application.EventCursor{Generation: 1, Stream: application.StreamTag(tenant, task)}, Reset: true})},
+		"problem":               {"problem.schema.json", problemFor(application.ErrNotFound)},
+		"problem 412":           {"problem.schema.json", problemFor(&lifecycle.TransitionError{Code: lifecycle.RejectVersionConflict})},
+		"problem 500":           {"problem.schema.json", problemFor(os.ErrClosed)},
+		"empty revisions":       {"task-view.schema.json", taskBody(application.TaskView{Task: taskRecord, Revisions: nil})},
+		"migration":             {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview})},
+		"migration no preview":  {"migration-view.schema.json", migrationBody(application.MigrationView{Pass: migration})},
+		"migration preview":     {"migration-preview.schema.json", migrationBody(application.MigrationView{Pass: migration, Preview: preview}).Preview},
+		"agent":                 {"../lifecycle/agent.schema.json", agent},
+		"agent list":            {"agent-list.schema.json", AgentListBody{Agents: []lifecycle.Agent{agent}}},
+		"empty agent list":      {"agent-list.schema.json", AgentListBody{Agents: nonNil[lifecycle.Agent](nil)}},
+		"agent revision":        {"../lifecycle/agent-revision.schema.json", agentRevision},
+		"delegated task view":   {"task-view.schema.json", taskBody(application.TaskView{Task: delegated})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := schematest.Marshal(t, response.body)

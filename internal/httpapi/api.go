@@ -59,6 +59,10 @@ type Options struct {
 	// StreamLifetime bounds one event stream connection; the client resumes
 	// with Last-Event-ID and is authenticated again.
 	StreamLifetime time.Duration
+	// Connectors resolves connector ports for the requests a connection makes
+	// outside any attempt. Without it those requests answer
+	// connector-unavailable.
+	Connectors application.ConnectorPorts
 }
 
 // API is the Surface API handler.
@@ -142,6 +146,17 @@ func (a *API) routes() []route {
 		{"POST " + prefix + "/migration-passes/{migration}/execute", a.authenticated(a.executeMigration)},
 		{"POST " + prefix + "/migration-passes/{migration}/cancel", a.authenticated(a.cancelMigration)},
 		{"POST " + prefix + "/authority-grants/{grant}/revoke", a.authenticated(a.revokeAuthority)},
+		{"POST " + prefix + "/connections", a.authenticated(a.createConnection)},
+		{"GET " + prefix + "/connections", a.authenticated(a.listConnections)},
+		{"GET " + prefix + "/connections/{connection}", a.authenticated(a.getConnection)},
+		{"POST " + prefix + "/connections/{connection}/authorize", a.authenticated(a.authorizeConnection)},
+		{"POST " + prefix + "/connections/{connection}/complete", a.authenticated(a.completeConnection)},
+		{"POST " + prefix + "/connections/{connection}/remove", a.authenticated(a.removeConnection)},
+		{"GET " + prefix + "/connections/{connection}/tools", a.authenticated(a.listConnectionTools)},
+		{"POST " + prefix + "/connections/{connection}/grants", a.authenticated(a.grantConnection)},
+		{"GET " + prefix + "/connections/{connection}/grants", a.authenticated(a.listConnectionGrants)},
+		{"GET " + prefix + "/connection-grants/{grant}", a.authenticated(a.getConnectionGrant)},
+		{"POST " + prefix + "/connection-grants/{grant}/revoke", a.authenticated(a.revokeConnectionGrant)},
 	}
 }
 
@@ -311,6 +326,18 @@ func problemFor(err error) Problem {
 		return newProblem(http.StatusUnprocessableEntity, "no-agent", "No active agent", "")
 	case errors.Is(err, application.ErrAgentNameTaken):
 		return newProblem(http.StatusConflict, "agent-name-taken", "Agent name is taken", "Another active agent of this tenant has this name.")
+	case errors.Is(err, application.ErrNoConnector):
+		return newProblem(http.StatusUnprocessableEntity, "no-connector-provider", "No registered connector provider", "")
+	case errors.Is(err, application.ErrConnectorUnavailable):
+		return newProblem(http.StatusServiceUnavailable, "connector-unavailable", "The connector is not reachable", "Retry the request with the same idempotency key.")
+	case errors.Is(err, application.ErrAuthorizationPending):
+		return newProblem(http.StatusConflict, "authorization-pending", "Consent is not complete", "The owner has not finished consent at the connector.")
+	case errors.Is(err, application.ErrAuthorizationFailed):
+		return newProblem(http.StatusUnprocessableEntity, "authorization-failed", "Consent failed", "Start consent again with a new authorization URL.")
+	case errors.Is(err, application.ErrUnknownTool):
+		return newProblem(http.StatusUnprocessableEntity, "unknown-tool", "The connector offers no such tool", "")
+	case errors.Is(err, application.ErrGrantTarget):
+		return newProblem(http.StatusUnprocessableEntity, "invalid-grant-target", "The grant names no usable agent or task", "A grant names an active agent, or a task the connection's owner owns.")
 	case errors.Is(err, application.ErrSchemaUnavailable):
 		return newProblem(http.StatusServiceUnavailable, "not-migrated", "Not available until the database is migrated", "")
 	case errors.Is(err, application.ErrInvalidCommand), errors.Is(err, lifecycle.ErrInvalid), errors.Is(err, identity.ErrInvalid):

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dac-plane Surface API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Surface API v1 (ADR-0007). Commands map one-to-one onto application commands; mutating requests require Idempotency-Key, and commands that change an existing record require If-Match with its ETag. Errors are RFC 9457 problems."
   },
   "security": [
@@ -1218,6 +1218,626 @@
           }
         }
       }
+    },
+    "/v1/tenants/{tenant}/connections": {
+      "post": {
+        "operationId": "createConnection",
+        "summary": "Register a connection",
+        "description": "Registers a connection, owned by the caller, to an account at an external application served by a connector provider registered for the tenant. The response carries the consent URL when the connector answered; the owner opens it and then completes the connection. The surface, the runtime and the model never see the credential.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/connection-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The connection, authorizing, and its consent URL. Replaying the same Idempotency-Key and body returns the connection again with a new URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/connection-created.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Location": {
+                "description": "URL of the created connection.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listConnections",
+        "summary": "List connections",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tenant's connections.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/connection-list.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connections/{connection}": {
+      "get": {
+        "operationId": "getConnection",
+        "summary": "Read a connection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connections/{connection}/authorize": {
+      "post": {
+        "operationId": "authorizeConnection",
+        "summary": "Start consent",
+        "description": "Asks the connector for a new consent URL for one of the caller's connections, to finish a first consent or renew one. It changes no record. An Idempotency-Key replays the same URL; use a new key to renew it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyCommand"
+        },
+        "responses": {
+          "200": {
+            "description": "The consent URL and its expiry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/adapter/authorization-started.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connections/{connection}/complete": {
+      "post": {
+        "operationId": "completeConnection",
+        "summary": "Complete consent",
+        "description": "Asks the connector whether the owner's consent finished and records the account it reports. A consent not finished is 409 authorization-pending; a failed one is 422 authorization-failed. If-Match carries the connection version.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyCommand"
+        },
+        "responses": {
+          "200": {
+            "description": "The active connection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connections/{connection}/remove": {
+      "post": {
+        "operationId": "removeConnection",
+        "summary": "Remove a connection",
+        "description": "Revokes every grant of the connection in one transaction, then asks the connector to revoke and destroy the credential. 200 with the removed connection once the connector confirmed; 202 with the connection still removing when it could not be reached, and removing it again repeats the revocation. If-Match carries the connection version.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyCommand"
+        },
+        "responses": {
+          "200": {
+            "description": "The removed connection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "202": {
+            "description": "The connection, removing: its credential is not yet revoked at the connector.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connections/{connection}/tools": {
+      "get": {
+        "operationId": "listConnectionTools",
+        "summary": "List a connection's tools",
+        "description": "The tools the connection's connector offers now, each the governed action class connector.<name>.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connector's tool catalogue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/adapter/tool-catalogue.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connections/{connection}/grants": {
+      "post": {
+        "operationId": "grantConnection",
+        "summary": "Grant a connection",
+        "description": "Lets the work of an active agent, or of a task the connection's owner owns, call some of the connection's tools. Only the owner grants. A grant is used only by tasks the owner owns. always approves every call it covers; ask makes each call wait for a decision.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../jsonschema/surface/connection-grant-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The grant. Replaying the same Idempotency-Key and body returns it again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection-grant.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Location": {
+                "description": "URL of the created grant.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listConnectionGrants",
+        "summary": "List a connection's grants",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Connection"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection's grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/connection-grant-list.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connection-grants/{grant}": {
+      "get": {
+        "operationId": "getConnectionGrant",
+        "summary": "Read a connection grant",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/ConnectionGrant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The grant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection-grant.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/connection-grants/{grant}/revoke": {
+      "post": {
+        "operationId": "revokeConnectionGrant",
+        "summary": "Revoke a connection grant",
+        "description": "Stops the grant authorizing calls: the next call it covered is refused. Only the principal that granted it revokes it. If-Match carries the grant version.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/ConnectionGrant"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyCommand"
+        },
+        "responses": {
+          "200": {
+            "description": "The revoked grant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/lifecycle/connection-grant.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1361,6 +1981,24 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 500
+        }
+      },
+      "Connection": {
+        "name": "connection",
+        "in": "path",
+        "required": true,
+        "description": "Connection identifier.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "ConnectionGrant": {
+        "name": "grant",
+        "in": "path",
+        "required": true,
+        "description": "Connection grant identifier.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
         }
       }
     },

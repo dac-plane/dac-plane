@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectionList",
+  "description": "The tenant's connections, removed ones included, oldest first.",
+  "type": "object",
+  "required": [
+    "connections"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "connections": {
+      "type": "array",
+      "items": {
+        "$ref": "../lifecycle/connection.schema.json"
+      }
+    }
+  }
+}

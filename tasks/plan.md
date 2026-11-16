@@ -73,3 +73,13 @@ For stage 2:
   `revoke_connection`) name no attempt and never become provider operations; the frame schema requires an attempt on
   every other request. They are synchronous, idempotent by connection, and repeated by the command that needs them.
 - A connector call is recorded when the gateway decides it; one awaiting approval has no provider operation yet.
+
+For stage 3:
+
+- Consent initiation requires an idempotency key and records its returned URL;
+  retrying that key returns the same URL and a new key renews consent.
+- Completion replays its recorded result without requiring an online connector.
+  Removal first revokes all grants atomically, then reports `removing` until the
+  connector confirms credential destruction; repeating removal retries it.
+- Verified connection ownership, replay, stale versions, pending consent, outage
+  and schema-17 behavior through real HTTP and PostgreSQL tests.

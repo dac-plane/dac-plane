@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectionRequest",
+  "description": "Body of POST /v1/tenants/{tenant}/connections: the connector provider that serves the connection and its owner's name for it. Nothing in it can carry a credential; consent happens at the connector.",
+  "type": "object",
+  "required": [
+    "provider_id",
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^\\S(?:[^\\r\\n]*\\S)?$"
+    }
+  }
+}
