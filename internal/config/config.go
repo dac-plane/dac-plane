@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -56,6 +57,8 @@ type Config struct {
 	// every non-loopback listener serves (ADR-0009). Serving requires them.
 	TLSCertFile, TLSKeyFile string
 	Deployment              Deployment
+	ConnectorGatewayURL     string
+	ConnectorGatewayKey     string
 }
 
 // Load reads configuration through lookup. A secret-bearing setting may
@@ -94,6 +97,23 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		TLSCertFile:            setting(lookup, tlsCertFileEnv, ""),
 		TLSKeyFile:             setting(lookup, tlsKeyFileEnv, ""),
 		Deployment:             Deployment(setting(lookup, deploymentEnv, string(DeploymentProduction))),
+	}
+	cfg.ConnectorGatewayURL = setting(lookup, "DAC_CONNECTOR_GATEWAY_URL", "")
+	cfg.ConnectorGatewayKey, err = secret(lookup, "DAC_CONNECTOR_GATEWAY_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	if (cfg.ConnectorGatewayURL == "") != (cfg.ConnectorGatewayKey == "") {
+		return Config{}, errors.New("DAC_CONNECTOR_GATEWAY_URL and DAC_CONNECTOR_GATEWAY_KEY must be configured together")
+	}
+	if cfg.ConnectorGatewayURL != "" {
+		endpoint, err := url.Parse(cfg.ConnectorGatewayURL)
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Path != "/connectors/mcp" {
+			return Config{}, errors.New("DAC_CONNECTOR_GATEWAY_URL must be an HTTPS /connectors/mcp URL")
+		}
+		if len(cfg.ConnectorGatewayKey) < 32 {
+			return Config{}, errors.New("DAC_CONNECTOR_GATEWAY_KEY must contain at least 32 bytes")
+		}
 	}
 	if cfg.Deployment != DeploymentProduction && cfg.Deployment != DeploymentDevelopment {
 		return Config{}, errors.New("DAC_DEPLOYMENT must be production or development")

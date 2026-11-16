@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/identity"
 	"github.com/dac-plane/dac-plane/internal/ids"
@@ -73,6 +74,9 @@ func (w *Worker) handleRow(ctx context.Context, tenant ids.TenantID, row store.O
 	}
 	if body.Role == contracts.RoleEnforcement && (body.Method == contracts.MethodPostAction || body.Method == contracts.MethodActionFailed) {
 		return w.hookStageRow(ctx, tenant, row, body, now)
+	}
+	if row.Record == lifecycle.RecordAuthorityUse && body.Role == contracts.RoleConnector {
+		return w.connectorRow(ctx, tenant, row, body, now)
 	}
 	if row.Record == lifecycle.RecordAuthorityUse {
 		return w.governedRow(ctx, tenant, row, body, now)
@@ -222,23 +226,21 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	if err := request.Validate(); err != nil {
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, false)
 	}
-	if agent := prepared.agent; agent != nil {
-		negotiated := agentPort(port)
-		if negotiated == nil {
-			// Refused before anything is sent, so the task fails visibly
-			// instead of running without its agent's instructions.
+
+	if prepared.agent != nil {
+		port = agentPort(port)
+		if port == nil {
 			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonAgentInstructions, prepared.replay)
 		}
-		arguments, err := withAgentInstructions(body.Arguments, *agent)
-		if err != nil {
-			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
-		}
-		request.Arguments = arguments
-		if err := request.Validate(); err != nil {
-			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
-		}
-		port = negotiated
 	}
+	if prepared.gateway {
+		port = requiringGateway(port)
+		if port == nil {
+			return w.releasePrepared(ctx, tenant, row, prepared, now, false)
+		}
+	}
+	request.Arguments = prepared.arguments
+
 	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
 	defer cancel()
 	var reply contracts.Reply
@@ -284,7 +286,9 @@ type preparedDispatch struct {
 	role      contracts.Role
 	// agent is the delegated agent's direction for a start_turn, nil for
 	// any other dispatch and for a task submitted to providers.
-	agent *contracts.AgentInstructions
+	agent     *contracts.AgentInstructions
+	gateway   bool
+	arguments json.RawMessage
 }
 
 // prepareDispatch claims the row and runs the pre-dispatch checklist in one
@@ -374,6 +378,43 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			return nil, err
 		}
 	}
+
+	gateway := body.Gateway
+	if body.Role == contracts.RoleRuntime && body.Method == contracts.MethodStartTurn && w.gateway != nil && !gateway && claim.Row.LastError == "" && row.Status != "processing" {
+		// Only active grants owned by this task can enable gateway delivery.
+		attempt, err := store.GetAttempt(ctx, uow, tenant, operation.Attempt)
+		if err != nil {
+			return nil, err
+		}
+		task, err := store.GetTask(ctx, uow, tenant, attempt.Task)
+		if err != nil {
+			return nil, err
+		}
+		var agentID ids.AgentID
+		if task.Agent != nil {
+			agentID = task.Agent.Agent
+		}
+		grants, err := store.ListWorkGrants(ctx, uow, tenant, task.ID, agentID)
+		if err != nil {
+			return nil, err
+		}
+		port := w.port(tenant, operation.Provider, contracts.RoleRuntime)
+		if agent != nil {
+			port = agentPort(port)
+		}
+		if scoped, ok := port.(contracts.CapabilityScoped); ok && scoped.Requiring(contracts.CapabilityConnectorGateway) != nil {
+			for _, g := range grants {
+				c, err := store.GetConnection(ctx, uow, tenant, g.Connection)
+				if err != nil {
+					return nil, err
+				}
+				if c.Owner == task.Owner && c.State == lifecycle.ConnectionActive && now.Before(g.ExpiresAt) {
+					gateway = true
+					break
+				}
+			}
+		}
+	}
 	switch operation.State {
 	case lifecycle.OperationSucceeded, lifecycle.OperationFailed, lifecycle.OperationRejected:
 		return ack(claim)
@@ -407,6 +448,9 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		if agent != nil {
 			port = agentPort(port)
 		}
+		if gateway {
+			port = requiringGateway(port)
+		}
 		if _, ok := port.(contracts.StableOperationReplayer); ok {
 			replay = true
 		} else {
@@ -439,7 +483,13 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return ack(claim)
 	}
 	if row.Record == lifecycle.RecordAuthorityUse {
-		reason, err := store.CheckGovernedDispatch(ctx, uow, tenant, operation.ID)
+		var reason identity.DenialReason
+		var err error
+		if body.Role == contracts.RoleConnector {
+			reason, err = application.CheckConnectorDispatch(ctx, uow, tenant, operation.ID)
+		} else {
+			reason, err = store.CheckGovernedDispatch(ctx, uow, tenant, operation.ID)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -492,8 +542,8 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			}
 			return exhaust(claim, reasonHarnessNotLive)
 		}
-	} else if body.Role == contracts.RoleEnvironment {
-		if _, err := store.GetProviderRegistration(ctx, uow, tenant, operation.Provider, contracts.RoleEnvironment); err != nil {
+	} else if body.Role == contracts.RoleEnvironment || body.Role == contracts.RoleConnector {
+		if _, err := store.GetProviderRegistration(ctx, uow, tenant, operation.Provider, body.Role); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return exhaust(claim, reasonNoHarness)
 			}
@@ -545,6 +595,37 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			return exhaust(claim, reasonInvalidBody)
 		}
 	}
+
+	arguments := body.Arguments
+	if body.Role == contracts.RoleRuntime && body.Method == contracts.MethodStartTurn && (agent != nil || gateway) {
+		var start contracts.RuntimeStart
+		if err := json.Unmarshal(arguments, &start); err != nil {
+			return exhaust(claim, reasonInvalidBody)
+		}
+		start.Agent = agent
+		if gateway {
+			if w.gateway == nil {
+				return release(claim)
+			}
+			start.Gateway = w.gateway(tenant, operation.Attempt)
+		}
+		arguments, err = json.Marshal(start)
+		if err != nil {
+			return nil, err
+		}
+		delivery, err := ids.New[ids.Delivery]()
+		if err != nil {
+			return nil, err
+		}
+		if (contracts.Request{Operation: operation.ID, Delivery: delivery, Tenant: tenant, Attempt: operation.Attempt, Role: body.Role, Method: body.Method, Arguments: arguments, Demand: row.Demand, Deadline: body.Deadline}).Validate() != nil {
+			return exhaust(claim, reasonInvalidBody)
+		}
+		if gateway {
+			if _, err := uow.Exec(ctx, `update outbox set payload=jsonb_set(payload,'{gateway_enabled}','true'::jsonb) where tenant_id=$1 and outbox_id=$2`, tenant.String(), row.ID.String()); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Submission already records OperationDispatched when enqueueing. This
 	// static outbox marker distinguishes an actual send attempt from earlier
 	// yielded claims; governed rows need the same distinction so a release for
@@ -566,7 +647,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return nil, err
 	}
 	w.stats.Claims.Add(1)
-	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay, role: body.Role, agent: agent}, nil
+	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay, role: body.Role, agent: agent, gateway: gateway, arguments: arguments}, nil
 }
 
 // budgetSpent reports whether the row already burned its retry budget, and
@@ -1172,4 +1253,11 @@ func withAgentInstructions(arguments json.RawMessage, agent contracts.AgentInstr
 		return nil, err
 	}
 	return json.Marshal(start)
+}
+
+func requiringGateway(port contracts.Port) contracts.Port {
+	if scoped, ok := port.(contracts.CapabilityScoped); ok {
+		return scoped.Requiring(contracts.CapabilityConnectorGateway)
+	}
+	return nil
 }

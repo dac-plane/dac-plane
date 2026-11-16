@@ -14,6 +14,7 @@ import (
 	"github.com/dac-plane/dac-plane/internal/adapterwire"
 	"github.com/dac-plane/dac-plane/internal/authn"
 	"github.com/dac-plane/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/connectorgateway"
 	"github.com/dac-plane/dac-plane/internal/httpapi"
 	"github.com/dac-plane/dac-plane/internal/platform/migrations"
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
@@ -85,13 +86,24 @@ func (application *Application) Serve(ctx context.Context, cfg config.Config, op
 	if err != nil {
 		return err
 	}
-	api, err := httpapi.New(application.pool, authenticator, logger.With("component", "surface"), httpapi.Options{})
+	api, err := httpapi.New(application.pool, authenticator, logger.With("component", "surface"), httpapi.Options{Connectors: application.adapters})
 	if err != nil {
 		return err
 	}
 	endpoint, err := adapterwire.NewEndpoint(verifier, adapterwire.StoreResolver(application.pool), application.adapters, logger.With("component", "adapters"))
 	if err != nil {
 		return err
+	}
+	var adapterHandler http.Handler = endpoint
+	if application.gatewayTokens != nil {
+		gateway, err := connectorgateway.New(application.pool, application.adapters, application.gatewayTokens, application.worker.Wake, logger.With("component", "connector_gateway"))
+		if err != nil {
+			return err
+		}
+		mux := http.NewServeMux()
+		mux.Handle(connectorgateway.Path, gateway)
+		mux.Handle("/", endpoint)
+		adapterHandler = mux
 	}
 	certificate, err := loadCertificate(cfg.TLSCertFile, cfg.TLSKeyFile, logger)
 	if err != nil {
@@ -101,7 +113,7 @@ func (application *Application) Serve(ctx context.Context, cfg config.Config, op
 	var serving atomic.Bool
 	servers := []*listener{
 		{name: "surface", addr: cfg.SurfaceAddr, server: newServer(api, logger), tls: certificate.serverTLS("h2", "http/1.1")},
-		{name: "adapter", addr: cfg.AdapterAddr, server: newServer(endpoint, logger), tls: certificate.serverTLS("http/1.1")},
+		{name: "adapter", addr: cfg.AdapterAddr, server: newServer(adapterHandler, logger), tls: certificate.serverTLS("http/1.1")},
 		{name: "operations", addr: cfg.OpsAddr, server: newServer(application.operations(&serving), logger)},
 	}
 	if !cfg.OpsLoopback() {

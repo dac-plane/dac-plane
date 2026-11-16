@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BeginAuthorization",
+  "description": "Asks a connector for a consent URL for one connection. The state the connector binds to the URL is single-use and expires by expires_at.",
+  "type": "object",
+  "required": [
+    "connection_id",
+    "expires_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "connection_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "expires_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    }
+  }
+}

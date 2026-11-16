@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/ids"
 	"github.com/dac-plane/dac-plane/internal/lifecycle"
@@ -37,6 +38,9 @@ func (w *Worker) Reconcile(ctx context.Context) error {
 			if err := w.reconcileOperation(ctx, tenant, op); err != nil {
 				w.logger.Error("operation reconcile failed", "operation", op.ID.String(), "error", err)
 			}
+		}
+		if err := application.FinishConnectionRemovals(ctx, w.pool, connectorPorts{w}, tenant); err != nil {
+			return err
 		}
 		if err := w.repeatInterrupts(ctx, tenant); err != nil {
 			w.logger.Error("interrupt repeat failed", "tenant", tenant.String(), "error", err)
@@ -130,6 +134,11 @@ func (w *Worker) reconcileOperation(ctx context.Context, tenant ids.TenantID, op
 		return err
 	} else if yes {
 		return nil
+	}
+	if call, err := store.GetConnectorCall(ctx, w.pool, tenant, operation.ID); err == nil {
+		return w.reconcileConnector(ctx, call, operation)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	if action, err := store.GetGovernedAction(ctx, w.pool, tenant, operation.ID); err == nil {
 		return w.reconcileStreamOperation(ctx, tenant, operation, &action)
@@ -328,4 +337,10 @@ func (w *Worker) reconcileFrame(ctx context.Context, operation lifecycle.Provide
 		w.stats.Reconciled.Add(1)
 	}
 	return ingested, settled, nil
+}
+
+type connectorPorts struct{ w *Worker }
+
+func (p connectorPorts) Port(tenant ids.TenantID, provider ids.ProviderID, role contracts.Role) contracts.Port {
+	return p.w.port(tenant, provider, role)
 }

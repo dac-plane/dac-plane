@@ -24,11 +24,13 @@ use.
 | `DAC_SURFACE_ADDR` | no | `:8443` | Listen address of the Surface API, as `host:port`. |
 | `DAC_ADAPTER_ADDR` | no | `:9443` | Listen address of the adapter endpoint, as `host:port`. |
 | `DAC_OPS_ADDR` | no | `127.0.0.1:8081` | Listen address of the operations listener (health and readiness). On loopback it serves plain HTTP; on any other address it serves TLS. |
+| `DAC_CONNECTOR_GATEWAY_URL` | no | | Runtime-reachable HTTPS `/connectors/mcp` endpoint; enable with the signing key. |
+| `DAC_CONNECTOR_GATEWAY_KEY` | with gateway URL | | At least 32 random bytes shared across replicas; supports `_FILE`. |
 | `DAC_DEPLOYMENT` | no | `production` | `production` or `development`. Production refuses an identity configuration that trusts a development issuer. |
 
 ## Every adapter
 
-`dac-codex-adapter`, `dac-e2b-adapter` and `dac-s3-adapter` all read these. An adapter authenticates with either
+`dac-codex-adapter`, `dac-e2b-adapter`, `dac-s3-adapter` and `dac-github-adapter` all read these. An adapter authenticates with either
 `DAC_ADAPTER_TOKEN_FILE` or the four client-credentials variables.
 
 | Variable | Required | Default | Meaning |
@@ -131,3 +133,36 @@ for one cannot be used on the other. Each entry has:
 | `clock_skew_seconds` | no | `30` | Clock difference tolerated when checking token times, 0 to 300. |
 | `require_access_token_type` | no | `true` | Require tokens typed `at+jwt` (RFC 9068). Turn it off only for an issuer that cannot type access tokens, and use an audience that issuer grants for nothing else. |
 | `development` | no | `false` | Marks the development profile's test issuer. A production deployment refuses a file that sets it. |
+
+## dac-github-adapter
+
+The reference GitHub App connector holds user credentials in its own sealed vault.
+It also reads the variables in [Every adapter](#every-adapter).
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `DAC_TENANT_ID` | yes | | Tenant whose connector registration this process serves. |
+| `DAC_GITHUB_CLIENT_ID` | yes | | GitHub App client ID. |
+| `DAC_GITHUB_CLIENT_SECRET_FILE` | yes | | File containing that App's OAuth client secret. |
+| `DAC_GITHUB_CALLBACK_URL` | yes | | Exact HTTPS callback URL registered on the App. |
+| `DAC_GITHUB_RETURN_URL` | no | | Fixed surface URL to return to after consent. |
+| `DAC_GITHUB_CALLBACK_ADDR` | no | `127.0.0.1:9080` | Callback listener; put it behind a TLS reverse proxy on loopback. |
+| `DAC_GITHUB_TLS_CERT_FILE` | off loopback | | Certificate for a callback listener exposed directly. |
+| `DAC_GITHUB_TLS_KEY_FILE` | off loopback | | Private key for that certificate. |
+| `DAC_GITHUB_VAULT_FILE` | yes | | Durable private encrypted bbolt file. One process owns it. |
+| `DAC_GITHUB_VAULT_KEY_FILE` | yes | | Exactly 32 raw random bytes, held separately from the vault. |
+
+## Connector gateway
+
+`DAC_CONNECTOR_GATEWAY_URL` enables the connector MCP endpoint. Set it to the
+runtime-reachable HTTPS URL ending in `/connectors/mcp` on the adapter listener.
+Configure `DAC_CONNECTOR_GATEWAY_KEY` with at least 32 random bytes, or provide
+its file through `DAC_CONNECTOR_GATEWAY_KEY_FILE`. All replicas must use the same
+key. Configure URL and key together; omitting both disables runtime gateway
+access. Keep the key in deployment secrets and rotate it by restarting replicas;
+rotation invalidates previously issued attempt tokens.
+
+The gateway bounds requests to 100 per second and 64 concurrently per replica and waits at most two
+minutes for a decision or connector result. The Codex adapter sets its MCP tool
+timeout to 180 seconds. Its local mode-0600 journal retains the attempt bearer
+for reconnect; protect that journal with the runtime adapter's other state.

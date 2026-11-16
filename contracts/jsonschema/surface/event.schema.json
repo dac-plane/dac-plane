@@ -35,7 +35,9 @@
         "artifact",
         "authority_use",
         "authority_grant",
-        "agent"
+        "agent",
+        "connection",
+        "connection_grant"
       ]
     },
     "record_id": {

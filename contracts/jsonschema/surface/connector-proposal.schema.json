@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectorProposal",
+  "description": "Owner-only exact proposed tool arguments, bound to an attention request and its decision version.",
+  "type": "object",
+  "required": [
+    "attention_id",
+    "operation_id",
+    "connection_id",
+    "attention_version",
+    "tool",
+    "input",
+    "input_digest"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attention_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "operation_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "connection_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "attention_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tool": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,47}$"
+    },
+    "input": {
+      "type": "object"
+    },
+    "input_digest": {
+      "$ref": "../identity/common.schema.json#/$defs/digest"
+    }
+  }
+}

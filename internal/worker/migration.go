@@ -762,6 +762,19 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 	if item.RestartEpoch == 0 {
 		item.RestartEpoch = item.ClaimEpoch
 	}
+	gateway, err := w.migrationUsesGateway(ctx, tenant, item.SourceAttempt)
+	if err != nil {
+		return err
+	}
+	if gateway {
+		if w.gateway == nil {
+			return nil
+		}
+		port = requiringGateway(port)
+		if port == nil {
+			return nil
+		}
+	}
 	restart := contracts.MigrationRequest{Migration: item.Migration, Operation: item.RestartOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetStarted, ClaimEpoch: item.RestartEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs, EnvironmentRef: item.EnvironmentRef}
 	// The restart carries the brief, any agent instructions and the recovery
 	// together, which can exceed the arguments bound the first start fitted.
@@ -809,6 +822,16 @@ func (w *Worker) migrationRequest(ctx context.Context, tenant ids.TenantID, oper
 			return contracts.Request{}, err
 		}
 		start := contracts.RuntimeStart{Brief: brief, Agent: agent, Recovery: &payload}
+		enabled, err := w.migrationUsesGateway(ctx, tenant, payload.SourceAttempt)
+		if err != nil {
+			return contracts.Request{}, err
+		}
+		if enabled {
+			if w.gateway == nil {
+				return contracts.Request{}, contracts.ErrInvalid
+			}
+			start.Gateway = w.gateway(tenant, attempt)
+		}
 		if err := start.Validate(); err != nil {
 			return contracts.Request{}, err
 		}

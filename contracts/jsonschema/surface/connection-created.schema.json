@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectionCreated",
+  "description": "The created connection and, when its connector answered, the URL the owner opens to consent.",
+  "type": "object",
+  "required": [
+    "connection"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "connection": {
+      "$ref": "../lifecycle/connection.schema.json"
+    },
+    "authorization": {
+      "$ref": "../adapter/authorization-started.schema.json"
+    }
+  }
+}

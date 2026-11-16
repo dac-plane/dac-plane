@@ -362,3 +362,94 @@ func (r AgentRequest) profile() lifecycle.AgentProfile {
 type AgentListBody struct {
 	Agents []lifecycle.Agent `json:"agents"`
 }
+
+// ConnectionRequest is the body of POST /connections: the connector provider
+// that serves the connection and the owner's name for it. Nothing in it could
+// carry a credential; consent happens at the connector.
+type ConnectionRequest struct {
+	Provider ids.ProviderID `json:"provider_id"`
+	Name     string         `json:"name"`
+}
+
+// Validate reports whether the body names a provider and a valid name.
+func (r ConnectionRequest) Validate() error {
+	if r.Provider.IsZero() {
+		return fmt.Errorf("%w: a connector provider is required", application.ErrInvalidCommand)
+	}
+	if err := lifecycle.ValidateConnectionName(r.Name); err != nil {
+		return fmt.Errorf("%w: %w", application.ErrInvalidCommand, err)
+	}
+	return nil
+}
+
+// ConnectionCreatedBody answers POST /connections: the connection and, when
+// the connector answered, the URL its owner opens to consent.
+type ConnectionCreatedBody struct {
+	Connection    lifecycle.Connection            `json:"connection"`
+	Authorization *contracts.AuthorizationStarted `json:"authorization,omitempty"`
+}
+
+// ConnectionListBody is a tenant's connections.
+type ConnectionListBody struct {
+	Connections []lifecycle.Connection `json:"connections"`
+}
+
+// ConnectionGrantRequest is the body of POST /connections/{connection}/grants.
+// It names exactly one of an agent and a task.
+type ConnectionGrantRequest struct {
+	Agent      ids.AgentID         `json:"agent_id,omitzero"`
+	Task       ids.TaskID          `json:"task_id,omitzero"`
+	Tools      []string            `json:"tools"`
+	Permission identity.Permission `json:"permission"`
+	CallLimit  uint32              `json:"call_limit"`
+	ExpiresAt  time.Time           `json:"expires_at"`
+}
+
+// Validate reports whether the terms are well formed. Whether the agent or
+// task and the tools exist is the command's to check.
+func (r ConnectionGrantRequest) Validate() error {
+	if r.Agent.IsZero() == r.Task.IsZero() {
+		return fmt.Errorf("%w: a grant names exactly one agent or task", application.ErrInvalidCommand)
+	}
+	if len(r.Tools) == 0 || len(r.Tools) > lifecycle.MaxGrantTools {
+		return fmt.Errorf("%w: a grant names 1 to %d tools", application.ErrInvalidCommand, lifecycle.MaxGrantTools)
+	}
+	seen := map[string]bool{}
+	for _, tool := range r.Tools {
+		if err := lifecycle.ValidateToolName(tool); err != nil || seen[tool] {
+			return fmt.Errorf("%w: grant tools are distinct tool names", application.ErrInvalidCommand)
+		}
+		seen[tool] = true
+	}
+	if r.Permission != identity.PermissionAsk && r.Permission != identity.PermissionAlways {
+		return fmt.Errorf("%w: a grant's permission is ask or always", application.ErrInvalidCommand)
+	}
+	if r.CallLimit == 0 || r.CallLimit > lifecycle.MaxGrantCallLimit {
+		return fmt.Errorf("%w: a grant's call limit is 1 to %d", application.ErrInvalidCommand, lifecycle.MaxGrantCallLimit)
+	}
+	if r.ExpiresAt.IsZero() {
+		return fmt.Errorf("%w: a grant expires", application.ErrInvalidCommand)
+	}
+	return nil
+}
+
+func (r ConnectionGrantRequest) terms() lifecycle.ConnectionGrantTerms {
+	return lifecycle.ConnectionGrantTerms{Agent: r.Agent, Task: r.Task, Tools: r.Tools, Permission: r.Permission, CallLimit: r.CallLimit, ExpiresAt: r.ExpiresAt}
+}
+
+// ConnectionGrantListBody is a connection's grants.
+type ConnectionGrantListBody struct {
+	Grants []lifecycle.ConnectionGrant `json:"grants"`
+}
+
+// CompleteConnectionRequest carries the proof returned only to the consent browser.
+type CompleteConnectionRequest struct {
+	Confirmation string `json:"confirmation"`
+}
+
+func (r CompleteConnectionRequest) Validate() error {
+	if err := contracts.ValidateConfirmation(r.Confirmation); err != nil {
+		return fmt.Errorf("%w: %v", application.ErrInvalidCommand, err)
+	}
+	return nil
+}

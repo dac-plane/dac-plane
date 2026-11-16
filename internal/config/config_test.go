@@ -161,3 +161,29 @@ func TestOpsLoopbackOnlyForLoopbackHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectorGatewayConfigurationRequiresPairedSecretsAndHTTPS(t *testing.T) {
+	for _, tc := range []struct {
+		name, url, key string
+		valid          bool
+	}{
+		{"disabled", "", "", true},
+		{"enabled", "https://dac.example/connectors/mcp", strings.Repeat("k", 32), true},
+		{"missing key", "https://dac.example/connectors/mcp", "", false},
+		{"missing URL", "", strings.Repeat("k", 32), false},
+		{"short key", "https://dac.example/connectors/mcp", "short", false},
+		{"plaintext", "http://dac.example/connectors/mcp", strings.Repeat("k", 32), false},
+		{"query", "https://dac.example/connectors/mcp?token=private", strings.Repeat("k", 32), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string]string{databaseURLEnv: "postgres://localhost/dac", "DAC_CONNECTOR_GATEWAY_URL": tc.url, "DAC_CONNECTOR_GATEWAY_KEY": tc.key}
+			_, err := Load(mapLookup(values))
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v error=%v", tc.valid, err)
+			}
+			if err != nil && tc.key != "" && strings.Contains(err.Error(), tc.key) {
+				t.Fatal("configuration error exposed key")
+			}
+		})
+	}
+}

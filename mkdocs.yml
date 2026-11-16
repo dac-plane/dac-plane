@@ -35,6 +35,7 @@ nav:
   - Operate: operate/index.md
   - Use the Surface API: use/surface-api.md
   - Delegate work to agents: use/agents.md
+  - Connect external applications: use/connectors.md
   - Write an adapter: extend/adapters.md
   - Reference:
       - Configuration: reference/configuration.md

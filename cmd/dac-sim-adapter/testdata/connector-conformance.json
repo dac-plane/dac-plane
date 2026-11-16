@@ -1,0 +1,11 @@
+{
+  "provider_id": "01900000-0000-7000-8000-000000000002",
+  "role": "connector",
+  "request": {
+    "operation_id": "01900000-0000-7000-8000-000000000004",
+    "tenant_id": "01900000-0000-7000-8000-000000000001",
+    "role": "connector",
+    "method": "list_tools",
+    "demand": "person"
+  }
+}

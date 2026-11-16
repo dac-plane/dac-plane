@@ -30,6 +30,11 @@ var (
 // an operation this journal never saw, which a later delivery must not start.
 const StateCancelled = "cancelled"
 
+type GatewayAccess struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
 type Operation struct {
 	ID, Tenant, Attempt, ArgumentsHash, ThreadID, TurnID, State string
 	Baseline                                                    map[string]string
@@ -38,7 +43,8 @@ type Operation struct {
 	Environment string
 	// DeveloperInstructions are the delegated agent's standing instructions
 	// the thread started with, passed again when the thread is resumed.
-	DeveloperInstructions string `json:",omitempty"`
+	DeveloperInstructions string         `json:",omitempty"`
+	Gateway               *GatewayAccess `json:",omitempty"`
 	CreatedAt             time.Time
 }
 

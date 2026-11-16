@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectionGrantList",
+  "description": "A connection's grants, revoked ones included, oldest first.",
+  "type": "object",
+  "required": [
+    "grants"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "grants": {
+      "type": "array",
+      "items": {
+        "$ref": "../lifecycle/connection-grant.schema.json"
+      }
+    }
+  }
+}

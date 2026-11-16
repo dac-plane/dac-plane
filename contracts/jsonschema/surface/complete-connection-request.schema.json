@@ -1,0 +1,7 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "title":"CompleteConnectionRequest",
+ "description":"The confirmation proof received by the callback browser after consent.",
+ "type":"object","additionalProperties":false,"required":["confirmation"],
+ "properties":{"confirmation":{"type":"string","minLength":32,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"}}
+}

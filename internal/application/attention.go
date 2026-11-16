@@ -19,6 +19,7 @@ import (
 	"github.com/dac-plane/dac-plane/internal/ids"
 	"github.com/dac-plane/dac-plane/internal/lifecycle"
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/progress"
 )
 
 const commandDecideAttention = "decide_attention"
@@ -156,6 +157,36 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 		return nil, err
 	}
 
+	// A gateway approval has no runtime-native request to steer. Its backing
+	// call record, rather than an untrusted native reference prefix, identifies it.
+	var connectorCall *store.ConnectorCall
+	if !request.Operation.IsZero() {
+		call, err := store.GetConnectorCall(ctx, u.uow, tenant, request.Operation)
+		if err == nil && call.State == store.CallAwaitingApproval {
+			if cmd.Kind == lifecycle.DecisionApproveStanding {
+				return nil, ErrInvalidCommand
+			}
+			if _, err := store.GetAttemptForUpdate(ctx, u.uow, tenant, request.Attempt); err != nil {
+				return nil, err
+			}
+			c, err := store.GetConnectionForShare(ctx, u.uow, tenant, call.Connection)
+			if err != nil {
+				return nil, err
+			}
+			g, err := store.GetConnectionGrantForUpdate(ctx, u.uow, tenant, call.ConnectionGrant)
+			if err != nil {
+				return nil, err
+			}
+			if cmd.Kind != lifecycle.DecisionDeny && (c.State != lifecycle.ConnectionActive || g.State != lifecycle.ConnectionGrantActive || !cmd.At.Before(g.ExpiresAt)) {
+				return nil, ErrConnectorDenied
+			}
+			policy = ConnectorPolicy(policy, correlation.ActionClass, g.Permission)
+			connectorCall = &call
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+	}
+
 	decisionID, err := ids.New[ids.Decision]()
 	if err != nil {
 		return nil, err
@@ -183,6 +214,9 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 	})
 	if err != nil {
 		return nil, err
+	}
+	if connectorCall != nil {
+		tr.Outbox = nil
 	}
 	decided, recorded, replayed, err := store.DecideAttention(ctx, u.uow, decision, policy.Generation, tr)
 	if err != nil {
@@ -232,6 +266,32 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 			return nil, err
 		}
 		view.GrantID = grant.ID.String()
+	}
+	if connectorCall != nil {
+		if cmd.Kind == lifecycle.DecisionDeny {
+			if err := store.DecideConnectorCall(ctx, u.uow, tenant, connectorCall.Operation, nil, cmd.At); err != nil {
+				return nil, err
+			}
+		}
+		for _, event := range []lifecycle.AttentionEvent{lifecycle.AttentionDispatch, lifecycle.AttentionDeliver, lifecycle.AttentionConsume} {
+			tr, err := u.transition(decided.Version, nil)
+			if err != nil {
+				return nil, err
+			}
+			decided, _, err = store.ApplyAttention(ctx, u.uow, tenant, decided.ID, event, tr)
+			if err != nil {
+				return nil, err
+			}
+		}
+		step := progress.Step{UOW: u.uow, Tenant: tenant, Actor: cmd.Command.actor(), At: cmd.At}
+		if _, _, _, err := step.Attempt(ctx, request.Attempt, lifecycle.AttemptResume, ""); err != nil {
+			return nil, err
+		}
+		if _, err := step.Task(ctx, request.Task, lifecycle.TaskInputResolved); err != nil {
+			return nil, err
+		}
+		view.State = string(decided.State)
+		return json.Marshal(view)
 	}
 	// Approval delivery carries the child action identity and its authority;
 	// the runtime-turn operation still routes the native steer request.

@@ -156,6 +156,9 @@ func (a *Adapter) reconstruct() error {
 			// instructions across a resume, so they are given again.
 			resume["developerInstructions"] = op.DeveloperInstructions
 		}
+		if op.Gateway != nil {
+			resume["config"] = gatewayConfig(op.Gateway)
+		}
 		if err := a.config.Native.Call(ctx, "thread/resume", resume, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
@@ -455,10 +458,11 @@ type executionBrief struct {
 	AcceptanceCriteria []string `json:"acceptance_criteria"`
 }
 type runtimeStart struct {
-	Brief       executionBrief        `json:"brief"`
-	Agent       *agentInstructions    `json:"agent,omitempty"`
-	Environment *environmentReference `json:"environment,omitempty"`
-	Recovery    json.RawMessage       `json:"recovery,omitempty"`
+	Brief       executionBrief         `json:"brief"`
+	Agent       *agentInstructions     `json:"agent,omitempty"`
+	Environment *environmentReference  `json:"environment,omitempty"`
+	Recovery    json.RawMessage        `json:"recovery,omitempty"`
+	Gateway     *journal.GatewayAccess `json:"gateway,omitempty"`
 }
 
 // agentInstructions is the role and standing instructions of the agent a task
@@ -472,7 +476,7 @@ type agentInstructions struct {
 // Offered lists the optional protocol capabilities this adapter implements,
 // for its hello.
 func Offered() []string {
-	return []string{wire.CapabilityAgentInstructions}
+	return []string{wire.CapabilityAgentInstructions, wire.CapabilityConnectorGateway}
 }
 
 type environmentReference struct {
@@ -496,6 +500,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if agent := input.Agent; agent != nil && (strings.TrimSpace(agent.Role) == "" || utf8.RuneCountInString(agent.Role) > 1_000 ||
 		(agent.Instructions != "" && strings.TrimSpace(agent.Instructions) == "") || utf8.RuneCountInString(agent.Instructions) > 20_000) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid agent instructions"), nil
+	}
+	if input.Gateway != nil && !validGateway(input.Gateway) {
+		return rejected(r, wire.FailureInvalidArguments, "invalid connector gateway"), nil
 	}
 	if input.Environment != nil && (strings.TrimSpace(input.Environment.ProviderID) == "" || strings.TrimSpace(input.Environment.ResourceRef) == "" || len(input.Environment.ResourceRef) > 2048) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
@@ -521,7 +528,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	a.startMu.Lock()
 	a.setStarting(r.Operation, true)
 	defer a.setStarting(r.Operation, false)
-	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment, DeveloperInstructions: developerInstructions})
+	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment, DeveloperInstructions: developerInstructions, Gateway: input.Gateway})
 	a.startMu.Unlock()
 	if errors.Is(err, journal.ErrPayloadMismatch) {
 		return rejected(r, wire.FailureStalePrecondition, "operation payload changed"), nil
@@ -565,6 +572,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		// The tenant set these for every task given to the agent, so they are
 		// developer instructions; the brief stays untrusted turn input.
 		threadStart["developerInstructions"] = developerInstructions
+	}
+	if input.Gateway != nil {
+		threadStart["config"] = gatewayConfig(input.Gateway)
 	}
 	err = a.config.Native.Call(ctx, "thread/start", threadStart, &started)
 	if err != nil {
@@ -1280,4 +1290,18 @@ func snapshot(root string) (map[string]string, error) {
 		return nil
 	})
 	return out, err
+}
+
+func validGateway(g *journal.GatewayAccess) bool {
+	u, err := url.Parse(g.URL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1"))) {
+		return false
+	}
+	if g.Token == "" || len(g.Token) > 512 {
+		return false
+	}
+	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
+}
+func gatewayConfig(g *journal.GatewayAccess) map[string]any {
+	return map[string]any{"mcp_servers": map[string]any{"dac_plane": map[string]any{"url": g.URL, "http_headers": map[string]string{"Authorization": "Bearer " + g.Token}, "tool_timeout_sec": 180}}}
 }

@@ -19,11 +19,12 @@ const (
 	RoleEnvironment   Role = "environment"
 	RoleEnforcement   Role = "enforcement"
 	RoleArtifactStore Role = "artifact_store"
+	RoleConnector     Role = "connector"
 )
 
 // Roles lists every Role.
 func Roles() []Role {
-	return []Role{RoleRuntime, RoleEnvironment, RoleEnforcement, RoleArtifactStore}
+	return []Role{RoleRuntime, RoleEnvironment, RoleEnforcement, RoleArtifactStore, RoleConnector}
 }
 
 // Method is an operation a provider in some role performs.
@@ -47,6 +48,13 @@ const (
 	MethodAuthorizeUpload Method = "authorize_upload"
 	MethodStatObject      Method = "stat_object"
 	MethodCommitManifest  Method = "commit_manifest"
+
+	MethodListTools             Method = "list_tools"
+	MethodBeginAuthorization    Method = "begin_authorization"
+	MethodCompleteAuthorization Method = "complete_authorization"
+	MethodRevokeConnection      Method = "revoke_connection"
+	MethodCallTool              Method = "call_tool"
+	MethodReadCall              Method = "read_call"
 )
 
 // Methods is the catalogue of operations for a role; any other method is an
@@ -61,6 +69,8 @@ func Methods(role Role) []Method {
 		return []Method{MethodPreAction, MethodPostAction, MethodActionFailed, MethodExecuteAction}
 	case RoleArtifactStore:
 		return []Method{MethodAuthorizeUpload, MethodStatObject, MethodCommitManifest}
+	case RoleConnector:
+		return []Method{MethodListTools, MethodBeginAuthorization, MethodCompleteAuthorization, MethodRevokeConnection, MethodCallTool, MethodReadCall}
 	}
 	return nil
 }

@@ -694,7 +694,7 @@ func TestRestartResumesADelegatedThreadWithItsInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"agent":{"role":"Reviews fixture changes","instructions":"Explain every change in one line."}}`
+	start := `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"agent":{"role":"Reviews fixture changes","instructions":"Explain every change in one line."},"gateway":{"url":"https://dac.example/connectors/mcp","token":"gateway-reconnect-proof"}}`
 	if reply, err := first.Send(context.Background(), startRequest(start)); err != nil || reply.Outcome != wire.OutcomeOK {
 		t.Fatalf("start reply=%+v err=%v", reply, err)
 	}
@@ -714,6 +714,9 @@ func TestRestartResumesADelegatedThreadWithItsInstructions(t *testing.T) {
 	}
 	if !strings.Contains(resume.DeveloperInstructions, "Explain every change in one line.") {
 		t.Fatalf("thread/resume = %s, want the agent's instructions again", restarted.last("thread/resume"))
+	}
+	if !strings.Contains(string(restarted.last("thread/resume")), `"Authorization":"Bearer gateway-reconnect-proof"`) {
+		t.Fatal("gateway missing on thread resume")
 	}
 }
 
@@ -1082,4 +1085,30 @@ func waitFor(t *testing.T, condition func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition did not become true")
+}
+
+func TestStartConfiguresConnectorGatewayOutsidePrompt(t *testing.T) {
+	f := setup(t)
+	const token = "dacg1.fixture.attempt.mac"
+	request := startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"https://dac.example/connectors/mcp","token":"` + token + `"}}`)
+	reply, err := f.adapter.Send(context.Background(), request)
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("reply=%+v err=%v", reply, err)
+	}
+	start := string(f.native.last("thread/start"))
+	for _, want := range []string{`"mcp_servers"`, `"Authorization":"Bearer ` + token + `"`, `"tool_timeout_sec":180`} {
+		if !strings.Contains(start, want) {
+			t.Fatalf("missing gateway config %s", want)
+		}
+	}
+	if strings.Contains(string(f.native.last("turn/start")), token) {
+		t.Fatal("gateway token leaked into prompt")
+	}
+	op, err := f.store.Operation(testOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.Gateway == nil || op.Gateway.Token != token {
+		t.Fatal("gateway was not retained for reconnect")
+	}
 }

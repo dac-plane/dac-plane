@@ -9,7 +9,7 @@ export LC_ALL=C GOOS=linux CGO_ENABLED=0 GOFLAGS=-mod=readonly
 
 format='{{with .Module}}{{.Path}} {{.Version}} {{.Dir}}{{end}}'
 modules() {
-	for target in .:./cmd/dac-plane adapters/codex:./cmd/dac-codex-adapter adapters/e2b:./cmd/dac-e2b-adapter adapters/s3:./cmd/dac-s3-adapter; do
+	for target in .:./cmd/dac-plane adapters/codex:./cmd/dac-codex-adapter adapters/e2b:./cmd/dac-e2b-adapter adapters/s3:./cmd/dac-s3-adapter adapters/github:./cmd/dac-github-adapter; do
 		for arch in amd64 arm64; do
 			(cd "${target%%:*}" && GOARCH="$arch" go list -deps -f "$format" "${target##*:}")
 		done

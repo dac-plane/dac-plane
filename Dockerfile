@@ -114,6 +114,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" \
     -o /out/dac-s3-adapter ./cmd/dac-s3-adapter
 
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS github-adapter-build
+WORKDIR /src
+COPY adapterkit/go.mod adapterkit/go.sum ./adapterkit/
+COPY adapters/github/go.mod adapters/github/go.sum ./adapters/github/
+RUN --mount=type=cache,target=/go/pkg/mod cd adapters/github && go mod download
+COPY adapterkit ./adapterkit
+COPY adapters/github ./adapters/github
+ARG TARGETOS
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    cd adapters/github && CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -mod=readonly -trimpath -ldflags="-s -w -buildid=" -o /out/dac-github-adapter ./cmd/dac-github-adapter
+
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-plane
 
 ARG VERSION
@@ -202,3 +215,10 @@ COPY LICENSE NOTICE third_party/THIRD_PARTY_NOTICES.txt /licenses/
 COPY --from=s3-adapter-build --chown=nonroot:nonroot /out/dac-s3-adapter /dac-s3-adapter
 USER nonroot:nonroot
 ENTRYPOINT ["/dac-s3-adapter"]
+
+# Buildable reference connector; publishing it is a release decision.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS dac-github-adapter
+COPY LICENSE NOTICE third_party/THIRD_PARTY_NOTICES.txt /licenses/
+COPY --from=github-adapter-build --chown=nonroot:nonroot /out/dac-github-adapter /dac-github-adapter
+USER nonroot:nonroot
+ENTRYPOINT ["/dac-github-adapter"]

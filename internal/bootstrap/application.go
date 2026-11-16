@@ -10,6 +10,8 @@ import (
 
 	"github.com/dac-plane/dac-plane/internal/adapterwire"
 	"github.com/dac-plane/dac-plane/internal/config"
+	"github.com/dac-plane/dac-plane/internal/connectorgateway"
+	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/ids"
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 	"github.com/dac-plane/dac-plane/internal/worker"
@@ -18,11 +20,12 @@ import (
 
 // Application owns process-scoped resources for the modular monolith.
 type Application struct {
-	logger   *slog.Logger
-	pool     *pgxpool.Pool
-	adapters *adapterwire.Registry
-	worker   *worker.Worker
-	owner    string
+	logger        *slog.Logger
+	pool          *pgxpool.Pool
+	adapters      *adapterwire.Registry
+	worker        *worker.Worker
+	gatewayTokens *connectorgateway.Tokens
+	owner         string
 	// running is true while Run drives the process loop; liveness reports it.
 	running   atomic.Bool
 	closeOnce sync.Once
@@ -55,14 +58,27 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		pool.Close()
 		return nil, err
 	}
-	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "control-plane-"+ownerID.String(), worker.WithPorts(adapters))
+	options := []func(*worker.Worker){worker.WithPorts(adapters)}
+	var gatewayTokens *connectorgateway.Tokens
+	if cfg.ConnectorGatewayURL != "" {
+		gatewayTokens, err = connectorgateway.NewTokens([]byte(cfg.ConnectorGatewayKey))
+		if err != nil {
+			adapters.Close()
+			pool.Close()
+			return nil, err
+		}
+		options = append(options, worker.WithConnectorGateway(func(tenant ids.TenantID, attempt ids.AttemptID) *contracts.GatewayAccess {
+			return gatewayTokens.Access(cfg.ConnectorGatewayURL, tenant, attempt)
+		}))
+	}
+	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "control-plane-"+ownerID.String(), options...)
 	if err != nil {
 		adapters.Close()
 		pool.Close()
 		return nil, err
 	}
 
-	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker, owner: "control-plane-" + ownerID.String()}, nil
+	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker, gatewayTokens: gatewayTokens, owner: "control-plane-" + ownerID.String()}, nil
 }
 
 // Adapters is the registry the adapter endpoint registers connections in.

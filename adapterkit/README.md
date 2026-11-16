@@ -40,3 +40,24 @@ The kit is versioned separately from the control plane, with tags named `adapter
 ControlFrame protocol 1, and a minor version may change its Go API
 ([ADR-0018](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0018-release-versioning-and-gate.md)). Each
 release's notes name the control-plane versions it works with.
+
+## Connector role
+
+The `connector` role owns external credentials and offers `list_tools`,
+`begin_authorization`, `complete_authorization`, `revoke_connection`, `call_tool`
+and `read_call`. The first four requests carry no attempt. Completion requires a
+short-lived `confirmation` proof delivered only to the callback browser, which the
+owner-authenticated surface passes back. Polling must not disclose this proof.
+
+`call_tool` carries exact authorized input, connection and grant provenance.
+`read_call` is an attempt-bound lookup of the same operation's durable result and
+must never start or retry an external effect. Unknown outcomes remain unknown.
+Revocation is idempotent by connection and must report accepted only after remote
+revocation and local credential destruction are complete. A pending reply does
+not confirm removal.
+
+Input and output digests cover compact JSON with the HTML escaping performed by
+Go's `encoding/json`. Output is bounded to 32 KiB and a catalogue to 48 KiB, leaving
+room in the existing 64 KiB payload budget. Credentials never belong in replies,
+progress, events or artifacts. See the [connector guide](../docs/guides/use/connectors.md)
+for the runtime gateway and a reference implementation.

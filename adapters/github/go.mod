@@ -1,0 +1,20 @@
+module github.com/dac-plane/dac-plane/adapters/github
+
+go 1.26.0
+
+toolchain go1.27.4
+
+require (
+	github.com/dac-plane/dac-plane/adapterkit v0.2.0
+	go.etcd.io/bbolt v1.5.0
+)
+
+require (
+	github.com/coder/websocket v1.8.15 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
+	golang.org/x/oauth2 v0.38.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+)
+
+replace github.com/dac-plane/dac-plane/adapterkit => ../../adapterkit

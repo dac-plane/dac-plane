@@ -189,6 +189,8 @@ providers and deployable, without changing lifecycle ownership.
 - [ADR-0019: publish a final release from its tag](../adr/0019-publish-a-final-release-from-its-tag.md)
 - [ADR-0020: agents are product records that tasks are delegated to](../adr/0020-agents-are-product-records.md)
 - [ADR-0021: refuse a delegated turn at dispatch, per adapter connection](../adr/0021-refuse-delegated-turns-at-dispatch.md)
+- [ADR-0022: govern connectors at a control-plane gateway, with credentials held by connector adapters](../adr/0022-govern-connectors-at-a-control-plane-gateway.md)
+- [ADR-0023: recover connector calls and credential removal](../adr/0023-recover-connector-calls-and-credential-removal.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

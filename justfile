@@ -9,6 +9,7 @@ adapterkit_dirs := "adapterkit"
 codex_adapter_dir := "adapters/codex"
 e2b_adapter_dir := "adapters/e2b"
 s3_adapter_dir := "adapters/s3"
+github_adapter_dir := "adapters/github"
 tools_dir := ".work/tools"
 govulncheck_version := "v1.9.0"
 actionlint_version := "v1.7.12"
@@ -40,7 +41,7 @@ default:
 
 # Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci-fast: fmt-check mod-check notices-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-conformance vuln lint-workflows docs-check
+ci-fast: fmt-check mod-check notices-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-github-adapter test-conformance vuln lint-workflows docs-check
 
 # Full local equivalent of the parallel GitHub PR checks. This is intentionally
 # slower and is best used for final local verification or CI diagnosis.
@@ -73,6 +74,7 @@ mod-check:
     cd {{ codex_adapter_dir }} && go mod verify && go mod tidy -diff
     cd {{ e2b_adapter_dir }} && go mod verify && go mod tidy -diff
     cd {{ s3_adapter_dir }} && go mod verify && go mod tidy -diff
+    cd {{ github_adapter_dir }} && go mod verify && go mod tidy -diff
 
 # Regenerate the third-party notices shipped in every published image
 [group('dev')]
@@ -92,6 +94,7 @@ vet:
     cd {{ codex_adapter_dir }} && go vet ./...
     cd {{ e2b_adapter_dir }} && go vet ./...
     cd {{ s3_adapter_dir }} && go vet ./...
+    cd {{ github_adapter_dir }} && go vet ./...
     cd {{ s3_adapter_dir }} && go vet -tags=s3qualification ./...
 
 # Unit files build without tags; integration files only build behind the
@@ -171,6 +174,18 @@ test-s3-adapter:
     cd {{ s3_adapter_dir }} && go test ./...
     cd {{ s3_adapter_dir }} && go test -race ./...
     cd {{ s3_adapter_dir }} && go test -tags=s3qualification -run '^$' ./...
+
+# Connector tests use a fake GitHub App API and OAuth endpoint, never user tokens.
+[group('test')]
+test-github-adapter:
+    cd {{ github_adapter_dir }} && go test ./...
+    cd {{ github_adapter_dir }} && go test -race ./...
+    cd {{ github_adapter_dir }} && go test -tags=githubqualification -run '^$' ./...
+
+[doc('Qualify the GitHub connector using a dedicated consented fixture connection')]
+[group('test')]
+qualify-github-connector:
+    cd {{ github_adapter_dir }} && go test -count=1 -v -tags=githubqualification -run '^TestLiveGitHubConnector$' ./...
 
 # Qualify the S3 adapter against a throwaway SeaweedFS pinned by digest (needs Docker).
 [doc('Qualify the artifact store against pinned SeaweedFS (needs Docker)')]
@@ -430,6 +445,7 @@ test-conformance:
     go build -o .work/dac-sim-adapter ./cmd/dac-sim-adapter
     cd adapterkit && go build -o ../.work/adapter-conformance ./cmd/adapter-conformance
     ./.work/adapter-conformance -fixture cmd/dac-sim-adapter/testdata/conformance.json -- ./.work/dac-sim-adapter cmd/dac-sim-adapter/testdata/scenario.json
+    ./.work/adapter-conformance -fixture cmd/dac-sim-adapter/testdata/connector-conformance.json -- ./.work/dac-sim-adapter cmd/dac-sim-adapter/testdata/connector-scenario.json
 
 # End-to-end transport suite: the Surface API, the dispatch worker and the
 # simulators talk over real TLS WebSockets (ADR-0008, ADR-0010).
@@ -718,6 +734,7 @@ vuln: (_tool "govulncheck" "golang.org/x/vuln/cmd/govulncheck" govulncheck_versi
     cd {{ codex_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ e2b_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
     cd {{ s3_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
+    cd {{ github_adapter_dir }} && ../../{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck ./...
 
 # Zensical renders the pages and warnings fail the build.
 # Build the documentation site from docs/guides/ into .work/site
