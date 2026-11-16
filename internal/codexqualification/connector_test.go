@@ -26,14 +26,15 @@ const connectorProviderID = "01a167fd-51d9-7d55-8a3b-6c5d4e3f2a13"
 // through the gateway (ADR-0022): Codex reaches dac-plane's MCP endpoint with
 // its attempt token, the call is authorized by a connection grant, the
 // simulated connector answers, and the model writes what the tool returned.
-// The simulator returns "Simulated issue <n>" only for the number it was
-// called with, so the artifact proves the tool output reached the model.
+// The simulator's answer carries a marker derived from the connection's
+// simulated credential and absent from the prompt, so the artifact proves
+// the call ran and its output reached the model.
 func TestCodexConnectorQualification(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	client := qualificationClient(t)
 	token := &tokenSource{t: t, ctx: ctx, client: client}
-	connection := activeConnection(t, ctx, client, token)
+	connection, marker := activeConnection(t, ctx, client, token)
 
 	for _, tc := range []struct {
 		name       string
@@ -75,7 +76,9 @@ func TestCodexConnectorQualification(t *testing.T) {
 			if len(ready.value.Revisions) != 1 || len(ready.value.Revisions[0].Revision.Artifacts) != 1 {
 				t.Fatalf("revisions=%+v", ready.value.Revisions)
 			}
-			want := "Simulated issue " + issue + "\n"
+			// The marker never appears in the prompt: only the connector's
+			// answer carries it, so the artifact proves the call ran.
+			want := "Simulated issue " + issue + " " + marker + "\n"
 			if got := artifactEvidence(t, ctx, client, ready.value.Revisions[0].Revision.Artifacts[0]); string(got) != want {
 				t.Fatalf("artifact bytes=%q, want %q, which only the connector's answer names", got, want)
 			}
@@ -94,7 +97,7 @@ func TestCodexConnectorQualification(t *testing.T) {
 // activeConnection registers a connection to the simulated connector and
 // completes its consent through the simulator's loopback control, standing
 // in for the owner's browser.
-func activeConnection(t *testing.T, ctx context.Context, client *http.Client, token *tokenSource) lifecycle.Connection {
+func activeConnection(t *testing.T, ctx context.Context, client *http.Client, token *tokenSource) (lifecycle.Connection, string) {
 	t.Helper()
 	provider, err := ids.Parse[ids.Provider](connectorProviderID)
 	if err != nil {
@@ -122,8 +125,9 @@ func activeConnection(t *testing.T, ctx context.Context, client *http.Client, to
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
 	var proof struct {
 		Confirmation string `json:"confirmation"`
+		Marker       string `json:"marker"`
 	}
-	if res.StatusCode != http.StatusOK || json.Unmarshal(data, &proof) != nil || proof.Confirmation == "" {
+	if res.StatusCode != http.StatusOK || json.Unmarshal(data, &proof) != nil || proof.Confirmation == "" || proof.Marker == "" {
 		t.Fatalf("simulated consent = %d", res.StatusCode)
 	}
 	active := request[lifecycle.Connection](t, ctx, client, token, http.MethodPost, "/connections/"+created.Connection.ID.String()+"/complete", map[string]string{
@@ -132,5 +136,5 @@ func activeConnection(t *testing.T, ctx context.Context, client *http.Client, to
 	if active.State != lifecycle.ConnectionActive {
 		t.Fatalf("completed connection=%+v", active)
 	}
-	return active
+	return active, proof.Marker
 }

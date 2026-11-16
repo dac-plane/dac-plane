@@ -252,7 +252,8 @@ func (h *controlHandler) consent(w http.ResponseWriter, r *http.Request) {
 	proof := h.set.connector.Consent(connection, "simulated-credential-"+connection.String())
 	controlJSON(w, http.StatusOK, struct {
 		Confirmation string `json:"confirmation"`
-	}{proof})
+		Marker       string `json:"marker"`
+	}{proof, h.set.connector.Marker(connection)})
 }
 
 func parsePausePath(r *http.Request) (pauseKey, bool) {

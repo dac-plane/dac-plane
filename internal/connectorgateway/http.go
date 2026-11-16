@@ -16,6 +16,7 @@ import (
 	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -240,8 +241,20 @@ func (g *Gateway) call(ctx context.Context, tenant ids.TenantID, attempt ids.Att
 	var operation ids.OperationID
 	authorized := false
 	for {
-		if _, err := application.ConnectorAttempt(ctx, g.pool, tenant, attempt); err != nil {
+		a, err := application.ConnectorAttempt(ctx, g.pool, tenant, attempt)
+		if err != nil {
 			return toolError("Attempt can no longer use connectors")
+		}
+		// A runtime can call before the worker has applied its start report;
+		// the call waits for the attempt to execute, and CallConnector keeps
+		// refusing a starting attempt.
+		if !authorized && a.State == lifecycle.AttemptStarting {
+			select {
+			case <-ctx.Done():
+				return toolError("The task has not started; retry the same tool and arguments")
+			case <-poll.C:
+				continue
+			}
 		}
 		if !authorized {
 			var call store.ConnectorCall

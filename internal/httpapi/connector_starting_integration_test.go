@@ -23,6 +23,7 @@ import (
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 	"github.com/dac-plane/dac-plane/internal/simulator"
 	"github.com/dac-plane/dac-plane/internal/testsupport/wiretest"
+	"github.com/dac-plane/dac-plane/internal/worker"
 )
 
 // TestConnectorGatewayServesAStartingAttempt covers how Codex 0.165.0 uses the
@@ -72,7 +73,15 @@ func TestConnectorGatewayServesAStartingAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := connectorgateway.New(s.pool, wire.Registry, tokens, func() {}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "starting-worker", worker.WithPorts(wire.Registry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := connectorgateway.New(s.pool, wire.Registry, tokens, func() {
+		if err := w.Tick(s.ctx); err != nil {
+			t.Errorf("gateway dispatch: %v", err)
+		}
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,5 +118,44 @@ func TestConnectorGatewayServesAStartingAttempt(t *testing.T) {
 	_, err = application.CallConnector(s.ctx, s.pool, s.tenant, submission.Attempt.ID, c.ID, "get_issue", json.RawMessage(`{"number":1}`))
 	if err == nil || errors.Is(err, application.ErrConnectorApprovalPending) {
 		t.Fatalf("a call from a starting attempt = %v, want it refused", err)
+	}
+
+	// A runtime may call before the worker applies its start report. The
+	// gateway holds the call until the attempt executes instead of refusing it.
+	answered := make(chan string, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(s.ctx, "POST", server.URL, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"`+c.ID.String()+`__get_issue","arguments":{"number":2}}}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			answered <- err.Error()
+			return
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		answered <- string(body)
+	}()
+	select {
+	case body := <-answered:
+		t.Fatalf("a call from a starting attempt answered before the attempt executed: %s", body)
+	case <-time.After(time.Second):
+	}
+	s.seed(t, func(u *store.UnitOfWork) error {
+		a, err := store.GetAttempt(s.ctx, u, s.tenant, submission.Attempt.ID)
+		if err != nil {
+			return err
+		}
+		_, _, err = store.ApplyAttempt(s.ctx, u, s.tenant, a.ID, lifecycle.AttemptRuntimeStarted, "", store.Transition{ExpectedVersion: a.Version, At: time.Now().UTC(), Actor: lifecycle.Actor{Kind: lifecycle.ActorSystem}, AuditID: mustID[ids.Audit](t)})
+		return err
+	})
+	select {
+	case body := <-answered:
+		if !strings.Contains(body, "Simulated issue 2") || strings.Contains(body, `"isError":true`) {
+			t.Fatalf("held call answered %s", body)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("held call never completed after the attempt executed")
 	}
 }

@@ -12,6 +12,7 @@ Host: one arm64 machine, 2026-11-16. Images: local builds of the release prepara
 | `qualify-codex-connector`, first run | Failed. Both scenarios: the model never saw the connector tool. |
 | `qualify-codex-connector`, after the starting-attempt fix | Failed. Both scenarios, for the second cause below. |
 | `qualify-codex-connector`, after relaying tools as dynamic tools | Passed twice. An `always` grant ran without approval and an `ask` grant waited for one; each artifact held exactly the title the simulated connector returned for the issue number the model asked for. No credential appeared in the stack logs. |
+| `qualify-codex-connector`, after review fixes | Passed. Each artifact also held a marker that the simulated connector derives from the connection's credential and that appears in no prompt, so the artifact proves the call ran. Calls made before the attempt executes now wait for it instead of being refused, and the adapter's gateway requests keep the no-redirect policy. |
 | `qualify-codex-runtime` | Passed: approval and restart with an exact artifact, a delegated agent's instructions reaching the model, and denial with no effect. |
 
 The two failures were in the path from the gateway to the model, which no deterministic test covered:

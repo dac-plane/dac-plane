@@ -1206,3 +1206,28 @@ func TestDynamicToolNamesStayWithinTheFunctionLimit(t *testing.T) {
 		t.Fatal("two connections' tools share a name")
 	}
 }
+
+func TestGatewayRequestsDoNotFollowRedirects(t *testing.T) {
+	var leaked sync.Mutex
+	reached := false
+	beyond := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked.Lock()
+		reached = true
+		leaked.Unlock()
+	}))
+	defer beyond.Close()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, beyond.URL+"/collect", http.StatusTemporaryRedirect)
+	}))
+	defer gateway.Close()
+	f := setup(t)
+	reply, err := f.adapter.Send(context.Background(), startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"`+gateway.URL+`/connectors/mcp","token":"dacg1.t.a.m"}}`))
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("reply=%+v err=%v", reply, err)
+	}
+	leaked.Lock()
+	defer leaked.Unlock()
+	if reached {
+		t.Fatal("a request carrying the attempt token followed a redirect away from the gateway")
+	}
+}

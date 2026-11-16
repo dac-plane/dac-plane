@@ -69,12 +69,20 @@ func dynamicToolName(gatewayName string) string {
 	return base + suffix
 }
 
+// gatewayHTTP is the configured client without its overall timeout, which a
+// call waiting for an approval outlives; the call's context bounds it
+// instead. Its redirect policy is kept, so a request carrying the attempt
+// token is never forwarded beyond the gateway.
 func (a *Adapter) gatewayHTTP() *http.Client {
-	var transport http.RoundTripper
+	client := http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if a.config.HTTPClient != nil {
-		transport = a.config.HTTPClient.Transport
+		client = *a.config.HTTPClient
+		if client.CheckRedirect == nil {
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		}
 	}
-	return &http.Client{Transport: transport}
+	client.Timeout = 0
+	return &client
 }
 
 // gatewayRPC sends one JSON-RPC request to the gateway and returns its
