@@ -319,6 +319,12 @@ func (w *Wire) connect(t testing.TB, subject string, provider ids.ProviderID, po
 		},
 		TLS: w.TLS(), BackoffBase: 20 * time.Millisecond, BackoffMax: 200 * time.Millisecond,
 	}
+	// A simulator offers the capabilities its hello advertises.
+	if advertiser, ok := port.(interface{ Hello() contracts.Lifecycle }); ok {
+		for _, capability := range advertiser.Hello().Offered {
+			config.Offered = append(config.Offered, string(capability))
+		}
+	}
 	ctx, stop := context.WithCancel(w.ctx)
 	next := &served{port: port, stop: stop, done: make(chan struct{})}
 	w.clients.Go(func() {

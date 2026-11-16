@@ -66,17 +66,9 @@ Errors are [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem documents,
 ## Agents
 
 An agent is a named role your tenant delegates work to: a name, a role, optional standing instructions, and the
-runtime and environment providers its work goes to by default. Every principal of the tenant can read and delegate to
-an agent; only the principal that created it can revise or retire it. An agent is not a principal: a task submitted to
-it is still owned by whoever submitted it.
-
-Submit a task to an agent by giving `agent_id` instead of `provider_id` and `environment_provider_id`. A provider you
-do give overrides the agent's default. The task records the agent and the revision it had at submission, and keeps that
-revision through rework, so revising the agent later does not change work already delegated. A retired agent takes no
-new tasks; its revisions and tasks stay readable.
-
-The runtime protocol does not carry an agent's role and instructions yet. Until it does, a task delegated to an agent
-fails before its turn starts, rather than running without them.
+runtime and environment providers its work goes to by default. Submit a task to it by giving `agent_id` instead of the
+providers; the task keeps the agent's revision at submission. [Delegate work to agents](agents.md) covers creating,
+revising and retiring agents and what the runtime receives.
 
 ## Events
 

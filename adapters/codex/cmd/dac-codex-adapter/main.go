@@ -143,7 +143,7 @@ func run() error {
 		case <-ctx.Done():
 		}
 	}()
-	runErr := adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: providerID, Role: wire.RoleRuntime, Handler: handler, TLS: tlsConfig, Logger: logger})
+	runErr := adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: providerID, Role: wire.RoleRuntime, Handler: handler, Offered: codex.Offered(), TLS: tlsConfig, Logger: logger})
 	select {
 	case failure := <-processFailure:
 		return failure

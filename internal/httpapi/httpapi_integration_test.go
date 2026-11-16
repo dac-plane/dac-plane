@@ -250,8 +250,15 @@ func (s *surface) seed(t *testing.T, apply func(*store.UnitOfWork) error) {
 // dispatch runs one worker pass with a runtime that accepts the operation.
 func (s *surface) dispatch(t *testing.T, operation ids.OperationID) *simulator.Runtime {
 	t.Helper()
+	return s.dispatchWith(t, operation, contracts.Lifecycle{})
+}
+
+// dispatchWith is dispatch to a runtime adapter that advertises hello; the
+// zero hello is the simulator's own.
+func (s *surface) dispatchWith(t *testing.T, operation ids.OperationID, hello contracts.Lifecycle) *simulator.Runtime {
+	t.Helper()
 	s.dispatchPendingEnvironments(t)
-	rt, err := simulator.NewRuntime(simulator.Config{Tenant: s.tenant, Provider: s.provider}, simulator.RuntimeScenario{
+	rt, err := simulator.NewRuntime(simulator.Config{Tenant: s.tenant, Provider: s.provider, Hello: hello}, simulator.RuntimeScenario{
 		Operations: map[ids.OperationID]simulator.RuntimeOp{operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}},
 	})
 	if err != nil {

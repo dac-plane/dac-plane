@@ -2,6 +2,7 @@ package contracts
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dac-plane/dac-plane/internal/ids"
@@ -12,6 +13,7 @@ import (
 var (
 	runtimeStartContract         = schematest.GoContract[RuntimeStart](filepath.Join(schemaDir, "runtime-start.schema.json"))
 	environmentReferenceContract = schematest.GoContract[EnvironmentReference](filepath.Join(schemaDir, "environment-reference.schema.json"))
+	agentInstructionsContract    = schematest.GoContract[AgentInstructions](filepath.Join(schemaDir, "agent-instructions.schema.json"))
 )
 
 func TestRuntimeStartSchemaAgreement(t *testing.T) {
@@ -90,5 +92,45 @@ func TestRuntimeStartMigrationRecoveryAgreement(t *testing.T) {
 	}
 	if schematest.Accepts(t, schematest.Compile(t, runtimeStartContract.Schema), data) == nil {
 		t.Fatal("schema accepted non-runtime recovery stage")
+	}
+}
+
+func TestRuntimeStartCarriesAgentInstructionsAgreement(t *testing.T) {
+	brief := lifecycle.ExecutionBrief{Objective: "Review the change", AcceptanceCriteria: []string{"Every finding names a file"}}
+	valid := []AgentInstructions{
+		{Role: "Reviews pull requests", Instructions: "Read the tests before the code."},
+		{Role: "Reviews pull requests"},
+	}
+	for _, agent := range valid {
+		data := schematest.Marshal(t, RuntimeStart{Brief: brief, Agent: &agent})
+		if err := runtimeStartContract.GoAccept(data); err != nil {
+			t.Fatalf("Go rejected delegated runtime start %s: %v", data, err)
+		}
+		if err := schematest.Accepts(t, schematest.Compile(t, runtimeStartContract.Schema), data); err != nil {
+			t.Fatalf("schema rejected delegated runtime start %s: %v", data, err)
+		}
+		if err := agentInstructionsContract.GoAccept(schematest.Marshal(t, agent)); err != nil {
+			t.Fatalf("Go rejected agent instructions: %v", err)
+		}
+	}
+
+	invalid := []AgentInstructions{
+		{},
+		{Role: "   "},
+		{Role: "Reviews pull requests", Instructions: " \n "},
+		{Role: strings.Repeat("r", lifecycle.MaxAgentRoleCharacters+1)},
+		{Role: "Reviews pull requests", Instructions: strings.Repeat("i", lifecycle.MaxAgentInstructionsCharacters+1)},
+	}
+	for _, agent := range invalid {
+		data := schematest.Marshal(t, RuntimeStart{Brief: brief, Agent: &agent})
+		if runtimeStartContract.GoAccept(data) == nil {
+			t.Fatalf("Go accepted invalid agent instructions %s", data)
+		}
+		if schematest.Accepts(t, schematest.Compile(t, runtimeStartContract.Schema), data) == nil {
+			t.Fatalf("schema accepted invalid agent instructions %s", data)
+		}
+	}
+	if runtimeStartContract.GoAccept([]byte(`{"brief":{"objective":"Review the change","acceptance_criteria":["Every finding names a file"]},"agent":{"role":"Reviews","name":"Reviewer"}}`)) == nil {
+		t.Fatal("Go accepted agent instructions with an unknown field")
 	}
 }

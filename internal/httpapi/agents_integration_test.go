@@ -4,6 +4,7 @@ package httpapi_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/dac-plane/dac-plane/internal/lifecycle"
 	"github.com/dac-plane/dac-plane/internal/platform/migrations"
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
 func (s *surface) agentBody(name string) httpapi.AgentRequest {
@@ -162,18 +164,45 @@ func TestSurfaceAgentsThroughHTTP(t *testing.T) {
 		}
 	}
 
-	// The runtime is never asked to start the delegated turn until the
-	// protocol carries the agent's instructions: the task fails visibly.
+	// A runtime that negotiated agent instructions receives the pinned
+	// revision's role and instructions beside the brief.
 	rt := s.dispatch(t, submission.Operation.ID)
-	if sent := rt.Ledger().Deliveries(submission.Operation.ID); sent != 0 {
-		t.Fatalf("delegated start_turn delivered %d times", sent)
+	if sent := rt.Ledger().Deliveries(submission.Operation.ID); sent != 1 {
+		t.Fatalf("delegated start_turn delivered %d times, want 1", sent)
 	}
-	if failed := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: "/tasks/" + submission.Task.ID.String(), as: "other"}), 200); failed.Task.State != lifecycle.TaskFailed {
+	var start contracts.RuntimeStart
+	for _, request := range rt.Ledger().Sent() {
+		if request.Operation == submission.Operation.ID {
+			if err := json.Unmarshal(request.Arguments, &start); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if start.Agent == nil || *start.Agent != (contracts.AgentInstructions{Role: revised.Role, Instructions: revised.Instructions}) || start.Brief.Objective != submit.Objective {
+		t.Fatalf("delegated start_turn = %+v", start)
+	}
+	if started := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: "/tasks/" + submission.Task.ID.String(), as: "other"}), 200); started.Task.State == lifecycle.TaskFailed {
+		t.Fatalf("delegated task failed after its start was delivered")
+	}
+
+	// A runtime that did not negotiate them is never asked to start a
+	// delegated turn: the task fails visibly instead of running without them.
+	unsupported := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "other", key: "delegate-old-kit", body: submit}), 201)
+	rt = s.dispatchWith(t, unsupported.Operation.ID, simulator.DefaultHello())
+	if sent := rt.Ledger().Deliveries(unsupported.Operation.ID); sent != 0 {
+		t.Fatalf("delegated start_turn delivered %d times to a runtime without agent instructions", sent)
+	}
+	if failed := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: "/tasks/" + unsupported.Task.ID.String(), as: "other"}), 200); failed.Task.State != lifecycle.TaskFailed {
 		t.Fatalf("delegated task state = %s, want failed", failed.Task.State)
 	}
-	dispatched, err := store.GetOutboxRow(s.ctx, s.pool, s.tenant, submission.Operation.ID.Untyped())
+	dispatched, err := store.GetOutboxRow(s.ctx, s.pool, s.tenant, unsupported.Operation.ID.Untyped())
 	if err != nil || dispatched.LastError != "agent_instructions_unsupported" {
 		t.Fatalf("delegated dispatch = %+v, %v", dispatched, err)
+	}
+	// The same runtime still starts a task submitted to providers.
+	other := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "plain-old-kit", body: s.submitBody()}), 201)
+	if rt = s.dispatchWith(t, other.Operation.ID, simulator.DefaultHello()); rt.Ledger().Deliveries(other.Operation.ID) != 1 {
+		t.Fatalf("undelegated start_turn delivered %d times, want 1", rt.Ledger().Deliveries(other.Operation.ID))
 	}
 
 	if got := problemType(t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "delegate-2", body: func() httpapi.SubmitTaskRequest {

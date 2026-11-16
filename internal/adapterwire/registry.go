@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,8 +78,15 @@ func (r *Registry) Port(tenant ids.TenantID, provider ids.ProviderID, role contr
 	if r.Connections(tenant, provider, role) == 0 {
 		return nil
 	}
-	port := &providerPort{registry: r, key: key}
-	if r.pickCapability(key, contracts.CapabilityOperationReplay) != nil {
+	return r.port(key, nil)
+}
+
+// port returns the registration's port over the connections that selected
+// every capability in requires. It replays only while one of them also
+// selected stable-operation replay.
+func (r *Registry) port(key registrationKey, requires []contracts.Capability) contracts.Port {
+	port := &providerPort{registry: r, key: key, requires: requires}
+	if r.pickCapability(key, append(slices.Clone(requires), contracts.CapabilityOperationReplay)...) != nil {
 		return &replayProviderPort{providerPort: port}
 	}
 	return port
@@ -149,8 +157,21 @@ func (r *Registry) pick(key registrationKey, allowDraining bool) *connection {
 	return r.pickWhere(key, allowDraining, nil)
 }
 
-func (r *Registry) pickCapability(key registrationKey, capability contracts.Capability) *connection {
-	return r.pickWhere(key, false, func(c *connection) bool { return c.supports(capability) })
+// pickCapability returns the least-loaded open connection of key that
+// selected every capability given.
+func (r *Registry) pickCapability(key registrationKey, capabilities ...contracts.Capability) *connection {
+	return r.pickWhere(key, false, supportsAll(capabilities))
+}
+
+func supportsAll(capabilities []contracts.Capability) func(*connection) bool {
+	return func(c *connection) bool {
+		for _, capability := range capabilities {
+			if !c.supports(capability) {
+				return false
+			}
+		}
+		return true
+	}
 }
 
 func (r *Registry) pickWhere(key registrationKey, allowDraining bool, accept func(*connection) bool) *connection {
@@ -174,10 +195,26 @@ func (r *Registry) pickWhere(key registrationKey, allowDraining bool, accept fun
 	return best
 }
 
-// providerPort is a registration's port over its live connections.
+// providerPort is a registration's port over its live connections, or over
+// those that selected every capability in requires.
 type providerPort struct {
 	registry *Registry
 	key      registrationKey
+	requires []contracts.Capability
+}
+
+var _ contracts.CapabilityScoped = (*providerPort)(nil)
+
+// Requiring returns the port restricted to connections that also selected
+// capability, or nil when no live connection did. A draining connection
+// counts: its replacement negotiates the same way, so a send in between is
+// not delivered and is released rather than refused.
+func (p *providerPort) Requiring(capability contracts.Capability) contracts.Port {
+	requires := append(slices.Clone(p.requires), capability)
+	if p.registry.pickWhere(p.key, true, supportsAll(requires)) == nil {
+		return nil
+	}
+	return p.registry.port(p.key, requires)
 }
 
 // replayProviderPort exists only while this registration has a live
@@ -190,7 +227,7 @@ func (p *replayProviderPort) Replay(ctx context.Context, request contracts.Reque
 	if request.Tenant != p.key.tenant || request.Role != p.key.role {
 		return contracts.Reply{}, fmt.Errorf("%w: request is for another registration", contracts.ErrNotDelivered)
 	}
-	c := p.registry.pickCapability(p.key, contracts.CapabilityOperationReplay)
+	c := p.registry.pickCapability(p.key, append(slices.Clone(p.requires), contracts.CapabilityOperationReplay)...)
 	if c == nil {
 		return contracts.Reply{}, contracts.ErrNotDelivered
 	}
@@ -206,7 +243,7 @@ func (p *providerPort) Send(ctx context.Context, request contracts.Request) (con
 	if request.Tenant != p.key.tenant || request.Role != p.key.role {
 		return contracts.Reply{}, fmt.Errorf("%w: request is for another registration", contracts.ErrNotDelivered)
 	}
-	c := p.registry.pick(p.key, false)
+	c := p.registry.pickCapability(p.key, p.requires...)
 	if c == nil {
 		return contracts.Reply{}, contracts.ErrNotDelivered
 	}

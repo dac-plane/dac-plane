@@ -25,6 +25,14 @@ const ProtocolVersion uint32 = 1
 // result or applies the effect once.
 const CapabilityOperationReplay = "operation.replay"
 
+// CapabilityAgentInstructions accepts an "agent" object beside the brief in
+// start_turn arguments: the role and standing instructions of the agent
+// revision the task was delegated to. A runtime adapter offers it only when it
+// places them where its runtime takes standing instructions, apart from the
+// brief. The control plane never sends a delegated task's start_turn to a
+// connection that did not select it.
+const CapabilityAgentInstructions = "agent.instructions"
+
 // DefaultMaxFrameBytes bounds one frame unless a peer configures another limit.
 const DefaultMaxFrameBytes = 1 << 20
 

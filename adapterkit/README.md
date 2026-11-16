@@ -22,7 +22,9 @@ err := adapterkit.Run(ctx, adapterkit.Config{
 [`examples/minimal`](examples/minimal) is a complete adapter that passes the conformance suite.
 `adapterkit.ClientCredentials` is the other token source. Read the package documentation for what a `Handler` must
 guarantee: the operation identifier is its idempotency key, and it may offer `wire.CapabilityOperationReplay` only if
-it can answer a redelivery from what it already did, across a process failure.
+it can answer a redelivery from what it already did, across a process failure. A runtime adapter may offer
+`wire.CapabilityAgentInstructions` when it places a delegated task's `agent` role and instructions where its runtime
+takes standing instructions; the control plane sends the field only to a connection that selected it.
 
 ## Conformance
 

@@ -246,6 +246,71 @@ func TestAdapterWireExposesReplayOnlyAfterCapabilitySelection(t *testing.T) {
 	}
 }
 
+func TestAdapterWireRoutesAgentInstructionsOnlyToNegotiatedConnections(t *testing.T) {
+	f := setup(t, adapterwire.Options{})
+	subject := f.wire.Bind(t, f.tenant, f.provider, contracts.RoleRuntime, nil)
+	connect := func(offered ...contracts.Capability) *rawAdapter {
+		a, _, err := f.dial(t, f.wire.Token(t, subject, time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.send(t, contracts.Frame{Kind: contracts.FrameLifecycle, Lifecycle: &contracts.Lifecycle{Phase: contracts.PhaseHello, Versions: []uint32{1}, Offered: offered}})
+		if ready := a.next(t); ready.Kind != contracts.FrameLifecycle || ready.Lifecycle.Phase != contracts.PhaseReady || len(ready.Lifecycle.Selected) != len(offered) {
+			t.Fatalf("negotiation answered %+v, want %v selected", ready, offered)
+		}
+		return a
+	}
+
+	// An adapter on an earlier kit offers nothing: no port carries agent
+	// instructions, though the registration still serves other work.
+	connect()
+	f.wire.WaitConnected(t, f.tenant, f.provider, contracts.RoleRuntime)
+	port := f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleRuntime)
+	scoped, ok := port.(contracts.CapabilityScoped)
+	if !ok {
+		t.Fatal("registry port does not scope by capability")
+	}
+	if scoped.Requiring(contracts.CapabilityAgentInstructions) != nil {
+		t.Fatal("a connection that did not negotiate agent instructions was offered for them")
+	}
+
+	// With a negotiated connection beside it, every send through the scoped
+	// port goes there, however the load falls.
+	current := connect(contracts.CapabilityAgentInstructions)
+	deadline := time.Now().Add(10 * time.Second)
+	for f.wire.Registry.Connections(f.tenant, f.provider, contracts.RoleRuntime) != 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("second connection never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	negotiated := f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleRuntime).(contracts.CapabilityScoped).Requiring(contracts.CapabilityAgentInstructions)
+	if negotiated == nil {
+		t.Fatal("no port for the negotiated connection")
+	}
+	if _, replays := negotiated.(contracts.StableOperationReplayer); replays {
+		t.Fatal("scoped port replays though no connection negotiated replay")
+	}
+	for range 3 {
+		request := f.request(t)
+		result := make(chan error, 1)
+		go func() {
+			_, err := negotiated.Send(f.ctx, request)
+			result <- err
+		}()
+		frame := current.next(t)
+		if frame.Kind != contracts.FrameRequest || frame.Request.Operation != request.Operation {
+			t.Fatalf("negotiated adapter received %+v, want the request", frame)
+		}
+		current.send(t, contracts.Frame{Kind: contracts.FrameReply, Reply: &contracts.Reply{
+			Operation: request.Operation, Delivery: request.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted,
+		}})
+		if err := <-result; err != nil {
+			t.Fatalf("Send() error = %v", err)
+		}
+	}
+}
+
 func TestAdapterWireRefusesUnauthenticatedAdaptersBeforeUpgrade(t *testing.T) {
 	f := setup(t, adapterwire.Options{})
 	bound := f.wire.Bind(t, f.tenant, f.provider, contracts.RoleRuntime, nil)

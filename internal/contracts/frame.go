@@ -169,6 +169,10 @@ const (
 	// worker. The adapter must return the recorded result when the operation
 	// already took effect and must not apply the effect twice.
 	CapabilityOperationReplay Capability = "operation.replay"
+	// CapabilityAgentInstructions permits start_turn arguments to carry the
+	// pinned agent revision's role and instructions (ADR-0020). An adapter
+	// that did not negotiate it is never sent a delegated task's start_turn.
+	CapabilityAgentInstructions Capability = "agent.instructions"
 )
 
 // Lifecycle establishes or ends a session. A hello advertises supported

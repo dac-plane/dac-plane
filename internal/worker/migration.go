@@ -747,10 +747,17 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 	if port == nil {
 		return nil
 	}
-	// Held before anything is marked, as for a missing port: a delegated
-	// task's restart must not run without its agent's instructions (ADR-0020).
-	if delegated, err := w.delegatedToAgent(ctx, tenant, item.TargetAttempt); err != nil || delegated {
+	// A delegated task's restart goes only to a connection that negotiated
+	// its agent's instructions; without one it is held before anything is
+	// marked, as for a missing port (ADR-0020).
+	agent, err := w.agentInstructions(ctx, tenant, item.TargetAttempt)
+	if err != nil {
 		return err
+	}
+	if agent != nil {
+		if port = agentPort(port); port == nil {
+			return nil
+		}
 	}
 	if item.RestartEpoch == 0 {
 		item.RestartEpoch = item.ClaimEpoch
@@ -783,7 +790,11 @@ func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, cl
 		if briefErr != nil {
 			return contracts.MigrationReceipt{}, false, briefErr
 		}
-		start := contracts.RuntimeStart{Brief: brief, Recovery: &payload}
+		agent, agentErr := w.agentInstructions(ctx, tenant, attempt)
+		if agentErr != nil {
+			return contracts.MigrationReceipt{}, false, agentErr
+		}
+		start := contracts.RuntimeStart{Brief: brief, Agent: agent, Recovery: &payload}
 		if err := start.Validate(); err != nil {
 			return contracts.MigrationReceipt{}, false, err
 		}

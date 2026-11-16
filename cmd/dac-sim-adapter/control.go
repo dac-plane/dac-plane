@@ -179,12 +179,22 @@ func (h *controlHandler) ledger(w http.ResponseWriter, r *http.Request) {
 			applied = append(applied, appliedEffect{Method: effect.Method, Kind: effect.Kind})
 		}
 	}
+	// The agent instructions the latest start_turn of the operation carried,
+	// so a deployed test can read what a delegated task's runtime was given.
+	var agent *contracts.AgentInstructions
+	for _, request := range ledger.Sent() {
+		var start contracts.RuntimeStart
+		if request.Operation == operation && request.Method == contracts.MethodStartTurn && json.Unmarshal(request.Arguments, &start) == nil {
+			agent = start.Agent
+		}
+	}
 	controlJSON(w, http.StatusOK, struct {
-		Deliveries int             `json:"deliveries"`
-		Effects    int             `json:"effects"`
-		Cancels    int             `json:"cancels"`
-		Applied    []appliedEffect `json:"applied"`
-	}{ledger.Deliveries(operation), ledger.Effects(operation), ledger.Cancels(operation), applied})
+		Deliveries int                          `json:"deliveries"`
+		Effects    int                          `json:"effects"`
+		Cancels    int                          `json:"cancels"`
+		Applied    []appliedEffect              `json:"applied"`
+		Agent      *contracts.AgentInstructions `json:"agent,omitempty"`
+	}{ledger.Deliveries(operation), ledger.Effects(operation), ledger.Cancels(operation), applied, agent})
 }
 
 func (h *controlHandler) artifact(w http.ResponseWriter, r *http.Request) {

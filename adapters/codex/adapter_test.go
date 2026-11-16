@@ -196,6 +196,40 @@ func TestStartCarriesBriefAndReplaysMapping(t *testing.T) {
 	}
 }
 
+func TestStartPlacesAgentInstructionsInDeveloperInstructions(t *testing.T) {
+	f := setup(t)
+	start := `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"agent":{"role":"Reviews fixture changes","instructions":"Explain every change in one line."}}`
+	reply, err := f.adapter.Send(context.Background(), startRequest(start))
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("start reply=%+v err=%v", reply, err)
+	}
+	var thread struct {
+		DeveloperInstructions string `json:"developerInstructions"`
+	}
+	if err := json.Unmarshal(f.native.last("thread/start"), &thread); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Reviews fixture changes", "Explain every change in one line."} {
+		if !strings.Contains(thread.DeveloperInstructions, want) {
+			t.Fatalf("developer instructions miss %q: %q", want, thread.DeveloperInstructions)
+		}
+	}
+	turn := string(f.native.last("turn/start"))
+	if strings.Contains(turn, "Reviews fixture changes") || strings.Contains(turn, "Explain every change") {
+		t.Fatalf("agent instructions leaked into the untrusted turn input: %s", turn)
+	}
+}
+
+func TestStartWithoutAnAgentSetsNoDeveloperInstructions(t *testing.T) {
+	f := setup(t)
+	if reply, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("start reply=%+v err=%v", reply, err)
+	}
+	if strings.Contains(string(f.native.last("thread/start")), "developerInstructions") {
+		t.Fatalf("thread/start = %s", f.native.last("thread/start"))
+	}
+}
+
 func TestStreamWakesForAnAppendedEvent(t *testing.T) {
 	f := setup(t)
 	if _, _, err := f.store.Begin(journal.Operation{ID: testOperation, Tenant: testTenant, Attempt: testAttempt, ArgumentsHash: journal.Hash([]byte("stream"))}); err != nil {
@@ -964,7 +998,11 @@ func waitForProtocolResultFailure(t *testing.T, f *fixture) {
 
 func TestMalformedArgumentsAreRejected(t *testing.T) {
 	f := setup(t)
-	for _, raw := range []string{`{}`, `{"brief":{"objective":"x","acceptance_criteria":[]}}`, `{"brief":{"objective":"x","acceptance_criteria":["y"]},"provider":"camer"}`, `{"brief":{"objective":"` + strings.Repeat("界", 10_001) + `","acceptance_criteria":["y"]}}`, `{"brief":{"objective":"x","acceptance_criteria":["` + strings.Repeat("界", 1_001) + `"]}}`} {
+	for _, raw := range []string{`{}`, `{"brief":{"objective":"x","acceptance_criteria":[]}}`, `{"brief":{"objective":"x","acceptance_criteria":["y"]},"provider":"camer"}`, `{"brief":{"objective":"` + strings.Repeat("界", 10_001) + `","acceptance_criteria":["y"]}}`, `{"brief":{"objective":"x","acceptance_criteria":["` + strings.Repeat("界", 1_001) + `"]}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":" "}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":"r","instructions":"\n"}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":"r","name":"n"}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":"` + strings.Repeat("界", 1_001) + `"}}`} {
 		reply, err := f.adapter.Send(context.Background(), startRequest(raw))
 		if err != nil || reply.Durability != wire.DurabilityRejected || reply.Failure.Code != wire.FailureInvalidArguments {
 			t.Fatalf("raw=%s reply=%+v err=%v", raw, reply, err)

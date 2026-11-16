@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -33,9 +34,9 @@ const (
 	reasonNoOperation       = "no_operation"
 	reasonDecisionRejected  = "decision_rejected"
 	reasonAttemptCancelling = "attempt_cancelling"
-	// reasonAgentInstructions refuses a delegated task's start_turn: the
-	// adapter protocol cannot carry an agent's role and instructions yet
-	// (ADR-0020), and the turn must not run without them.
+	// reasonAgentInstructions refuses a delegated task's start_turn when no
+	// connection of its runtime negotiated agent instructions (ADR-0020): the
+	// turn must not run without them.
 	reasonAgentInstructions = "agent_instructions_unsupported"
 	reasonSendStarted       = "send_started"
 )
@@ -222,14 +223,26 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, false)
 	}
 	if body.Role == contracts.RoleRuntime && body.Method == contracts.MethodStartTurn {
-		delegated, err := w.delegatedToAgent(ctx, tenant, prepared.operation.Attempt)
+		agent, err := w.agentInstructions(ctx, tenant, prepared.operation.Attempt)
 		if err != nil {
 			return errors.Join(err, w.releasePrepared(ctx, tenant, row, prepared, now, !prepared.replay))
 		}
-		if delegated {
-			// Refused before anything is sent, so the task fails visibly
-			// instead of running without its agent's instructions.
-			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonAgentInstructions, prepared.replay)
+		if agent != nil {
+			negotiated := agentPort(port)
+			if negotiated == nil {
+				// Refused before anything is sent, so the task fails visibly
+				// instead of running without its agent's instructions.
+				return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonAgentInstructions, prepared.replay)
+			}
+			arguments, err := withAgentInstructions(body.Arguments, *agent)
+			if err != nil {
+				return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
+			}
+			request.Arguments = arguments
+			if err := request.Validate(); err != nil {
+				return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
+			}
+			port = negotiated
 		}
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
@@ -1105,17 +1118,49 @@ func (w *Worker) releaseLease(ctx context.Context, uow *store.UnitOfWork, tenant
 	return nil
 }
 
-// delegatedToAgent reports whether the attempt's task was delegated to an
-// agent. Until the adapter protocol carries an agent's role and instructions
-// (ADR-0020), such a task's start_turn is never sent.
-func (w *Worker) delegatedToAgent(ctx context.Context, tenant ids.TenantID, attempt ids.AttemptID) (bool, error) {
+// agentInstructions returns the role and instructions of the agent revision
+// the attempt's task was delegated to, or nil for a task submitted to
+// providers. The revision is pinned at submission, so every delivery of the
+// same operation carries the same text (ADR-0020).
+func (w *Worker) agentInstructions(ctx context.Context, tenant ids.TenantID, attempt ids.AttemptID) (*contracts.AgentInstructions, error) {
 	loaded, err := store.GetAttempt(ctx, w.pool, tenant, attempt)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	task, err := store.GetTask(ctx, w.pool, tenant, loaded.Task)
-	if err != nil {
-		return false, err
+	if err != nil || task.Agent == nil {
+		return nil, err
 	}
-	return task.Agent != nil, nil
+	revision, err := store.GetAgentRevision(ctx, w.pool, tenant, task.Agent.Agent, task.Agent.Revision)
+	if err != nil {
+		return nil, err
+	}
+	return &contracts.AgentInstructions{Role: revision.Role, Instructions: revision.Instructions}, nil
+}
+
+// agentPort restricts port to the adapter connections that negotiated
+// CapabilityAgentInstructions. It is nil when none did, including for a port
+// that negotiates nothing, so a delegated start_turn reaches no adapter that
+// would refuse or drop the field.
+func agentPort(port contracts.Port) contracts.Port {
+	scoped, ok := port.(contracts.CapabilityScoped)
+	if !ok {
+		return nil
+	}
+	return scoped.Requiring(contracts.CapabilityAgentInstructions)
+}
+
+// withAgentInstructions adds the agent's role and instructions to recorded
+// start_turn arguments. The recorded arguments stay as submitted; the field is
+// added per send, only toward a negotiated connection.
+func withAgentInstructions(arguments json.RawMessage, agent contracts.AgentInstructions) (json.RawMessage, error) {
+	var start contracts.RuntimeStart
+	if err := json.Unmarshal(arguments, &start); err != nil {
+		return nil, err
+	}
+	start.Agent = &agent
+	if err := start.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(start)
 }
