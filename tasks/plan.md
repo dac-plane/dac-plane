@@ -84,7 +84,7 @@ For stage 3:
 - Verified connection ownership, replay, stale versions, pending consent, outage
   and schema-17 behavior through real HTTP and PostgreSQL tests.
 
-For stages 4–7 (in progress):
+For stages 4–7:
 
 - ADR-0023 adds read-only `read_call` recovery and makes `removing` a durable,
   automatically reconciled credential-destruction intent without an attempt.
@@ -131,3 +131,26 @@ model making a connector call, runtime-host egress enforcement, and the full
 image/stack/operations CI suites. The tagged live GitHub qualification runner
 builds and has a documented dedicated-fixture procedure; it was not executed
 without a consented fixture connection. No final release publication is included.
+
+## PR #144 review follow-up
+
+All four Greptile findings were reproduced and fixed:
+
+- A waiting HTTP request resumes its persisted operation; denial cannot fall through
+  to a newer covering grant. An unrelated open attention does not create a phantom binding.
+- Proposed canonical arguments are immutable from proposal creation. The owner-only
+  `GET /attention/{attention}/connector-call` view exposes those arguments and their
+  digest with the attention ETag; ordinary tenant readers receive 404.
+- Credential-removal batches rotate through separate retry scheduling metadata,
+  leaving lifecycle versions and timestamps unchanged on failed attempts.
+- Catalogue outages omit only unavailable sources, retaining healthy tools and
+  warning operators with safe connection/provider identifiers.
+
+Each original implementation failed its new regression. Removing the proposal
+owner check also made the isolation test fail; the predicate is restored.
+The focused HTTP suite and exact-byte storage tests pass. Final local checks also pass:
+`just ci-fast`, `just test-integration ./...`,
+`just test-integration-race ./internal/httpapi/ -run=TestConnector`,
+`just docs-check`, and `git diff --check`.
+The hosted checks will rerun on the review-fix head; live provider and egress
+qualification remain unverified as described above.
