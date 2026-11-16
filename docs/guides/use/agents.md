@@ -90,6 +90,8 @@ built with an earlier kit never receives the field:
 
 - A task delegated to an agent whose runtime has no adapter connection that negotiated it fails before its turn
   starts, with the dispatch reason `agent_instructions_unsupported`, rather than running without its instructions.
+  The check is made when the turn is sent, not at submission, because adapters connect and upgrade independently
+  ([ADR-0021](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0021-refuse-delegated-turns-at-dispatch.md)).
 - A harness migration that restarts a delegated task waits until the target runtime has such a connection.
 
 Tasks submitted without an agent are unaffected. The `start_turn` arguments, brief and instructions together, must fit

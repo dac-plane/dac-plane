@@ -151,6 +151,11 @@ func (a *Adapter) reconstruct() error {
 		if op.Environment != "" {
 			resume["environments"] = a.threadEnvironments(op.Environment)
 		}
+		if op.DeveloperInstructions != "" {
+			// The app-server documents no persistence of thread/start's
+			// instructions across a resume, so they are given again.
+			resume["developerInstructions"] = op.DeveloperInstructions
+		}
 		if err := a.config.Native.Call(ctx, "thread/resume", resume, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
@@ -505,6 +510,10 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 			return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
 		}
 	}
+	developerInstructions := ""
+	if input.Agent != nil {
+		developerInstructions = agentPrompt(*input.Agent)
+	}
 	baseline, _, err := a.workspaceSnapshot(ctx, environment)
 	if err != nil {
 		return wire.Reply{}, err
@@ -512,7 +521,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	a.startMu.Lock()
 	a.setStarting(r.Operation, true)
 	defer a.setStarting(r.Operation, false)
-	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment})
+	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment, DeveloperInstructions: developerInstructions})
 	a.startMu.Unlock()
 	if errors.Is(err, journal.ErrPayloadMismatch) {
 		return rejected(r, wire.FailureStalePrecondition, "operation payload changed"), nil
@@ -552,10 +561,10 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if environment != "" {
 		threadStart["environments"] = a.threadEnvironments(environment)
 	}
-	if input.Agent != nil {
+	if developerInstructions != "" {
 		// The tenant set these for every task given to the agent, so they are
 		// developer instructions; the brief stays untrusted turn input.
-		threadStart["developerInstructions"] = agentPrompt(*input.Agent)
+		threadStart["developerInstructions"] = developerInstructions
 	}
 	err = a.config.Native.Call(ctx, "thread/start", threadStart, &started)
 	if err != nil {

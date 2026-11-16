@@ -1,6 +1,6 @@
 # ADR-0020: Agents are product records that tasks are delegated to
 
-- Status: Accepted
+- Status: Accepted; submission-time refusal superseded by [ADR-0021](0021-refuse-delegated-turns-at-dispatch.md)
 - Date: 2026-11-11
 - Issue: [#136](https://github.com/dac-plane/dac-plane/issues/136)
 

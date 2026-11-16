@@ -664,6 +664,9 @@ func TestRestartResumesAndReadsMappedThread(t *testing.T) {
 	if native.count("thread/resume") != 1 || native.count("thread/read") != 1 {
 		t.Fatalf("calls=%+v", native.calls)
 	}
+	if strings.Contains(string(native.last("thread/resume")), "developerInstructions") {
+		t.Fatalf("undelegated thread/resume = %s", native.last("thread/resume"))
+	}
 	events, err := store.EventsAfter(testOperation, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -676,6 +679,41 @@ func TestRestartResumesAndReadsMappedThread(t *testing.T) {
 		if !found[kind] {
 			t.Fatalf("restart events=%v, missing %s", found, kind)
 		}
+	}
+}
+
+func TestRestartResumesADelegatedThreadWithItsInstructions(t *testing.T) {
+	root := t.TempDir()
+	store, err := journal.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	native := newFakeNative()
+	first, err := New(Config{Native: native, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"agent":{"role":"Reviews fixture changes","instructions":"Explain every change in one line."}}`
+	if reply, err := first.Send(context.Background(), startRequest(start)); err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("start reply=%+v err=%v", reply, err)
+	}
+	close(first.stop)
+
+	restarted := newFakeNative()
+	second, err := New(Config{Native: restarted, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer close(second.stop)
+	var resume struct {
+		DeveloperInstructions string `json:"developerInstructions"`
+	}
+	if err := json.Unmarshal(restarted.last("thread/resume"), &resume); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resume.DeveloperInstructions, "Explain every change in one line.") {
+		t.Fatalf("thread/resume = %s, want the agent's instructions again", restarted.last("thread/resume"))
 	}
 }
 

@@ -88,8 +88,11 @@ For step 5:
 - The recorded outbox arguments stay as submitted. The worker adds the field per send, toward a negotiated connection
   only, from the pinned revision, which is immutable, so every delivery of an operation carries the same bytes.
 - With no connection that negotiated it, a delegated `start_turn` is still refused as `agent_instructions_unsupported`
-  and a delegated migration restart is still held. This keeps step 4's dispatch-time refusal instead of ADR-0020's
-  refusal at submission, because adapter connections come and go and submission cannot see which will carry the turn.
+  and a delegated migration restart is still held. Refusing at dispatch rather than at submission supersedes that
+  clause of ADR-0020, so it is recorded in ADR-0021: connections come and go, and submission cannot see which will
+  carry the turn.
+- Codex journals the developer instructions with the operation and passes them again on `thread/resume`, which takes
+  the same field: the app-server documents no persistence of `thread/start`'s instructions across a resume.
 - The Codex adapter offers the capability and passes the text to `thread/start` as `developerInstructions` (present in
   app-server 0.165.0), keeping the brief as untrusted turn input. The simulator's runtime offers it by default, its
   ledger shows what it received, and `dac-sim-adapter` offers it; the in-process wire harness advertises a simulator's
@@ -109,7 +112,7 @@ For step 6:
 
 ## Steps
 
-1. ADR-0020. Done in #138.
+1. ADR-0020. Done in #138. ADR-0021 refines its refusal timing, in step 5.
 2. Contracts: the agent and revision records, their transitions and audit, JSON Schemas and agreement tests. Done in #139.
    Verify: `just test-contracts`, `just ci-fast`, `just docs-check`.
 3. Persistence: the migration, the store, the rollout probe moved up one version. Done in #141.
