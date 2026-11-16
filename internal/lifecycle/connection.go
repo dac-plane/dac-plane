@@ -101,7 +101,7 @@ func (a ConnectionAccount) Validate() error {
 		utf8.RuneCountInString(a.Account) > MaxConnectionAccountCharacters {
 		return fmt.Errorf("%w: connection account must be one non-blank line of at most %d characters", ErrInvalid, MaxConnectionAccountCharacters)
 	}
-	if len(a.Permissions) > MaxConnectionPermissions {
+	if a.Permissions == nil || len(a.Permissions) > MaxConnectionPermissions {
 		return fmt.Errorf("%w: connection reports at most %d permissions", ErrInvalid, MaxConnectionPermissions)
 	}
 	for _, p := range a.Permissions {

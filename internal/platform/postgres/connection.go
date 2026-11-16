@@ -438,6 +438,9 @@ func InsertConnectorCall(ctx context.Context, u *UnitOfWork, c ConnectorCall) er
 	if (c.State == CallAuthorized) != (c.Execution != nil) || c.Result != nil {
 		return lifecycle.ErrInvalid
 	}
+	if err := c.matchesExecution(c.Execution); err != nil {
+		return err
+	}
 	execution, err := executionColumn(c.Execution)
 	if err != nil {
 		return err
@@ -449,6 +452,19 @@ func InsertConnectorCall(ctx context.Context, u *UnitOfWork, c ConnectorCall) er
 		c.Tenant.String(), c.Operation.String(), c.Attempt.String(), c.Task.String(), c.Connection.String(),
 		c.ConnectionGrant.String(), c.Provider.String(), c.Tool, string(c.InputDigest), string(c.State), execution, c.CreatedAt)
 	return err
+}
+
+// matchesExecution keeps the recorded decision bound to the exact execution.
+func (c ConnectorCall) matchesExecution(e *contracts.ConnectorExecution) error {
+	if e == nil {
+		return nil
+	}
+	r := e.Request
+	if r.Tenant != c.Tenant || r.Operation != c.Operation || r.Attempt != c.Attempt ||
+		e.Connection != c.Connection || e.ConnectionGrant != c.ConnectionGrant || e.Tool != c.Tool || r.InputDigest != c.InputDigest {
+		return ErrPayloadMismatch
+	}
+	return nil
 }
 
 func executionColumn(e *contracts.ConnectorExecution) (any, error) {
@@ -471,6 +487,13 @@ func DecideConnectorCall(ctx context.Context, u *UnitOfWork, tenant ids.TenantID
 	state := CallDenied
 	if execution != nil {
 		state = CallAuthorized
+	}
+	c, err := GetConnectorCall(ctx, u, tenant, operation)
+	if err != nil {
+		return err
+	}
+	if err := c.matchesExecution(execution); err != nil {
+		return err
 	}
 	column, err := executionColumn(execution)
 	if err != nil {

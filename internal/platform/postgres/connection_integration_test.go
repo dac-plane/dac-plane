@@ -239,6 +239,25 @@ func TestConnectorCallsKeepTheirExactBytes(t *testing.T) {
 		Grant: mustID[ids.Grant](t), Decision: mustID[ids.Decision](t), Source: identity.SourceOneTimeApproval,
 		ConnectionGrant: grant.ID, Connection: c.ID, Tool: "get_issue", Input: input,
 	}
+	for name, mutate := range map[string]func(*contracts.ConnectorExecution){
+		"operation": func(e *contracts.ConnectorExecution) { e.Request.Operation = mustID[ids.Operation](t) },
+		"attempt":   func(e *contracts.ConnectorExecution) { e.Request.Attempt = mustID[ids.Attempt](t) },
+		"input": func(e *contracts.ConnectorExecution) {
+			e.Input = json.RawMessage(`{"number":9}`)
+			e.Request.InputDigest = identity.DigestOf(e.Input)
+		},
+		"connection grant": func(e *contracts.ConnectorExecution) { e.ConnectionGrant = mustID[ids.ConnGrant](t) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := execution
+			mutate(&bad)
+			if _, err := tryTx(t, ctx, pool, func(u *store.UnitOfWork) (bool, error) {
+				return true, store.DecideConnectorCall(ctx, u, f.tenant, call.Operation, &bad, at)
+			}); !errors.Is(err, store.ErrPayloadMismatch) {
+				t.Fatalf("mismatched execution: %v", err)
+			}
+		})
+	}
 	inTx(t, ctx, pool, func(uow *store.UnitOfWork) {
 		if err := store.DecideConnectorCall(ctx, uow, f.tenant, call.Operation, &execution, at); err != nil {
 			t.Fatalf("DecideConnectorCall() error = %v", err)
@@ -249,7 +268,10 @@ func TestConnectorCallsKeepTheirExactBytes(t *testing.T) {
 	}); !errors.Is(err, store.ErrStaleVersion) {
 		t.Fatalf("second DecideConnectorCall() error = %v", err)
 	}
-	output := json.RawMessage(`{"title":"Govern connectors","labels":["a","b"],"html":"<p>"}`)
+	output, err := contracts.CanonicalJSON(json.RawMessage(`{"title":"Govern connectors","labels":["a","b"],"html":"<p>"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := contracts.ConnectorResult{Operation: call.Operation, Output: output, OutputDigest: identity.DigestOf(output), CompletedAt: at}
 	inTx(t, ctx, pool, func(uow *store.UnitOfWork) {
 		if replayed, err := store.RecordConnectorResult(ctx, uow, f.tenant, result); err != nil || replayed {

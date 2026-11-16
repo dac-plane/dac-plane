@@ -95,26 +95,28 @@ func TestContractConformanceConnectorDocumentsRejected(t *testing.T) {
 		data     []byte
 		goOnly   bool
 	}{
-		"empty catalogue":         {contract: catalogueContract, data: []byte(`{"tools":[]}`)},
-		"bad tool name":           {contract: catalogueContract, data: []byte(`{"tools":[{"name":"Get-Issue","description":"x","input_schema":{"type":"object"}}]}`)},
-		"tool schema not object":  {contract: catalogueContract, data: []byte(`{"tools":[{"name":"get_issue","description":"x","input_schema":{"type":"string"}}]}`)},
-		"blank description":       {contract: catalogueContract, data: []byte(`{"tools":[{"name":"get_issue","description":" ","input_schema":{"type":"object"}}]}`)},
-		"duplicate tool":          {contract: catalogueContract, goOnly: true, data: []byte(`{"tools":[{"name":"a","description":"x","input_schema":{"type":"object"}},{"name":"a","description":"y","input_schema":{"type":"object"}}]}`)},
-		"plain http":              {contract: authStartedContract, goOnly: true, data: []byte(`{"authorization_url":"http://github.com/login","expires_at":"2026-10-16T12:00:00Z"}`)},
-		"url with credentials":    {contract: authStartedContract, goOnly: true, data: []byte(`{"authorization_url":"https://a:b@github.com/login","expires_at":"2026-10-16T12:00:00Z"}`)},
-		"authorized no account":   {contract: authResultContract, data: []byte(`{"status":"authorized"}`)},
-		"pending with account":    {contract: authResultContract, data: []byte(`{"status":"pending","account":{"account":"octocat","permissions":[]}}`)},
-		"unknown status":          {contract: authResultContract, data: []byte(`{"status":"expired"}`)},
-		"input not an object":     {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = []any{1} })},
-		"input not canonical":     {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = json.RawMessage(`{"a": "<b>"}`) })},
-		"input digest mismatch":   {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = map[string]any{"number": 1} })},
-		"action of another tool":  {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["tool"] = "create_comment" })},
-		"scope of another target": {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["connection_id"] = newID[ids.Connection](t).String() })},
-		"approval no decision":    {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { d["source"] = "one_time_approval" })},
-		"no connection grant":     {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { delete(d, "connection_grant_id") })},
-		"output digest mismatch":  {contract: connResultContract, goOnly: true, data: schematest.Mutate(t, result, func(d map[string]any) { d["output"] = "changed" })},
-		"gateway token space":     {contract: gatewayContract, data: []byte(`{"url":"https://dac.example/mcp","token":"a b"}`)},
-		"gateway not http":        {contract: gatewayContract, data: []byte(`{"url":"ftp://dac.example/mcp","token":"t"}`)},
+		"empty catalogue":             {contract: catalogueContract, data: []byte(`{"tools":[]}`)},
+		"bad tool name":               {contract: catalogueContract, data: []byte(`{"tools":[{"name":"Get-Issue","description":"x","input_schema":{"type":"object"}}]}`)},
+		"tool schema not object":      {contract: catalogueContract, data: []byte(`{"tools":[{"name":"get_issue","description":"x","input_schema":{"type":"string"}}]}`)},
+		"blank description":           {contract: catalogueContract, data: []byte(`{"tools":[{"name":"get_issue","description":" ","input_schema":{"type":"object"}}]}`)},
+		"duplicate tool":              {contract: catalogueContract, goOnly: true, data: []byte(`{"tools":[{"name":"a","description":"x","input_schema":{"type":"object"}},{"name":"a","description":"y","input_schema":{"type":"object"}}]}`)},
+		"plain http":                  {contract: authStartedContract, goOnly: true, data: []byte(`{"authorization_url":"http://github.com/login","expires_at":"2026-10-16T12:00:00Z"}`)},
+		"url with credentials":        {contract: authStartedContract, goOnly: true, data: []byte(`{"authorization_url":"https://a:b@github.com/login","expires_at":"2026-10-16T12:00:00Z"}`)},
+		"authorized no account":       {contract: authResultContract, data: []byte(`{"status":"authorized"}`)},
+		"account missing permissions": {contract: authResultContract, data: []byte(`{"status":"authorized","account":{"account":"octocat"}}`)},
+		"account null permissions":    {contract: authResultContract, data: []byte(`{"status":"authorized","account":{"account":"octocat","permissions":null}}`)},
+		"pending with account":        {contract: authResultContract, data: []byte(`{"status":"pending","account":{"account":"octocat","permissions":[]}}`)},
+		"unknown status":              {contract: authResultContract, data: []byte(`{"status":"expired"}`)},
+		"input not an object":         {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = []any{1} })},
+		"input not canonical":         {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = json.RawMessage(`{"a": "<b>"}`) })},
+		"input digest mismatch":       {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["input"] = map[string]any{"number": 1} })},
+		"action of another tool":      {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["tool"] = "create_comment" })},
+		"scope of another target":     {contract: connExecutionContract, goOnly: true, data: schematest.Mutate(t, execution, func(d map[string]any) { d["connection_id"] = newID[ids.Connection](t).String() })},
+		"approval no decision":        {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { d["source"] = "one_time_approval" })},
+		"no connection grant":         {contract: connExecutionContract, data: schematest.Mutate(t, execution, func(d map[string]any) { delete(d, "connection_grant_id") })},
+		"output digest mismatch":      {contract: connResultContract, goOnly: true, data: schematest.Mutate(t, result, func(d map[string]any) { d["output"] = "changed" })},
+		"gateway token space":         {contract: gatewayContract, data: []byte(`{"url":"https://dac.example/mcp","token":"a b"}`)},
+		"gateway not http":            {contract: gatewayContract, data: []byte(`{"url":"ftp://dac.example/mcp","token":"t"}`)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if tc.contract.GoAccept(tc.data) == nil {
@@ -190,5 +192,46 @@ func TestToolInputMustBeCanonical(t *testing.T) {
 	}
 	if _, err := CanonicalJSON(json.RawMessage(`{"a":`)); err == nil {
 		t.Error("CanonicalJSON accepted invalid JSON")
+	}
+}
+
+func TestConnectorResultSurvivesFrameRoundTrip(t *testing.T) {
+	for _, raw := range []string{`{"html":"<p>&</p>"}`, `{ "message": "ok" }`} {
+		output, err := CanonicalJSON(json.RawMessage(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := newConnectorResult(t)
+		r.Output = output
+		r.OutputDigest = identity.DigestOf(output)
+		if err := r.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		result, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply := Reply{Operation: r.Operation, Delivery: newID[ids.Delivery](t), Outcome: OutcomeOK, Durability: lifecycle.SendAccepted, Result: result}
+		frame, err := json.Marshal(Frame{Kind: FrameReply, Reply: &reply})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Frame
+		if err := json.Unmarshal(frame, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		var got ConnectorResult
+		if err := json.Unmarshal(decoded.Reply.Result, &got); err != nil {
+			t.Fatal(err)
+		}
+		if err := got.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		bad := r
+		bad.Output = json.RawMessage(raw)
+		bad.OutputDigest = identity.DigestOf(bad.Output)
+		if bad.Validate() == nil {
+			t.Fatal("unstable output accepted")
+		}
 	}
 }

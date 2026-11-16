@@ -269,7 +269,7 @@ func CanonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 // ConnectorResult is a connector's reply to call_tool: the call's output
-// as JSON and whether the external application refused or failed it. A
+// as canonical JSON and whether the external application refused or failed it. A
 // refusal by the external application is a completed call, not a protocol
 // failure. The output never carries a credential.
 type ConnectorResult struct {
@@ -287,6 +287,9 @@ func (r ConnectorResult) Validate() error {
 	}
 	if len(r.Output) == 0 || len(r.Output) > MaxToolOutputBytes || !json.Valid(r.Output) {
 		return fmt.Errorf("%w: connector output must be JSON of at most %d bytes", ErrInvalid, MaxToolOutputBytes)
+	}
+	if canonical, err := CanonicalJSON(r.Output); err != nil || !bytes.Equal(canonical, r.Output) {
+		return fmt.Errorf("%w: connector output must be in canonical form", ErrInvalid)
 	}
 	if identity.DigestOf(r.Output) != r.OutputDigest {
 		return fmt.Errorf("%w: output does not match its digest", ErrInvalid)
