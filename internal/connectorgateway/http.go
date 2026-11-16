@@ -15,6 +15,7 @@ import (
 	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/ids"
+	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -232,13 +233,24 @@ func (g *Gateway) call(ctx context.Context, tenant ids.TenantID, attempt ids.Att
 	notify := time.NewTicker(10 * time.Second)
 	defer notify.Stop()
 	var operation ids.OperationID
+	authorized := false
 	for {
 		if _, err := application.ConnectorAttempt(ctx, g.pool, tenant, attempt); err != nil {
 			return toolError("Attempt can no longer use connectors")
 		}
-		if operation.IsZero() {
-			call, err := application.CallConnector(ctx, g.pool, tenant, attempt, connection, tool, input)
+		if !authorized {
+			var call store.ConnectorCall
+			var err error
+			if operation.IsZero() {
+				call, err = application.CallConnector(ctx, g.pool, tenant, attempt, connection, tool, input)
+			} else {
+				call, err = application.ResumeConnectorCall(ctx, g.pool, tenant, attempt, operation, input)
+			}
+			if err == nil || errors.Is(err, application.ErrConnectorApprovalPending) {
+				operation = call.Operation
+			}
 			if err == nil {
+				authorized = true
 				operation = call.Operation
 				if g.wake != nil {
 					g.wake()
@@ -247,7 +259,7 @@ func (g *Gateway) call(ctx context.Context, tenant ids.TenantID, attempt ids.Att
 				return toolError("Connector call refused")
 			}
 		}
-		if !operation.IsZero() {
+		if authorized {
 			call, err := application.ConnectorCallResult(ctx, g.pool, tenant, operation)
 			if err != nil {
 				return toolError("Connector outcome unavailable or uncertain; the call was not repeated")

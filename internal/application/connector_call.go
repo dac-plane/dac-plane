@@ -116,6 +116,23 @@ func ConnectorTools(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPort
 // All authorization predicates, the call ceiling and the dispatch intent commit
 // under policy, attempt, connection and grant locks in that order.
 func CallConnector(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID, attempt ids.AttemptID, connection ids.ConnectionID, tool string, input json.RawMessage) (store.ConnectorCall, error) {
+	return callConnector(ctx, pool, tenant, attempt, connection, tool, input, ids.OperationID{})
+}
+
+// ResumeConnectorCall keeps a waiting gateway request bound to its original
+// approval, including a denial, even when another covering grant appears.
+func ResumeConnectorCall(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID, attempt ids.AttemptID, operation ids.OperationID, input json.RawMessage) (store.ConnectorCall, error) {
+	call, err := store.GetConnectorCall(ctx, pool, tenant, operation)
+	if err != nil {
+		return store.ConnectorCall{}, err
+	}
+	if call.Attempt != attempt {
+		return store.ConnectorCall{}, store.ErrNotFound
+	}
+	return callConnector(ctx, pool, tenant, attempt, call.Connection, call.Tool, input, operation)
+}
+
+func callConnector(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID, attempt ids.AttemptID, connection ids.ConnectionID, tool string, input json.RawMessage, bound ids.OperationID) (store.ConnectorCall, error) {
 	input, err := contracts.CanonicalJSON(input)
 	if err != nil {
 		return store.ConnectorCall{}, err
@@ -191,12 +208,26 @@ func CallConnector(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID,
 	if err != nil {
 		return store.ConnectorCall{}, err
 	}
-	call, err := store.FindConnectorCall(ctx, u, tenant, attempt, connection, tool, request.InputDigest)
+	var call store.ConnectorCall
+	if bound.IsZero() {
+		call, err = store.FindConnectorCall(ctx, u, tenant, attempt, connection, tool, request.InputDigest)
+	} else {
+		call, err = store.GetConnectorCall(ctx, u, tenant, bound)
+		if err == nil && (call.Attempt != attempt || call.Connection != connection || call.Tool != tool || call.InputDigest != request.InputDigest) {
+			return store.ConnectorCall{}, ErrConnectorDenied
+		}
+		if err != nil {
+			return store.ConnectorCall{}, err
+		}
+		if call.State == store.CallDenied {
+			return call, ErrConnectorDenied
+		}
+	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.ConnectorCall{}, err
 	}
 	found := err == nil
-	existing := found && call.Result == nil && (call.State == store.CallAwaitingApproval || call.State == store.CallAuthorized)
+	existing := found && (call.Result == nil || !bound.IsZero()) && (call.State == store.CallAwaitingApproval || call.State == store.CallAuthorized)
 	var grant *lifecycle.ConnectionGrant
 	exhausted := false
 	for _, g := range grants {
@@ -294,7 +325,7 @@ func CallConnector(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID,
 			return call, err
 		}
 		if len(open) > 0 {
-			return call, ErrConnectorApprovalPending
+			return store.ConnectorCall{}, ErrConnectorApprovalPending
 		}
 		call.State = store.CallAwaitingApproval
 		if err := store.InsertConnectorCall(ctx, u, call); err != nil {
