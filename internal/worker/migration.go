@@ -747,13 +747,31 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 	if port == nil {
 		return nil
 	}
-	// Held before anything is marked, as for a missing port: a delegated
-	// task's restart must not run without its agent's instructions (ADR-0020).
-	if delegated, err := w.delegatedToAgent(ctx, tenant, item.TargetAttempt); err != nil || delegated {
+	// A delegated task's restart goes only to a connection that negotiated
+	// its agent's instructions; without one it is held before anything is
+	// marked, as for a missing port (ADR-0020).
+	agent, err := w.agentInstructions(ctx, w.pool, tenant, item.TargetAttempt)
+	if err != nil {
 		return err
+	}
+	if agent != nil {
+		if port = agentPort(port); port == nil {
+			return nil
+		}
 	}
 	if item.RestartEpoch == 0 {
 		item.RestartEpoch = item.ClaimEpoch
+	}
+	restart := contracts.MigrationRequest{Migration: item.Migration, Operation: item.RestartOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetStarted, ClaimEpoch: item.RestartEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs, EnvironmentRef: item.EnvironmentRef}
+	// The restart carries the brief, any agent instructions and the recovery
+	// together, which can exceed the arguments bound the first start fitted.
+	// Check it before the dispatch marker: an item marked for a request that
+	// can never be sent would stall with its source quiesced.
+	if _, err := w.migrationRequest(ctx, tenant, item.RestartOperation, item.TargetAttempt, contracts.RoleRuntime, contracts.MethodStartTurn, restart); err != nil {
+		if errors.Is(err, contracts.ErrInvalid) || errors.Is(err, lifecycle.ErrInvalid) {
+			return w.abortMigrationBeforeStage(ctx, tenant, claim, item, item.RestartOperation, false)
+		}
+		return err
 	}
 	if err := w.markMigrationStageDispatched(ctx, tenant, claim, item, item.RestartOperation); err != nil {
 		if errors.Is(err, errMigrationBudgetExhausted) {
@@ -762,7 +780,7 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 		return err
 	}
 	receipt, sent, err := w.sendMigrationStage(ctx, tenant, claim, item, port, item.RestartOperation, item.TargetAttempt, contracts.RoleRuntime, contracts.MethodStartTurn,
-		contracts.MigrationRequest{Migration: item.Migration, Operation: item.RestartOperation, SourceAttempt: item.SourceAttempt, TargetAttempt: item.TargetAttempt, Stage: contracts.MigrationTargetStarted, ClaimEpoch: item.RestartEpoch, Recovery: contracts.MigrationRestartFromArtifacts, ContextRefs: item.ContextRefs, EnvironmentRef: item.EnvironmentRef}, contracts.MigrationTargetStarted, contracts.MigrationRestartFromArtifacts)
+		restart, contracts.MigrationTargetStarted, contracts.MigrationRestartFromArtifacts)
 	if err != nil {
 		return err
 	}
@@ -772,29 +790,44 @@ func (w *Worker) driveMigrationTarget(ctx context.Context, tenant ids.TenantID, 
 	return w.settleMigrationCutover(ctx, tenant, claim, item, receipt)
 }
 
-func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, port contracts.Port, operation ids.OperationID, attempt ids.AttemptID, role contracts.Role, method contracts.Method, payload contracts.MigrationRequest, stage contracts.MigrationStage, recovery contracts.MigrationRecoveryMode) (contracts.MigrationReceipt, bool, error) {
+// migrationRequest builds and validates one stage's request under a fresh
+// delivery identity. A restart's start_turn carries the task's brief and,
+// for a delegated task, its agent's instructions beside the recovery.
+func (w *Worker) migrationRequest(ctx context.Context, tenant ids.TenantID, operation ids.OperationID, attempt ids.AttemptID, role contracts.Role, method contracts.Method, payload contracts.MigrationRequest) (contracts.Request, error) {
 	delivery, err := ids.New[ids.Delivery]()
 	if err != nil {
-		return contracts.MigrationReceipt{}, false, err
+		return contracts.Request{}, err
 	}
 	var wirePayload any = payload
 	if method == contracts.MethodStartTurn {
-		brief, briefErr := w.executionBrief(ctx, tenant, attempt)
-		if briefErr != nil {
-			return contracts.MigrationReceipt{}, false, briefErr
+		brief, err := w.executionBrief(ctx, tenant, attempt)
+		if err != nil {
+			return contracts.Request{}, err
 		}
-		start := contracts.RuntimeStart{Brief: brief, Recovery: &payload}
+		agent, err := w.agentInstructions(ctx, w.pool, tenant, attempt)
+		if err != nil {
+			return contracts.Request{}, err
+		}
+		start := contracts.RuntimeStart{Brief: brief, Agent: agent, Recovery: &payload}
 		if err := start.Validate(); err != nil {
-			return contracts.MigrationReceipt{}, false, err
+			return contracts.Request{}, err
 		}
 		wirePayload = start
 	}
 	body, err := json.Marshal(wirePayload)
 	if err != nil {
-		return contracts.MigrationReceipt{}, false, err
+		return contracts.Request{}, err
 	}
 	req := contracts.Request{Operation: operation, Delivery: delivery, Tenant: tenant, Attempt: attempt, Role: role, Method: method, Arguments: body, Demand: contracts.DemandBackground, Deadline: time.Now().UTC().Add(w.cfg.SendTimeout)}
 	if err := req.Validate(); err != nil {
+		return contracts.Request{}, err
+	}
+	return req, nil
+}
+
+func (w *Worker) sendMigrationStage(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, port contracts.Port, operation ids.OperationID, attempt ids.AttemptID, role contracts.Role, method contracts.Method, payload contracts.MigrationRequest, stage contracts.MigrationStage, recovery contracts.MigrationRecoveryMode) (contracts.MigrationReceipt, bool, error) {
+	req, err := w.migrationRequest(ctx, tenant, operation, attempt, role, method, payload)
+	if err != nil {
 		return contracts.MigrationReceipt{}, false, err
 	}
 	reply, err := sendMigrationRequest(ctx, port, req, w.cfg.SendTimeout)
@@ -890,6 +923,14 @@ func (w *Worker) markMigrationStageDispatched(ctx context.Context, tenant ids.Te
 }
 
 func (w *Worker) failMigrationForBudget(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID) error {
+	return w.abortMigrationBeforeStage(ctx, tenant, claim, item, operation, true)
+}
+
+// abortMigrationBeforeStage moves a starting item to aborting while the
+// stage's operation is still only recorded, so nothing was sent for it. With
+// budgetExhausted the abort stands only while the target's reservation
+// cannot cover the stage.
+func (w *Worker) abortMigrationBeforeStage(ctx context.Context, tenant ids.TenantID, claim ids.ClaimID, item lifecycle.MigrationItem, operation ids.OperationID, budgetExhausted bool) error {
 	snapshot, err := w.beginMigrationClaimSnapshot(ctx, tenant, claim, item.SourceAttempt)
 	if err != nil {
 		return err
@@ -912,12 +953,14 @@ func (w *Worker) failMigrationForBudget(ctx context.Context, tenant ids.TenantID
 	if _, _, err := store.LockResultScope(ctx, u, tenant, current.TargetAttempt); err != nil {
 		return err
 	}
-	available, err := migrationReservationAvailable(ctx, u, tenant, current.TargetAttempt)
-	if err != nil {
-		return err
-	}
-	if available {
-		return store.ErrStaleVersion
+	if budgetExhausted {
+		available, err := migrationReservationAvailable(ctx, u, tenant, current.TargetAttempt)
+		if err != nil {
+			return err
+		}
+		if available {
+			return store.ErrStaleVersion
+		}
 	}
 	current.State, current.UpdatedAt = lifecycle.MigrationItemAborting, now.UTC()
 	if err := store.SetMigrationItem(ctx, u, current, current.ClaimEpoch); err != nil {

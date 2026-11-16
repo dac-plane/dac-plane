@@ -93,6 +93,9 @@ type runtimeWork struct {
 
 // NewRuntime validates the config and the scenario and returns the simulator.
 func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
+	if config.Hello.Phase == "" {
+		config.Hello = RuntimeHello()
+	}
 	config = config.withDefaults()
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -123,6 +126,16 @@ func NewRuntime(config Config, scenario RuntimeScenario) (*Runtime, error) {
 		fingerprints: map[runtimeWork]identity.Digest{},
 		decided:      map[ids.OperationID]bool{},
 	}, nil
+}
+
+// RuntimeHello is the hello a runtime simulator advertises when its config
+// names no other: version 1, offering agent instructions. The simulator
+// records each start_turn as delivered, agent instructions included, so a
+// test reads what the runtime was given from its ledger.
+func RuntimeHello() contracts.Lifecycle {
+	hello := DefaultHello()
+	hello.Offered = []contracts.Capability{contracts.CapabilityAgentInstructions}
+	return hello
 }
 
 // Role returns contracts.RoleRuntime.

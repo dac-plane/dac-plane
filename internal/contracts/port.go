@@ -97,6 +97,16 @@ type StableOperationReplayer interface {
 	Replay(ctx context.Context, request Request) (Reply, error)
 }
 
+// CapabilityScoped is implemented by a negotiated provider port whose adapter
+// connections each select their own optional capabilities. Requiring returns
+// the port restricted to connections that selected capability, or nil when no
+// open connection did. The restricted port is a StableOperationReplayer only
+// while one of those connections also selected CapabilityOperationReplay.
+type CapabilityScoped interface {
+	Port
+	Requiring(capability Capability) Port
+}
+
 // Stream yields stream frames until the context ends or the provider closes.
 type Stream interface {
 	Next(ctx context.Context) (StreamFrame, error)

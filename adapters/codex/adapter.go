@@ -151,6 +151,11 @@ func (a *Adapter) reconstruct() error {
 		if op.Environment != "" {
 			resume["environments"] = a.threadEnvironments(op.Environment)
 		}
+		if op.DeveloperInstructions != "" {
+			// The app-server documents no persistence of thread/start's
+			// instructions across a resume, so they are given again.
+			resume["developerInstructions"] = op.DeveloperInstructions
+		}
 		if err := a.config.Native.Call(ctx, "thread/resume", resume, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
@@ -451,9 +456,25 @@ type executionBrief struct {
 }
 type runtimeStart struct {
 	Brief       executionBrief        `json:"brief"`
+	Agent       *agentInstructions    `json:"agent,omitempty"`
 	Environment *environmentReference `json:"environment,omitempty"`
 	Recovery    json.RawMessage       `json:"recovery,omitempty"`
 }
+
+// agentInstructions is the role and standing instructions of the agent a task
+// was delegated to. The control plane sends it only because Offered names
+// wire.CapabilityAgentInstructions.
+type agentInstructions struct {
+	Role         string `json:"role"`
+	Instructions string `json:"instructions,omitempty"`
+}
+
+// Offered lists the optional protocol capabilities this adapter implements,
+// for its hello.
+func Offered() []string {
+	return []string{wire.CapabilityAgentInstructions}
+}
+
 type environmentReference struct {
 	ProviderID  string `json:"provider_id"`
 	ResourceRef string `json:"resource_ref"`
@@ -472,6 +493,10 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 			return rejected(r, wire.FailureInvalidArguments, "execution brief has a blank criterion"), nil
 		}
 	}
+	if agent := input.Agent; agent != nil && (strings.TrimSpace(agent.Role) == "" || utf8.RuneCountInString(agent.Role) > 1_000 ||
+		(agent.Instructions != "" && strings.TrimSpace(agent.Instructions) == "") || utf8.RuneCountInString(agent.Instructions) > 20_000) {
+		return rejected(r, wire.FailureInvalidArguments, "invalid agent instructions"), nil
+	}
 	if input.Environment != nil && (strings.TrimSpace(input.Environment.ProviderID) == "" || strings.TrimSpace(input.Environment.ResourceRef) == "" || len(input.Environment.ResourceRef) > 2048) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
 	}
@@ -485,6 +510,10 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 			return rejected(r, wire.FailureInvalidArguments, "invalid prepared environment reference"), nil
 		}
 	}
+	developerInstructions := ""
+	if input.Agent != nil {
+		developerInstructions = agentPrompt(*input.Agent)
+	}
 	baseline, _, err := a.workspaceSnapshot(ctx, environment)
 	if err != nil {
 		return wire.Reply{}, err
@@ -492,7 +521,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	a.startMu.Lock()
 	a.setStarting(r.Operation, true)
 	defer a.setStarting(r.Operation, false)
-	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment})
+	op, created, err := a.config.Journal.Begin(journal.Operation{ID: r.Operation, Tenant: r.Tenant, Attempt: r.Attempt, ArgumentsHash: journal.Hash(r.Arguments), Baseline: baseline, Environment: environment, DeveloperInstructions: developerInstructions})
 	a.startMu.Unlock()
 	if errors.Is(err, journal.ErrPayloadMismatch) {
 		return rejected(r, wire.FailureStalePrecondition, "operation payload changed"), nil
@@ -531,6 +560,11 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	threadStart := map[string]any{"cwd": a.config.Workspace, "model": a.config.Model, "modelProvider": a.config.Provider, "approvalPolicy": "on-request", "sandbox": "workspace-write"}
 	if environment != "" {
 		threadStart["environments"] = a.threadEnvironments(environment)
+	}
+	if developerInstructions != "" {
+		// The tenant set these for every task given to the agent, so they are
+		// developer instructions; the brief stays untrusted turn input.
+		threadStart["developerInstructions"] = developerInstructions
 	}
 	err = a.config.Native.Call(ctx, "thread/start", threadStart, &started)
 	if err != nil {
@@ -592,6 +626,18 @@ func (a *Adapter) ensureStartEvents(op journal.Operation) error {
 	// The product can only settle a start it lost the reply to from this entry.
 	_, err := a.config.Journal.AppendEvent(op.ID, "outcome:accepted", "operation_outcome", map[string]string{"state": "accepted"})
 	return err
+}
+
+func agentPrompt(agent agentInstructions) string {
+	var b strings.Builder
+	b.WriteString("You are working as an agent the tenant defined. Role:\n")
+	b.WriteString(agent.Role)
+	if agent.Instructions != "" {
+		b.WriteString("\nStanding instructions:\n")
+		b.WriteString(agent.Instructions)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 func briefPrompt(operation string, brief executionBrief) string {

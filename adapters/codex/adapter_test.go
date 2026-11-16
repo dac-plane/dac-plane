@@ -196,6 +196,40 @@ func TestStartCarriesBriefAndReplaysMapping(t *testing.T) {
 	}
 }
 
+func TestStartPlacesAgentInstructionsInDeveloperInstructions(t *testing.T) {
+	f := setup(t)
+	start := `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"agent":{"role":"Reviews fixture changes","instructions":"Explain every change in one line."}}`
+	reply, err := f.adapter.Send(context.Background(), startRequest(start))
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("start reply=%+v err=%v", reply, err)
+	}
+	var thread struct {
+		DeveloperInstructions string `json:"developerInstructions"`
+	}
+	if err := json.Unmarshal(f.native.last("thread/start"), &thread); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Reviews fixture changes", "Explain every change in one line."} {
+		if !strings.Contains(thread.DeveloperInstructions, want) {
+			t.Fatalf("developer instructions miss %q: %q", want, thread.DeveloperInstructions)
+		}
+	}
+	turn := string(f.native.last("turn/start"))
+	if strings.Contains(turn, "Reviews fixture changes") || strings.Contains(turn, "Explain every change") {
+		t.Fatalf("agent instructions leaked into the untrusted turn input: %s", turn)
+	}
+}
+
+func TestStartWithoutAnAgentSetsNoDeveloperInstructions(t *testing.T) {
+	f := setup(t)
+	if reply, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("start reply=%+v err=%v", reply, err)
+	}
+	if strings.Contains(string(f.native.last("thread/start")), "developerInstructions") {
+		t.Fatalf("thread/start = %s", f.native.last("thread/start"))
+	}
+}
+
 func TestStreamWakesForAnAppendedEvent(t *testing.T) {
 	f := setup(t)
 	if _, _, err := f.store.Begin(journal.Operation{ID: testOperation, Tenant: testTenant, Attempt: testAttempt, ArgumentsHash: journal.Hash([]byte("stream"))}); err != nil {
@@ -630,6 +664,9 @@ func TestRestartResumesAndReadsMappedThread(t *testing.T) {
 	if native.count("thread/resume") != 1 || native.count("thread/read") != 1 {
 		t.Fatalf("calls=%+v", native.calls)
 	}
+	if strings.Contains(string(native.last("thread/resume")), "developerInstructions") {
+		t.Fatalf("undelegated thread/resume = %s", native.last("thread/resume"))
+	}
 	events, err := store.EventsAfter(testOperation, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -642,6 +679,41 @@ func TestRestartResumesAndReadsMappedThread(t *testing.T) {
 		if !found[kind] {
 			t.Fatalf("restart events=%v, missing %s", found, kind)
 		}
+	}
+}
+
+func TestRestartResumesADelegatedThreadWithItsInstructions(t *testing.T) {
+	root := t.TempDir()
+	store, err := journal.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	native := newFakeNative()
+	first, err := New(Config{Native: native, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := `{"brief":{"objective":"Change the fixture exactly once.","acceptance_criteria":["result.txt contains qualified"]},"agent":{"role":"Reviews fixture changes","instructions":"Explain every change in one line."}}`
+	if reply, err := first.Send(context.Background(), startRequest(start)); err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("start reply=%+v err=%v", reply, err)
+	}
+	close(first.stop)
+
+	restarted := newFakeNative()
+	second, err := New(Config{Native: restarted, Journal: store, Workspace: root, Model: "deepseek-v4-flash-0731", Provider: "camer", ProviderID: "01a18301-0000-7000-8000-000000000022"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer close(second.stop)
+	var resume struct {
+		DeveloperInstructions string `json:"developerInstructions"`
+	}
+	if err := json.Unmarshal(restarted.last("thread/resume"), &resume); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resume.DeveloperInstructions, "Explain every change in one line.") {
+		t.Fatalf("thread/resume = %s, want the agent's instructions again", restarted.last("thread/resume"))
 	}
 }
 
@@ -964,7 +1036,11 @@ func waitForProtocolResultFailure(t *testing.T, f *fixture) {
 
 func TestMalformedArgumentsAreRejected(t *testing.T) {
 	f := setup(t)
-	for _, raw := range []string{`{}`, `{"brief":{"objective":"x","acceptance_criteria":[]}}`, `{"brief":{"objective":"x","acceptance_criteria":["y"]},"provider":"camer"}`, `{"brief":{"objective":"` + strings.Repeat("界", 10_001) + `","acceptance_criteria":["y"]}}`, `{"brief":{"objective":"x","acceptance_criteria":["` + strings.Repeat("界", 1_001) + `"]}}`} {
+	for _, raw := range []string{`{}`, `{"brief":{"objective":"x","acceptance_criteria":[]}}`, `{"brief":{"objective":"x","acceptance_criteria":["y"]},"provider":"camer"}`, `{"brief":{"objective":"` + strings.Repeat("界", 10_001) + `","acceptance_criteria":["y"]}}`, `{"brief":{"objective":"x","acceptance_criteria":["` + strings.Repeat("界", 1_001) + `"]}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":" "}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":"r","instructions":"\n"}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":"r","name":"n"}}`,
+		`{"brief":{"objective":"x","acceptance_criteria":["y"]},"agent":{"role":"` + strings.Repeat("界", 1_001) + `"}}`} {
 		reply, err := f.adapter.Send(context.Background(), startRequest(raw))
 		if err != nil || reply.Durability != wire.DurabilityRejected || reply.Failure.Code != wire.FailureInvalidArguments {
 			t.Fatalf("raw=%s reply=%+v err=%v", raw, reply, err)

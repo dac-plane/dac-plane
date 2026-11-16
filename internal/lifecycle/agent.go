@@ -73,15 +73,25 @@ func (p AgentProfile) Validate() error {
 		strings.ContainsAny(p.Name, "\n\r") || utf8.RuneCountInString(p.Name) > MaxAgentNameCharacters {
 		return fmt.Errorf("%w: agent name must be one line of 1 to %d characters with no surrounding space", ErrInvalid, MaxAgentNameCharacters)
 	}
-	if !utf8.ValidString(p.Role) || strings.TrimSpace(p.Role) == "" || utf8.RuneCountInString(p.Role) > MaxAgentRoleCharacters {
-		return fmt.Errorf("%w: agent role must be non-blank and at most %d characters", ErrInvalid, MaxAgentRoleCharacters)
-	}
-	if !utf8.ValidString(p.Instructions) || utf8.RuneCountInString(p.Instructions) > MaxAgentInstructionsCharacters ||
-		(p.Instructions != "" && strings.TrimSpace(p.Instructions) == "") {
-		return fmt.Errorf("%w: agent instructions must be absent or non-blank and at most %d characters", ErrInvalid, MaxAgentInstructionsCharacters)
+	if err := ValidateAgentDirection(p.Role, p.Instructions); err != nil {
+		return err
 	}
 	if p.Provider.IsZero() || p.EnvironmentProvider.IsZero() {
 		return fmt.Errorf("%w: agent requires a default runtime provider and environment provider", ErrInvalid)
+	}
+	return nil
+}
+
+// ValidateAgentDirection reports whether an agent's role and standing
+// instructions are within their bounds. The profile and the runtime's copy of
+// a pinned revision share it.
+func ValidateAgentDirection(role, instructions string) error {
+	if !utf8.ValidString(role) || strings.TrimSpace(role) == "" || utf8.RuneCountInString(role) > MaxAgentRoleCharacters {
+		return fmt.Errorf("%w: agent role must be non-blank and at most %d characters", ErrInvalid, MaxAgentRoleCharacters)
+	}
+	if !utf8.ValidString(instructions) || utf8.RuneCountInString(instructions) > MaxAgentInstructionsCharacters ||
+		(instructions != "" && strings.TrimSpace(instructions) == "") {
+		return fmt.Errorf("%w: agent instructions must be absent or non-blank and at most %d characters", ErrInvalid, MaxAgentInstructionsCharacters)
 	}
 	return nil
 }

@@ -168,6 +168,13 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.recreate("replica-b")
 	h.waitAdapterReconnect("replica-b", connectionsB)
 	h.taskOn("replica-b", submitted.Task.ID)
+	// Both replicas run the new binary on the previous schema: agent writes
+	// wait for the migration, and the task in flight is unaffected (ADR-0011).
+	if problem := apiRequest[httpapi.Problem](h, "replica-a", http.MethodPost, "/agents", map[string]string{
+		"Idempotency-Key": "ops-agent-before-migration",
+	}, h.agentRequest(), http.StatusServiceUnavailable).body; !strings.HasSuffix(problem.Type, "/not-migrated") {
+		t.Fatalf("agent before the migration = %+v, want not-migrated", problem)
+	}
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")
@@ -193,7 +200,32 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	if changes := h.sql(fmt.Sprintf(`select count(*) from provisioning_change where tenant_id='%s'::uuid and operation='set_policy'`, tenantID)); changes != "1" {
 		t.Fatalf("recorded set_policy changes = %q, want 1", changes)
 	}
-	t.Logf("upgrade evidence: schema=18 images=%s,%s ledger=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID))
+	// On the new schema a surface creates an agent and delegates to it, and
+	// the runtime, reconnected to the new binary, receives its instructions.
+	request := h.agentRequest()
+	agent := apiRequest[lifecycle.Agent](h, "replica-b", http.MethodPost, "/agents", map[string]string{
+		"Idempotency-Key": "ops-agent-after-migration",
+	}, request, http.StatusCreated).body
+	delegated := h.submitTo(agent.ID)
+	if delegated.Task.Agent == nil || *delegated.Task.Agent != (lifecycle.AgentReference{Agent: agent.ID, Revision: 1}) {
+		t.Fatalf("delegated task agent = %+v", delegated.Task.Agent)
+	}
+	want := contracts.AgentInstructions{Role: request.Role, Instructions: request.Instructions}
+	h.wait("delegated start_turn with agent instructions", func() bool {
+		evidence := h.ledgerEvidence(delegated.Operation.ID)
+		if evidence.Agent != nil && *evidence.Agent != want {
+			t.Fatalf("runtime received agent %+v, want %+v", *evidence.Agent, want)
+		}
+		return evidence.Deliveries >= 1 && evidence.Agent != nil
+	})
+	t.Logf("upgrade evidence: schema=18 images=%s,%s ledger=%+v delegated=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID), h.ledgerEvidence(delegated.Operation.ID))
+}
+
+func (h *harness) agentRequest() httpapi.AgentRequest {
+	return httpapi.AgentRequest{
+		Name: "Operations fixture", Role: "Completes the operations fixture", Instructions: "Report every step you take.",
+		Provider: mustProviderID(h.t, providerID), EnvironmentProvider: mustProviderID(h.t, environmentProviderID),
+	}
 }
 
 func newHarness(t *testing.T, replicaA, replicaB string) *harness {
@@ -359,6 +391,7 @@ type ledgerEvidence struct {
 	Applied    []struct {
 		Kind string `json:"kind"`
 	} `json:"applied"`
+	Agent *contracts.AgentInstructions `json:"agent"`
 }
 
 func (h *harness) ledgerEvidence(operation ids.OperationID) ledgerEvidence {
@@ -458,6 +491,20 @@ func (h *harness) submit() httpapi.SubmissionBody {
 		AcceptanceCriteria: []string{"The task reaches ready_for_review"},
 		Provider:           mustProviderID(h.t, providerID), EnvironmentProvider: mustProviderID(h.t, environmentProviderID),
 		Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
+		Unit: "tokens", Ceiling: 1000, Amount: 100,
+	}, http.StatusCreated).body
+}
+
+// submitTo delegates the operations fixture task to an agent, which supplies
+// the providers.
+func (h *harness) submitTo(agent ids.AgentID) httpapi.SubmissionBody {
+	return apiRequest[httpapi.SubmissionBody](h, "replica-a", http.MethodPost, "/tasks", map[string]string{
+		"Idempotency-Key": "ops-delegate-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+	}, httpapi.SubmitTaskRequest{
+		Agent:              agent,
+		Objective:          "Complete the operations fixture for the agent",
+		AcceptanceCriteria: []string{"The runtime received the agent's instructions"},
+		Demand:             contracts.DemandPerson, Deadline: time.Now().UTC().Add(time.Hour),
 		Unit: "tokens", Ceiling: 1000, Amount: 100,
 	}, http.StatusCreated).body
 }
@@ -664,11 +711,16 @@ func stackClient(t *testing.T) *http.Client {
 	if !roots.AppendCertsFromPEM(ca) {
 		t.Fatal("development CA contains no certificate")
 	}
+	// The issuer is published on the port the compose files publish it on.
+	issuerPort := os.Getenv("DAC_ISSUER_PORT")
+	if issuerPort == "" {
+		issuerPort = "18080"
+	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		mapped := map[string]string{
-			"issuer:8443":    "127.0.0.1:18080",
+			"issuer:8443":    "127.0.0.1:" + issuerPort,
 			"replica-a:8443": "127.0.0.1:18443",
 			"replica-b:8443": "127.0.0.1:28443",
 		}[address]

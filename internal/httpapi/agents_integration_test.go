@@ -4,8 +4,12 @@ package httpapi_test
 
 import (
 	"database/sql"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/httpapi"
@@ -13,6 +17,9 @@ import (
 	"github.com/dac-plane/dac-plane/internal/lifecycle"
 	"github.com/dac-plane/dac-plane/internal/platform/migrations"
 	store "github.com/dac-plane/dac-plane/internal/platform/postgres"
+	"github.com/dac-plane/dac-plane/internal/simulator"
+	"github.com/dac-plane/dac-plane/internal/testsupport/wiretest"
+	"github.com/dac-plane/dac-plane/internal/worker"
 )
 
 func (s *surface) agentBody(name string) httpapi.AgentRequest {
@@ -162,18 +169,45 @@ func TestSurfaceAgentsThroughHTTP(t *testing.T) {
 		}
 	}
 
-	// The runtime is never asked to start the delegated turn until the
-	// protocol carries the agent's instructions: the task fails visibly.
+	// A runtime that negotiated agent instructions receives the pinned
+	// revision's role and instructions beside the brief.
 	rt := s.dispatch(t, submission.Operation.ID)
-	if sent := rt.Ledger().Deliveries(submission.Operation.ID); sent != 0 {
-		t.Fatalf("delegated start_turn delivered %d times", sent)
+	if sent := rt.Ledger().Deliveries(submission.Operation.ID); sent != 1 {
+		t.Fatalf("delegated start_turn delivered %d times, want 1", sent)
 	}
-	if failed := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: "/tasks/" + submission.Task.ID.String(), as: "other"}), 200); failed.Task.State != lifecycle.TaskFailed {
+	var start contracts.RuntimeStart
+	for _, request := range rt.Ledger().Sent() {
+		if request.Operation == submission.Operation.ID {
+			if err := json.Unmarshal(request.Arguments, &start); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if start.Agent == nil || *start.Agent != (contracts.AgentInstructions{Role: revised.Role, Instructions: revised.Instructions}) || start.Brief.Objective != submit.Objective {
+		t.Fatalf("delegated start_turn = %+v", start)
+	}
+	if started := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: "/tasks/" + submission.Task.ID.String(), as: "other"}), 200); started.Task.State == lifecycle.TaskFailed {
+		t.Fatalf("delegated task failed after its start was delivered")
+	}
+
+	// A runtime that did not negotiate them is never asked to start a
+	// delegated turn: the task fails visibly instead of running without them.
+	unsupported := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "other", key: "delegate-old-kit", body: submit}), 201)
+	rt = s.dispatchWith(t, unsupported.Operation.ID, simulator.DefaultHello())
+	if sent := rt.Ledger().Deliveries(unsupported.Operation.ID); sent != 0 {
+		t.Fatalf("delegated start_turn delivered %d times to a runtime without agent instructions", sent)
+	}
+	if failed := decodeInto[httpapi.TaskBody](t, s.do(t, call{method: "GET", path: "/tasks/" + unsupported.Task.ID.String(), as: "other"}), 200); failed.Task.State != lifecycle.TaskFailed {
 		t.Fatalf("delegated task state = %s, want failed", failed.Task.State)
 	}
-	dispatched, err := store.GetOutboxRow(s.ctx, s.pool, s.tenant, submission.Operation.ID.Untyped())
+	dispatched, err := store.GetOutboxRow(s.ctx, s.pool, s.tenant, unsupported.Operation.ID.Untyped())
 	if err != nil || dispatched.LastError != "agent_instructions_unsupported" {
 		t.Fatalf("delegated dispatch = %+v, %v", dispatched, err)
+	}
+	// The same runtime still starts a task submitted to providers.
+	other := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "plain-old-kit", body: s.submitBody()}), 201)
+	if rt = s.dispatchWith(t, other.Operation.ID, simulator.DefaultHello()); rt.Ledger().Deliveries(other.Operation.ID) != 1 {
+		t.Fatalf("undelegated start_turn delivered %d times, want 1", rt.Ledger().Deliveries(other.Operation.ID))
 	}
 
 	if got := problemType(t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "delegate-2", body: func() httpapi.SubmitTaskRequest {
@@ -260,4 +294,66 @@ func agentRevision(reference *lifecycle.AgentReference) any {
 		return nil
 	}
 	return int64(reference.Revision)
+}
+
+// TestSurfaceDelegatedTakeoverReplaysOnlyOverAnAgentConnection takes over a
+// delegated start_turn whose send marker survived its worker. The runtime has
+// one connection that negotiated only agent instructions and one that
+// negotiated only replay: no connection can replay the delegated turn, so the
+// takeover leaves it to reconciliation instead of releasing it forever.
+func TestSurfaceDelegatedTakeoverReplaysOnlyOverAnAgentConnection(t *testing.T) {
+	s := newSurface(t)
+	s.registerRuntime(t)
+	agent := decodeInto[lifecycle.Agent](t, s.do(t, call{method: "POST", path: "/agents", as: "owner", key: "takeover-agent", body: s.agentBody("Takeover")}), 201)
+	submit := s.submitBody()
+	submit.Agent, submit.Provider, submit.EnvironmentProvider = agent.ID, ids.ProviderID{}, ids.ProviderID{}
+	submission := decodeInto[httpapi.SubmissionBody](t, s.do(t, call{method: "POST", path: "/tasks", as: "owner", key: "takeover-task", body: submit}), 201)
+	s.dispatchPendingEnvironments(t)
+	// An earlier claim committed its send marker and then lost its worker.
+	if _, err := s.pool.Exec(s.ctx, `update outbox set last_error='send_started' where tenant_id=$1 and outbox_id=$2`, s.tenant.String(), submission.Operation.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+
+	hello := func(offered ...contracts.Capability) contracts.Lifecycle {
+		h := simulator.DefaultHello()
+		h.Offered = offered
+		return h
+	}
+	agentOnly, err := simulator.NewRuntime(simulator.Config{Tenant: s.tenant, Provider: s.provider, Hello: hello(contracts.CapabilityAgentInstructions)}, simulator.RuntimeScenario{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayOnly, err := simulator.NewRuntime(simulator.Config{Tenant: s.tenant, Provider: s.provider, Hello: hello(contracts.CapabilityOperationReplay)}, simulator.RuntimeScenario{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := wiretest.For(t, s.pool)
+	wire.Serve(t, s.tenant, s.provider, agentOnly)
+	wire.Connect(t, wire.Bind(t, s.tenant, s.provider, contracts.RoleRuntime, nil), s.provider, replayOnly)
+	deadline := time.Now().Add(10 * time.Second)
+	for wire.Registry.Connections(s.tenant, s.provider, contracts.RoleRuntime) != 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("second runtime connection never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	w, err := worker.New(s.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), "takeover-worker", worker.WithPorts(wire.Registry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Tick(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if sent := agentOnly.Ledger().Deliveries(submission.Operation.ID) + replayOnly.Ledger().Deliveries(submission.Operation.ID); sent != 0 {
+		t.Fatalf("takeover delivered the delegated start %d times", sent)
+	}
+	operation, err := store.GetOperation(s.ctx, s.pool, s.tenant, submission.Operation.ID)
+	if err != nil || operation.State != lifecycle.OperationUncertain {
+		t.Fatalf("operation = %s, %v; want uncertain, for reconciliation", operation.State, err)
+	}
+	row, err := store.GetOutboxRow(s.ctx, s.pool, s.tenant, submission.Operation.ID.Untyped())
+	if err != nil || row.Status != "done" {
+		t.Fatalf("outbox row = %+v, %v; want done", row, err)
+	}
 }

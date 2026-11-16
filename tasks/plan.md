@@ -1,8 +1,9 @@
 # Define agents in dac-plane and delegate work to them
 
 Tracker: https://github.com/dac-plane/dac-plane/issues/136
-Branch: `feat/136-agent-surface`, from `main` at `4a8485f`. This branch carries step 4, the application commands
-and the Surface API. Step 2 merged in #139 and step 3 in #141. v0.2.0 is released (#134).
+Branch: `feat/136-agent-wire`, from `main` at `1a74751`. This branch carries steps 5 and 6 together: the wire
+capability with the adapters, then the guide and the upgrade scenario. Step 2 merged in #139, step 3 in #141 and step 4
+in #142. v0.2.0 is released (#134).
 
 ## Where the tree stands
 
@@ -71,14 +72,57 @@ For step 4:
   fills them from the task row for every task entry, applied or refused, whichever binary writes it. Migration 17 is
   unreleased (v0.2.0 ends at 16), so it is amended rather than followed by another.
 
+For step 5:
+
+- `RuntimeStart` gains an optional `agent` object of `role` and `instructions`, the pinned revision's text and nothing
+  else: no agent identifier, revision or name reaches the runtime, as ADR-0020 states. Its JSON Schema reuses the
+  profile's `agentRole` and `agentInstructions` definitions, and `lifecycle.ValidateAgentDirection` holds the bounds
+  for both.
+- The capability is `agent.instructions`. The control plane's hello offers it beside `operation.replay`; the kit
+  exports `wire.CapabilityAgentInstructions` and types no `start_turn` arguments, so the kit change is the constant
+  and its documentation only.
+- Capabilities are per connection, so a registration can mix kits during a roll. `contracts.CapabilityScoped` lets the
+  worker restrict a port to connections that selected a capability; the registry's restricted port sends only there,
+  and replays only through a connection that selected both. A draining connection counts, so a token renewal releases
+  the send instead of failing the task.
+- The recorded outbox arguments stay as submitted. The worker adds the field per send, toward a negotiated connection
+  only, from the pinned revision, which is immutable, so every delivery of an operation carries the same bytes.
+- With no connection that negotiated it, a delegated `start_turn` is still refused as `agent_instructions_unsupported`
+  and a delegated migration restart is still held. Refusing at dispatch rather than at submission supersedes that
+  clause of ADR-0020, so it is recorded in ADR-0021: connections come and go, and submission cannot see which will
+  carry the turn.
+- Codex journals the developer instructions with the operation and passes them again on `thread/resume`, which takes
+  the same field: the app-server documents no persistence of `thread/start`'s instructions across a resume.
+- The Codex adapter offers the capability and passes the text to `thread/start` as `developerInstructions` (present in
+  app-server 0.165.0), keeping the brief as untrusted turn input. The simulator's runtime offers it by default, its
+  ledger shows what it received, and `dac-sim-adapter` offers it; the in-process wire harness advertises a simulator's
+  hello so tests choose either side.
+- The conformance suite is role-generic and stays as it is: that an adapter without the capability never receives the
+  field is the control plane's guarantee, proven by the registry and worker tests.
+- Review of #143: a takeover decides replay on the same agent-scoped port it sends on, so a registration whose only
+  replay connection lacks agent instructions reconciles instead of releasing forever; and a restart is sized before
+  its dispatch marker, aborting the item when brief, instructions and recovery together exceed the bound.
+- The 64 KiB arguments limit is unchanged. A brief and instructions that together exceed it fail the task as
+  `invalid_dispatch_body`, which the guide states.
+
+For step 6:
+
+- `docs/guides/use/agents.md` is the agents guide; the Surface API page points to it, and the adapter guide documents
+  the capability.
+- The rolling-upgrade scenario from v0.2.0 checks `503 not-migrated` for an agent write while both replicas run the
+  new binary on schema 16, then creates an agent on schema 18, delegates a task and reads from the simulator's control
+  ledger that the reconnected runtime received the instructions.
+
 ## Steps
 
-1. ADR-0020. Done in #138.
+1. ADR-0020. Done in #138. ADR-0021 refines its refusal timing, in step 5.
 2. Contracts: the agent and revision records, their transitions and audit, JSON Schemas and agreement tests. Done in #139.
    Verify: `just test-contracts`, `just ci-fast`, `just docs-check`.
 3. Persistence: the migration, the store, the rollout probe moved up one version. Done in #141.
    Verify: `just test-migration`, `just test-operations-fixture`, `just test-integration`, `just ci-fast`.
-4. Application and Surface API: the agent operations, submission to an agent, OpenAPI 1.1.0.
+4. Application and Surface API: the agent operations, submission to an agent, OpenAPI 1.1.0. Done in #142.
    Verify: `just test-integration`, `just test-contracts`, `just docs-check`, `just ci-fast`.
 5. Wire and adapters: the capability, the kit field, the Codex adapter and the simulator.
+   Verify: `just test-contracts`, `just test-conformance`, `just test-codex-adapter`, `just test-integration`.
 6. The user guide, and the upgrade scenario exercising the new schema.
+   Verify: `just docs-check`, `just test-operations-upgrade`, `just ci-fast`.

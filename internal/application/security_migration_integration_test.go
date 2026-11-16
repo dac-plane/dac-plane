@@ -1262,3 +1262,201 @@ func TestSecurityMigrationDowngradePreservesAdministration(t *testing.T) {
 		t.Fatalf("legacy read fabricated administration=%+v %v", old, err)
 	}
 }
+
+func TestMigrationRestartCarriesTheDelegatedAgentsInstructions(t *testing.T) {
+	t.Parallel()
+	f, cmd := migrationFixture(t)
+	f.seed(t, func(u *store.UnitOfWork) error {
+		return store.PutProviderRegistration(f.ctx, u, contracts.ProviderRegistration{Tenant: f.tenant, Provider: f.provider, Role: contracts.RoleRuntime, UpdatedAt: f.at})
+	})
+	agent, err := application.CreateAgent(f.ctx, f.pool, application.CreateAgentCommand{
+		Command: application.Command{Actor: f.actor, Nonce: "migration-agent"}, At: f.at,
+		Profile: lifecycle.AgentProfile{Name: "Fixture keeper", Role: "Keeps the fixture current", Instructions: "Change one line at a time.", Provider: f.provider, EnvironmentProvider: f.environmentProvider},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submit := f.submitCommand("migration-delegated-source")
+	submit.Agent = agent.ID
+	s := f.submit(t, submit)
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{s.Operation.ID: {Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t, sourceRuntime)
+	if got := f.ingest(t, f.event(sourceRuntime, s, 1, simulator.RowsFrame(false, row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "delegated-source-session"})))); got.Applied != 1 {
+		t.Fatalf("source binding ingestion=%+v", got)
+	}
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-delegated-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-delegated-execute")
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reaped := false
+	run := func(target *simulator.Runtime, name string, passes int) lifecycle.MigrationItem {
+		t.Helper()
+		items := reapMigration(t, f, v.Pass.ID, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: target}, environment, name, passes, &reaped)
+		if len(items) != 1 {
+			t.Fatalf("items=%+v", items)
+		}
+		return items[0]
+	}
+
+	// A target runtime on an earlier kit is never sent the restart.
+	earlier, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To, Hello: simulator.DefaultHello()}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := run(earlier, "migration-delegated-earlier", 6)
+	if item.RestartOperation.IsZero() || earlier.Ledger().Deliveries(item.RestartOperation) != 0 || item.State == lifecycle.MigrationItemCompleted {
+		t.Fatalf("restart delivered %d times to a runtime without agent instructions, item=%+v", earlier.Ledger().Deliveries(item.RestartOperation), item)
+	}
+
+	// Once a runtime that negotiated them connects, the held restart carries
+	// the pinned revision's role and instructions.
+	current, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item = run(current, "migration-delegated-current", 4)
+	if item.State != lifecycle.MigrationItemCompleted {
+		t.Fatalf("migration item=%+v; want completed", item)
+	}
+	var restart contracts.RuntimeStart
+	for _, request := range current.Ledger().Sent() {
+		if request.Operation == item.RestartOperation {
+			if err := json.Unmarshal(request.Arguments, &restart); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	want := contracts.AgentInstructions{Role: agent.Role, Instructions: agent.Instructions}
+	if restart.Recovery == nil || restart.Agent == nil || *restart.Agent != want {
+		t.Fatalf("migration restart=%+v; want recovery and agent %+v", restart, want)
+	}
+}
+
+// reapMigration runs passes worker passes over the migration, each expiring
+// the claim the one before took, and returns the pass's items.
+func reapMigration(t *testing.T, f *fixture, pass ids.MigrationID, runtimes map[ids.ProviderID]contracts.Port, environment contracts.Port, name string, passes int, reaped *bool) []lifecycle.MigrationItem {
+	t.Helper()
+	for i := range passes {
+		if *reaped {
+			if _, err := f.pool.Exec(f.ctx, `update maintenance_claim set expires_at=clock_timestamp()-interval '1 second' where tenant_id=$1`, f.tenant.String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		*reaped = true
+		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("%s-%d", name, i),
+			wiretest.Ports(t, f.pool, f.tenant, runtimes, wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: environment})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.ReapClaims(f.ctx); err != nil {
+			t.Fatalf("pass %d: %v", i, err)
+		}
+	}
+	items, err := store.ListMigrationItems(f.ctx, f.pool, f.tenant, pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return items
+}
+
+// TestMigrationAbortsARestartTooLargeToSend delegates a task whose first
+// start fits the arguments bound but whose restart, with its recovery beside
+// the agent's instructions, does not. The item aborts before the restart is
+// marked dispatched instead of stalling with its source quiesced.
+func TestMigrationAbortsARestartTooLargeToSend(t *testing.T) {
+	t.Parallel()
+	f, cmd := migrationFixture(t)
+	f.seed(t, func(u *store.UnitOfWork) error {
+		return store.PutProviderRegistration(f.ctx, u, contracts.ProviderRegistration{Tenant: f.tenant, Provider: f.provider, Role: contracts.RoleRuntime, UpdatedAt: f.at})
+	})
+	agent, err := application.CreateAgent(f.ctx, f.pool, application.CreateAgentCommand{
+		Command: application.Command{Actor: f.actor, Nonce: "migration-large-agent"}, At: f.at,
+		Profile: lifecycle.AgentProfile{Name: "Verbose", Role: "Writes at length", Instructions: strings.Repeat("界", 19_000), Provider: f.provider, EnvironmentProvider: f.environmentProvider},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: f.provider}, simulator.RuntimeScenario{
+		Default: &simulator.RuntimeOp{Reply: simulator.Accepted(nil), Effect: simulator.TurnStarted}, MigrationReceipts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startSize := func(operation ids.OperationID) int {
+		for _, request := range sourceRuntime.Ledger().Sent() {
+			if request.Operation == operation {
+				return len(request.Arguments)
+			}
+		}
+		t.Fatalf("operation %s was never started", operation)
+		return 0
+	}
+	delegate := func(nonce, objective string) application.Submission {
+		submit := f.submitCommand(nonce)
+		submit.Agent, submit.Brief.Objective = agent.ID, objective
+		s := f.submit(t, submit)
+		f.tick(t, sourceRuntime)
+		if got := f.ingest(t, f.event(sourceRuntime, s, 1, simulator.RowsFrame(false, row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "session-" + nonce})))); got.Applied != 1 {
+			t.Fatalf("%s binding ingestion=%+v", nonce, got)
+		}
+		return s
+	}
+	// The probe measures a start with a one-character objective; the large
+	// task pads its objective so its first start lands just under the bound.
+	probe := delegate("migration-large-probe", "o")
+	const bound = 64 << 10
+	padding := bound - 60 - startSize(probe.Operation.ID)
+	if padding < 0 || padding >= lifecycle.MaxObjectiveCharacters {
+		t.Fatalf("padding %d is outside the objective's bound", padding)
+	}
+	large := delegate("migration-large-task", "o"+strings.Repeat("a", padding))
+	if size := startSize(large.Operation.ID); size > bound || size < bound-200 {
+		t.Fatalf("first start is %d bytes, want just under %d", size, bound)
+	}
+
+	v, err := application.CreateMigration(f.ctx, f.pool, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = migrate(t, f, v, lifecycle.MigrationPreview, "migration-large-preview")
+	v = migrate(t, f, v, lifecycle.MigrationExecute, "migration-large-execute")
+	targetRuntime, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := simulator.NewEnvironment(simulator.Config{Tenant: f.tenant, Provider: f.environmentProvider}, simulator.EnvironmentScenario{MigrationReceipts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reaped := false
+	items := reapMigration(t, f, v.Pass.ID, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: targetRuntime}, environment, "migration-large", 10, &reaped)
+	bySource := map[ids.AttemptID]lifecycle.MigrationItem{}
+	for _, item := range items {
+		bySource[item.SourceAttempt] = item
+	}
+	if item := bySource[probe.Attempt.ID]; item.State != lifecycle.MigrationItemCompleted {
+		t.Fatalf("probe item=%+v; want completed", item)
+	}
+	item := bySource[large.Attempt.ID]
+	if item.RestartOperation.IsZero() || (item.State != lifecycle.MigrationItemAborting && item.State != lifecycle.MigrationItemFailed) {
+		t.Fatalf("large item=%+v; want aborted before its restart", item)
+	}
+	if sent := targetRuntime.Ledger().Deliveries(item.RestartOperation); sent != 0 {
+		t.Fatalf("oversized restart delivered %d times", sent)
+	}
+	restart, err := store.GetOperation(f.ctx, f.pool, f.tenant, item.RestartOperation)
+	if err != nil || restart.State != lifecycle.OperationRecorded {
+		t.Fatalf("restart operation=%s err=%v; want still only recorded", restart.State, err)
+	}
+}

@@ -279,7 +279,7 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simul
 			return nil, err
 		}
 		set.runtime = runtime
-		set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay}}}
+		set.adapters = []adapter{{provider: s.Provider, role: wire.RoleRuntime, port: runtime, token: runtimeToken, offered: []string{wire.CapabilityOperationReplay, wire.CapabilityAgentInstructions}}}
 	}
 	if s.ArtifactExport != nil {
 		if s.ArtifactStore != nil {

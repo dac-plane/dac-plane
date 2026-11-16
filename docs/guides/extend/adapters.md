@@ -55,6 +55,12 @@ Two rules matter more than any other:
 An adapter may offer `wire.CapabilityOperationReplay` only if it can answer a repeated delivery from what it already
 did, across a process restart. The shipped adapters keep a small journal on disk for this.
 
+A runtime adapter may offer `wire.CapabilityAgentInstructions` to take tasks delegated to an
+[agent](../use/agents.md). Its `start_turn` arguments then carry an `agent` object, with a `role` and optional
+`instructions`, beside the `brief`. Place them where the runtime takes standing instructions, apart from the brief: the
+brief is the owner's request, the instructions are the tenant's. dac-plane never sends the field to a connection that
+did not select the capability, so an adapter that decodes its arguments strictly keeps working without it.
+
 [`examples/minimal`](https://github.com/dac-plane/dac-plane/tree/main/adapterkit/examples/minimal) is a complete
 adapter that passes the conformance suite, and the
 [Codex](https://github.com/dac-plane/dac-plane/tree/main/adapters/codex),

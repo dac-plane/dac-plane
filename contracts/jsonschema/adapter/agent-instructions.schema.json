@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentInstructions",
+  "description": "The role and standing instructions of the agent revision a task was delegated to, sent beside the brief only to an adapter that negotiated agent.instructions.",
+  "type": "object",
+  "required": ["role"],
+  "additionalProperties": false,
+  "properties": {
+    "role": { "$ref": "../lifecycle/common.schema.json#/$defs/agentRole" },
+    "instructions": { "$ref": "../lifecycle/common.schema.json#/$defs/agentInstructions" }
+  }
+}

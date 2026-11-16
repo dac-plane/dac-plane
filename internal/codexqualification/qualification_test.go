@@ -107,6 +107,37 @@ func TestCodexRuntimeQualification(t *testing.T) {
 		_ = waitTask(t, ctx, client, token, submitted.Task.ID, lifecycle.TaskSucceeded)
 	})
 
+	t.Run("delegated agent's instructions reach the model", func(t *testing.T) {
+		// The brief leaves the file's content open; only the agent's standing
+		// instructions, sent as developer instructions, fix it.
+		agent := createAgent(t, ctx, client, token, "Qualification writer", "Writes the qualification fixture",
+			"Every file you create contains exactly the text agent-instructions-followed and one trailing newline, nothing else.")
+		submitted := submitTo(t, ctx, client, token, agent.ID,
+			"Use exec_command exactly once with sandbox_permissions require_escalated to create agent.txt with printf. Do not use another file-writing tool.",
+			"agent.txt exists and follows the standing instructions")
+		if submitted.Task.Agent == nil || submitted.Task.Agent.Agent != agent.ID {
+			t.Fatalf("delegated task agent=%+v", submitted.Task.Agent)
+		}
+		var ready responseValue[httpapi.TaskBody]
+		for approvals := 0; approvals < 4; approvals++ {
+			attention, done := waitAttentionOrReady(t, ctx, client, token, submitted.Task.ID)
+			if done {
+				break
+			}
+			decide(t, ctx, client, token, attention, lifecycle.DecisionApproveOnce)
+			waitDecisionConsumed(t, ctx, client, token, submitted.Task.ID, attention.ID)
+		}
+		ready = waitTask(t, ctx, client, token, submitted.Task.ID, lifecycle.TaskReadyForReview)
+		if len(ready.value.Revisions) != 1 || len(ready.value.Revisions[0].Revision.Artifacts) != 1 {
+			t.Fatalf("revisions=%+v", ready.value.Revisions)
+		}
+		if got := artifactEvidence(t, ctx, client, ready.value.Revisions[0].Revision.Artifacts[0]); string(got) != "agent-instructions-followed\n" {
+			t.Fatalf("artifact bytes=%q, want the content only the agent's instructions name", got)
+		}
+		review(t, ctx, client, token, ready, lifecycle.DispositionAccept)
+		_ = waitTask(t, ctx, client, token, submitted.Task.ID, lifecycle.TaskSucceeded)
+	})
+
 	t.Run("denial has no effect or standing authority", func(t *testing.T) {
 		for attempt := 0; attempt < 2; attempt++ {
 			name := fmt.Sprintf("denied-%d.txt", attempt+1)
@@ -122,6 +153,33 @@ func TestCodexRuntimeQualification(t *testing.T) {
 		}
 	})
 
+}
+
+func createAgent(t *testing.T, ctx context.Context, client *http.Client, token *tokenSource, name, role, instructions string) lifecycle.Agent {
+	t.Helper()
+	provider, err := ids.Parse[ids.Provider](providerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := ids.Parse[ids.Provider](environmentProviderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request[lifecycle.Agent](t, ctx, client, token, http.MethodPost, "/agents", map[string]string{
+		"Idempotency-Key": "codex-agent-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+	}, httpapi.AgentRequest{Name: name, Role: role, Instructions: instructions, Provider: provider, EnvironmentProvider: environment}, http.StatusCreated).value
+}
+
+// submitTo delegates a task to an agent, which supplies the providers.
+func submitTo(t *testing.T, ctx context.Context, client *http.Client, token *tokenSource, agent ids.AgentID, objective, criterion string) httpapi.SubmissionBody {
+	t.Helper()
+	return request[httpapi.SubmissionBody](t, ctx, client, token, http.MethodPost, "/tasks", map[string]string{
+		"Idempotency-Key": "codex-delegate-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+	}, httpapi.SubmitTaskRequest{
+		Agent: agent, Objective: objective, AcceptanceCriteria: []string{criterion},
+		Demand: contracts.DemandPerson, Deadline: time.Now().UTC().Add(10 * time.Minute),
+		Unit: "tokens", Ceiling: 100_000, Amount: 10_000,
+	}, http.StatusCreated).value
 }
 
 type responseValue[T any] struct {
@@ -429,7 +487,7 @@ func qualificationClient(t *testing.T) *http.Client {
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		mapped := map[string]string{"issuer:8443": "127.0.0.1:18080", "dac-plane:8443": "127.0.0.1:18443", "artifact-adapter:8082": "127.0.0.1:18082"}[address]
+		mapped := map[string]string{"issuer:8443": "127.0.0.1:" + issuerPort(), "dac-plane:8443": "127.0.0.1:18443", "artifact-adapter:8082": "127.0.0.1:18082"}[address]
 		if mapped == "" {
 			return nil, fmt.Errorf("qualification refuses unexpected address %q", address)
 		}
@@ -437,4 +495,12 @@ func qualificationClient(t *testing.T) *http.Client {
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 15 * time.Second}
+}
+
+// issuerPort is the port the stack publishes the issuer on.
+func issuerPort() string {
+	if port := os.Getenv("DAC_ISSUER_PORT"); port != "" {
+		return port
+	}
+	return "18080"
 }

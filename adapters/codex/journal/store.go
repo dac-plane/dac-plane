@@ -36,7 +36,10 @@ type Operation struct {
 	// Environment is the resource running the commands, empty when they run
 	// beside the adapter.
 	Environment string
-	CreatedAt   time.Time
+	// DeveloperInstructions are the delegated agent's standing instructions
+	// the thread started with, passed again when the thread is resumed.
+	DeveloperInstructions string `json:",omitempty"`
+	CreatedAt             time.Time
 }
 
 type Decision struct {

@@ -24,6 +24,12 @@ and redacted from app-server stderr.
 The first qualification configuration is `camer`, `https://api.ai.camer.digital/v1`, Responses wire
 protocol, and `deepseek-v4-flash-0731`. Those values are not defaults in a neutral DAC contract.
 
+## Agent instructions
+
+The adapter offers `agent.instructions`. A task delegated to an agent then arrives with the agent's role and standing
+instructions beside the brief; the adapter passes them to `thread/start` as `developerInstructions`, and the brief stays
+untrusted turn input ([ADR-0020](../../docs/adr/0020-agents-are-product-records.md)).
+
 ## Replay boundary
 
 This adapter deliberately does not advertise `operation.replay`. It writes a `prepared` operation
