@@ -82,7 +82,7 @@ cat >"$output/compose.env" <<EOF
 DAC_DEPLOYMENT=development
 DAC_SURFACE_PORT=18443
 DAC_ADAPTER_PORT=19443
-DAC_ISSUER_PORT=18080
+DAC_ISSUER_PORT=${DAC_ISSUER_PORT:-18080}
 DAC_IDENTITY_CONFIG_FILE=$script_dir/identity.dev.json
 DAC_TLS_CERT_FILE=$output/server.crt
 DAC_TLS_KEY_FILE=$output/server.key
