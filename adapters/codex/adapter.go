@@ -1319,6 +1319,7 @@ func validGateway(g *journal.GatewayAccess, origin string) bool {
 	}
 	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
 }
+
 // GatewayOrigin is the origin of the connector gateway on the control plane
 // whose adapter endpoint is adapterURL: the same host and port over HTTPS.
 // The adapter kit accepts only https and wss endpoints, so neither ever
