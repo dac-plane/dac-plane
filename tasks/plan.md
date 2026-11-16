@@ -99,6 +99,9 @@ For step 5:
   hello so tests choose either side.
 - The conformance suite is role-generic and stays as it is: that an adapter without the capability never receives the
   field is the control plane's guarantee, proven by the registry and worker tests.
+- Review of #143: a takeover decides replay on the same agent-scoped port it sends on, so a registration whose only
+  replay connection lacks agent instructions reconciles instead of releasing forever; and a restart is sized before
+  its dispatch marker, aborting the item when brief, instructions and recovery together exceed the bound.
 - The 64 KiB arguments limit is unchanged. A brief and instructions that together exceed it fail the task as
   `invalid_dispatch_body`, which the guide states.
 

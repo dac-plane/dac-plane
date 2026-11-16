@@ -95,7 +95,9 @@ built with an earlier kit never receives the field:
 - A harness migration that restarts a delegated task waits until the target runtime has such a connection.
 
 Tasks submitted without an agent are unaffected. The `start_turn` arguments, brief and instructions together, must fit
-in 64 KiB once encoded; a larger start fails the task with the dispatch reason `invalid_dispatch_body`.
+in 64 KiB once encoded; a larger start fails the task with the dispatch reason `invalid_dispatch_body`. A harness
+migration's restart also carries its recovery context, so a task that only just fits may not move: its migration item
+aborts before the restart is sent and the task's attempt fails, as for any aborted migration.
 
 ## During an upgrade
 

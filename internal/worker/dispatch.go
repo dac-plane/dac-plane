@@ -222,28 +222,22 @@ func (w *Worker) dispatchRow(ctx context.Context, tenant ids.TenantID, row store
 	if err := request.Validate(); err != nil {
 		return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, false)
 	}
-	if body.Role == contracts.RoleRuntime && body.Method == contracts.MethodStartTurn {
-		agent, err := w.agentInstructions(ctx, tenant, prepared.operation.Attempt)
+	if agent := prepared.agent; agent != nil {
+		negotiated := agentPort(port)
+		if negotiated == nil {
+			// Refused before anything is sent, so the task fails visibly
+			// instead of running without its agent's instructions.
+			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonAgentInstructions, prepared.replay)
+		}
+		arguments, err := withAgentInstructions(body.Arguments, *agent)
 		if err != nil {
-			return errors.Join(err, w.releasePrepared(ctx, tenant, row, prepared, now, !prepared.replay))
+			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
 		}
-		if agent != nil {
-			negotiated := agentPort(port)
-			if negotiated == nil {
-				// Refused before anything is sent, so the task fails visibly
-				// instead of running without its agent's instructions.
-				return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonAgentInstructions, prepared.replay)
-			}
-			arguments, err := withAgentInstructions(body.Arguments, *agent)
-			if err != nil {
-				return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
-			}
-			request.Arguments = arguments
-			if err := request.Validate(); err != nil {
-				return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
-			}
-			port = negotiated
+		request.Arguments = arguments
+		if err := request.Validate(); err != nil {
+			return w.exhaustPrepared(ctx, tenant, row, prepared, now, reasonInvalidBody, prepared.replay)
 		}
+		port = negotiated
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, min(w.cfg.SendTimeout, time.Until(body.Deadline)))
 	defer cancel()
@@ -288,6 +282,9 @@ type preparedDispatch struct {
 	lease     store.AttemptLease
 	replay    bool
 	role      contracts.Role
+	// agent is the delegated agent's direction for a start_turn, nil for
+	// any other dispatch and for a task submitted to providers.
+	agent *contracts.AgentInstructions
 }
 
 // prepareDispatch claims the row and runs the pre-dispatch checklist in one
@@ -368,6 +365,15 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			return nil, err
 		}
 	}
+	// A delegated start_turn is sent only over a connection that negotiated
+	// agent instructions, so whether a takeover can replay it is decided on
+	// that same restricted port.
+	var agent *contracts.AgentInstructions
+	if body.Role == contracts.RoleRuntime && body.Method == contracts.MethodStartTurn {
+		if agent, err = w.agentInstructions(ctx, uow, tenant, operation.Attempt); err != nil {
+			return nil, err
+		}
+	}
 	switch operation.State {
 	case lifecycle.OperationSucceeded, lifecycle.OperationFailed, lifecycle.OperationRejected:
 		return ack(claim)
@@ -398,6 +404,9 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 			}
 		}
 		port := w.port(tenant, operation.Provider, body.Role)
+		if agent != nil {
+			port = agentPort(port)
+		}
 		if _, ok := port.(contracts.StableOperationReplayer); ok {
 			replay = true
 		} else {
@@ -557,7 +566,7 @@ func (w *Worker) prepareDispatch(ctx context.Context, tenant ids.TenantID, row s
 		return nil, err
 	}
 	w.stats.Claims.Add(1)
-	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay, role: body.Role}, nil
+	return &preparedDispatch{claim: claim, operation: operation, lease: lease, replay: replay, role: body.Role, agent: agent}, nil
 }
 
 // budgetSpent reports whether the row already burned its retry budget, and
@@ -1122,16 +1131,16 @@ func (w *Worker) releaseLease(ctx context.Context, uow *store.UnitOfWork, tenant
 // the attempt's task was delegated to, or nil for a task submitted to
 // providers. The revision is pinned at submission, so every delivery of the
 // same operation carries the same text (ADR-0020).
-func (w *Worker) agentInstructions(ctx context.Context, tenant ids.TenantID, attempt ids.AttemptID) (*contracts.AgentInstructions, error) {
-	loaded, err := store.GetAttempt(ctx, w.pool, tenant, attempt)
+func (w *Worker) agentInstructions(ctx context.Context, q store.Querier, tenant ids.TenantID, attempt ids.AttemptID) (*contracts.AgentInstructions, error) {
+	loaded, err := store.GetAttempt(ctx, q, tenant, attempt)
 	if err != nil {
 		return nil, err
 	}
-	task, err := store.GetTask(ctx, w.pool, tenant, loaded.Task)
+	task, err := store.GetTask(ctx, q, tenant, loaded.Task)
 	if err != nil || task.Agent == nil {
 		return nil, err
 	}
-	revision, err := store.GetAgentRevision(ctx, w.pool, tenant, task.Agent.Agent, task.Agent.Revision)
+	revision, err := store.GetAgentRevision(ctx, q, tenant, task.Agent.Agent, task.Agent.Revision)
 	if err != nil {
 		return nil, err
 	}
