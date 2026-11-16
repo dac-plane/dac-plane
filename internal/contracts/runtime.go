@@ -10,10 +10,12 @@ import (
 // RuntimeStart is the provider-neutral input to start_turn. Recovery is set
 // only when a harness migration restarts the same product task from artifacts.
 // Agent is set only for a task delegated to an agent, and only toward an
-// adapter that negotiated CapabilityAgentInstructions.
+// adapter that negotiated CapabilityAgentInstructions. Gateway is set only
+// toward an adapter that selected CapabilityConnectorGateway.
 type RuntimeStart struct {
 	Brief       lifecycle.ExecutionBrief `json:"brief"`
 	Agent       *AgentInstructions       `json:"agent,omitempty"`
+	Gateway     *GatewayAccess           `json:"gateway,omitempty"`
 	Environment *EnvironmentReference    `json:"environment,omitempty"`
 	Recovery    *MigrationRequest        `json:"recovery,omitempty"`
 }
@@ -55,6 +57,11 @@ func (r RuntimeStart) Validate() error {
 	}
 	if r.Agent != nil {
 		if err := r.Agent.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.Gateway != nil {
+		if err := r.Gateway.Validate(); err != nil {
 			return err
 		}
 	}

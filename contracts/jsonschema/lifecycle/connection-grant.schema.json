@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectionGrant",
+  "description": "Lets the work of one agent, or of one task, call some tools of a connection. Used only by a task the connection's owner owns. always is the owner's standing approval of every call it covers; ask makes each call wait for a decision. call_limit bounds the calls one task may make under the grant.",
+  "type": "object",
+  "required": [
+    "grant_id",
+    "tenant_id",
+    "connection_id",
+    "tools",
+    "permission",
+    "call_limit",
+    "state",
+    "granted_by",
+    "version",
+    "expires_at",
+    "created_at",
+    "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "grant_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "tenant_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "connection_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "agent_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "task_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/toolName"
+      }
+    },
+    "permission": {
+      "enum": [
+        "ask",
+        "always"
+      ]
+    },
+    "call_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "state": {
+      "enum": [
+        "active",
+        "revoked"
+      ]
+    },
+    "granted_by": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "version": {
+      "$ref": "../identity/common.schema.json#/$defs/generation"
+    },
+    "expires_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    },
+    "created_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    },
+    "updated_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "agent_id"
+      ],
+      "not": {
+        "required": [
+          "task_id"
+        ]
+      }
+    },
+    {
+      "required": [
+        "task_id"
+      ],
+      "not": {
+        "required": [
+          "agent_id"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "event": {
+      "enum": [
+        "revoke"
+      ]
+    }
+  }
+}

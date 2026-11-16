@@ -33,6 +33,14 @@ const CapabilityOperationReplay = "operation.replay"
 // connection that did not select it.
 const CapabilityAgentInstructions = "agent.instructions"
 
+// CapabilityConnectorGateway accepts a "gateway" object beside the brief in
+// start_turn arguments: the connector gateway's MCP endpoint and the bearer
+// token of the attempt. A runtime adapter offers it only when its runtime
+// calls that endpoint for connector tools and keeps the token out of model
+// context, logs and the workspace. The token authorizes nothing at an
+// external application and ends with the attempt.
+const CapabilityConnectorGateway = "connector.gateway"
+
 // DefaultMaxFrameBytes bounds one frame unless a peer configures another limit.
 const DefaultMaxFrameBytes = 1 << 20
 
@@ -69,6 +77,7 @@ const (
 	RoleEnvironment   Role = "environment"
 	RoleEnforcement   Role = "enforcement"
 	RoleArtifactStore Role = "artifact_store"
+	RoleConnector     Role = "connector"
 )
 
 // Methods is the catalogue of operations of a role.
@@ -82,6 +91,8 @@ func Methods(role Role) []string {
 		return []string{"pre_action", "post_action", "action_failed", "execute_action"}
 	case RoleArtifactStore:
 		return []string{"authorize_upload", "stat_object", "commit_manifest"}
+	case RoleConnector:
+		return []string{"list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool"}
 	}
 	return nil
 }

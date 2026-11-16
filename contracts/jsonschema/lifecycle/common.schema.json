@@ -25,11 +25,18 @@
     "agentReference": {
       "description": "The agent revision a task was delegated to, fixed at submission.",
       "type": "object",
-      "required": ["agent_id", "revision"],
+      "required": [
+        "agent_id",
+        "revision"
+      ],
       "additionalProperties": false,
       "properties": {
-        "agent_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "revision": { "$ref": "../identity/common.schema.json#/$defs/generation" }
+        "agent_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "revision": {
+          "$ref": "../identity/common.schema.json#/$defs/generation"
+        }
       }
     },
     "nativeRef": {
@@ -52,17 +59,75 @@
     "spendTerms": {
       "description": "What a principal authorizes in a spend challenge; an assertion must match exactly.",
       "type": "object",
-      "required": ["tenant_id", "principal_id", "task_id", "attempt_id", "operation_id", "amount", "unit", "nonce"],
+      "required": [
+        "tenant_id",
+        "principal_id",
+        "task_id",
+        "attempt_id",
+        "operation_id",
+        "amount",
+        "unit",
+        "nonce"
+      ],
       "additionalProperties": false,
       "properties": {
-        "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "principal_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "task_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "operation_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "amount": { "$ref": "#/$defs/amount", "minimum": 1 },
-        "unit": { "$ref": "#/$defs/unit" },
-        "nonce": { "$ref": "../identity/common.schema.json#/$defs/digest" }
+        "tenant_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "principal_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "task_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "attempt_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "operation_id": {
+          "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+        },
+        "amount": {
+          "$ref": "#/$defs/amount",
+          "minimum": 1
+        },
+        "unit": {
+          "$ref": "#/$defs/unit"
+        },
+        "nonce": {
+          "$ref": "../identity/common.schema.json#/$defs/digest"
+        }
+      }
+    },
+    "toolName": {
+      "description": "A connector tool's name: one segment of the governed action class connector.<name>.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,47}$"
+    },
+    "connectionAccount": {
+      "description": "What the external application reported about the account a connection acts as. It holds no credential.",
+      "type": "object",
+      "required": [
+        "account",
+        "permissions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+        },
+        "permissions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+          }
+        }
       }
     }
   }

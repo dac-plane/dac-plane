@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectorResult",
+  "description": "A connector's reply to call_tool: the call's JSON output and whether the external application refused or failed it. The output hashes to output_digest and never carries a credential.",
+  "type": "object",
+  "required": [
+    "operation_id",
+    "output",
+    "output_digest",
+    "completed_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "output": {},
+    "output_digest": {
+      "$ref": "../identity/common.schema.json#/$defs/digest"
+    },
+    "is_error": {
+      "type": "boolean"
+    },
+    "completed_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    }
+  }
+}

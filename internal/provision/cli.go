@@ -28,7 +28,7 @@ operations:
   grant-reader   -tenant TENANT -principal ID
   revoke-reader  -tenant TENANT -principal ID
   register-provider  -tenant TENANT -role ROLE [-id ID] [-artifact-store ID]
-                 roles: runtime, environment, enforcement, artifact_store
+                 roles: runtime, environment, enforcement, artifact_store, connector
   bind-adapter   -tenant TENANT -provider ID -role ROLE -issuer URL -subject SUB
   unbind-adapter -issuer URL -subject SUB
   qualify-harness -tenant TENANT -provider ID -mode live|shadow
@@ -115,7 +115,7 @@ func parse(args []string) (operation, error) {
 		return nil, fmt.Errorf("%w: -kind must be human or service", errUsage)
 	}
 	if set["role"] && !slices.Contains(contracts.Roles(), contracts.Role(role)) {
-		return nil, fmt.Errorf("%w: -role must be runtime, environment, enforcement or artifact_store", errUsage)
+		return nil, fmt.Errorf("%w: -role must be runtime, environment, enforcement, artifact_store or connector", errUsage)
 	}
 	if set["artifact-store"] && role != string(contracts.RoleRuntime) {
 		return nil, fmt.Errorf("%w: -artifact-store applies only to a runtime", errUsage)

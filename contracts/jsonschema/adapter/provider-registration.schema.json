@@ -8,7 +8,7 @@
   "properties": {
     "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-    "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store"] },
+    "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store", "connector"] },
     "artifact_store_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
   },

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Connection",
+  "description": "A tenant's link to one account at an external application, served by a connector provider. It refers to a credential the connector adapter holds and holds no secret. Only its owner completes, grants or removes it.",
+  "type": "object",
+  "required": [
+    "connection_id",
+    "tenant_id",
+    "provider_id",
+    "owner",
+    "name",
+    "state",
+    "version",
+    "created_at",
+    "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "connection_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "tenant_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "provider_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "owner": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^\\S(?:[^\\r\\n]*\\S)?$"
+    },
+    "state": {
+      "enum": [
+        "authorizing",
+        "active",
+        "removing",
+        "removed"
+      ]
+    },
+    "account": {
+      "$ref": "common.schema.json#/$defs/connectionAccount"
+    },
+    "version": {
+      "$ref": "../identity/common.schema.json#/$defs/generation"
+    },
+    "created_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    },
+    "updated_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "active"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "account"
+    ]
+  },
+  "$defs": {
+    "event": {
+      "enum": [
+        "complete",
+        "remove",
+        "finish_removal"
+      ]
+    }
+  }
+}

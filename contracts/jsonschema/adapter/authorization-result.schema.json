@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorizationResult",
+  "description": "A connector's reply to complete_authorization. An authorized result reports the account and its permissions; pending and failed report none.",
+  "type": "object",
+  "required": [
+    "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "pending",
+        "authorized",
+        "failed"
+      ]
+    },
+    "account": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/connectionAccount"
+    }
+  },
+  "if": {
+    "properties": {
+      "status": {
+        "const": "authorized"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "account"
+    ]
+  },
+  "else": {
+    "not": {
+      "required": [
+        "account"
+      ]
+    }
+  }
+}

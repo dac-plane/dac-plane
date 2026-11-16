@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorizationStarted",
+  "description": "A connector's reply to begin_authorization: the URL the connection's owner opens to consent. HTTPS, or HTTP on a loopback host for local development; the Go contract enforces the host rule.",
+  "type": "object",
+  "required": [
+    "authorization_url",
+    "expires_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "authorization_url": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 4096,
+      "pattern": "^https?://"
+    },
+    "expires_at": {
+      "$ref": "../identity/common.schema.json#/$defs/timestamp"
+    }
+  }
+}

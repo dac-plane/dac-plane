@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GatewayAccess",
+  "description": "How a runtime reaches the connector gateway for one attempt: its MCP endpoint and a bearer token whose only audience is that gateway. Sent only to an adapter that selected connector.gateway.",
+  "type": "object",
+  "required": [
+    "url",
+    "token"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[!-~]+$"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectorExecution",
+  "description": "The call_tool arguments for a connector: one authorized call of one tool on one connection with its exact input. The action is connector.<tool>, the scope names the connection and the input hashes to the request's input digest; the Go contract enforces those agreements.",
+  "type": "object",
+  "required": [
+    "request",
+    "grant_id",
+    "source",
+    "connection_grant_id",
+    "connection_id",
+    "tool",
+    "input"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "request": {
+      "$ref": "../identity/action-request.schema.json"
+    },
+    "grant_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "decision_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "source": {
+      "enum": [
+        "one_time_approval",
+        "standing_grant"
+      ]
+    },
+    "connection_grant_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "connection_id": {
+      "$ref": "../identity/common.schema.json#/$defs/uuidv7"
+    },
+    "tool": {
+      "$ref": "../lifecycle/common.schema.json#/$defs/toolName"
+    },
+    "input": {
+      "type": "object"
+    }
+  },
+  "if": {
+    "properties": {
+      "source": {
+        "const": "one_time_approval"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "decision_id"
+    ]
+  }
+}

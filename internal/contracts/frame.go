@@ -173,6 +173,10 @@ const (
 	// pinned agent revision's role and instructions (ADR-0020). An adapter
 	// that did not negotiate it is never sent a delegated task's start_turn.
 	CapabilityAgentInstructions Capability = "agent.instructions"
+	// CapabilityConnectorGateway permits start_turn arguments to carry the
+	// attempt's connector gateway endpoint and token (ADR-0022). A runtime
+	// adapter that did not select it is never sent them.
+	CapabilityConnectorGateway Capability = "connector.gateway"
 )
 
 // Lifecycle establishes or ends a session. A hello advertises supported

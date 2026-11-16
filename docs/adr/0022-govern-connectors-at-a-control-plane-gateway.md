@@ -1,6 +1,6 @@
 # ADR-0022: Govern connectors at a control-plane gateway, with credentials held by connector adapters
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-16
 - Issue: [#137](https://github.com/dac-plane/dac-plane/issues/137)
 
@@ -76,28 +76,32 @@ contracts name no vendor and no connector-specific field.
 
 **dac-plane is the only way a runtime reaches a connector.** dac-plane serves an MCP endpoint, the connector gateway,
 on the adapter endpoint's listener. A runtime calls connector tools there and never talks to a connector adapter.
-Each `tools/call` becomes a governed action and runs through the existing pipeline: policy, grant, pre-action hook
-where the tenant has an enforcement provider, `AuthorityUse`, audit, outbox `execute_action` to the connector adapter,
-receipt, post-action hook and reconciliation. The gateway is the policy and tool gateway that the baseline's ownership
-rule 4 requires on the execution path, so a connector action does not need an enforcement provider; when the tenant
-has one, its hook runs as for any governed action. The gateway pins MCP `2025-06-18`, the version the pinned Codex
-offers, assigns no MCP session, and adds later revisions by negotiation.
+Each `tools/call` becomes a governed action with the existing authority model: tenant policy, an attempt grant,
+`AuthorityUse` and audit, then an outbox `call_tool` request to the connector adapter, its result and reconciliation.
+`call_tool` is the connector role's own method: unlike the enforcement role's `execute_action`, it carries the call's
+input, and its reply carries the output the runtime needs. The gateway is the policy and tool gateway that the
+baseline's ownership rule 4 requires on the execution path, so a connector action does not need an enforcement
+provider and records no hook evidence. Running a tenant's enforcement hooks on connector calls as well is deferred.
+The gateway pins MCP `2025-06-18`, the version the pinned Codex offers, assigns no MCP session, and adds later revisions
+by negotiation.
 
-**A runtime reaches the gateway with an attempt token.** When a delegated or granted task's attempt starts, dac-plane
-mints an opaque, random token bound to the tenant, attempt and runtime provider, with the gateway as its only
-audience, and stores only its digest. It is carried in `start_turn` beside the brief, only to an adapter that
-negotiated the `connector.gateway` capability, as `agent.instructions` is
-([ADR-0021](0021-refuse-delegated-turns-at-dispatch.md)). The token is checked against the database on every call, so
-revocation takes effect at once, and it ends with the attempt in the same transaction. It is never a credential for the
-external application, and the gateway never forwards it. The Codex adapter places the gateway in the thread's
+**A runtime reaches the gateway with an attempt token.** When the attempt of a task that may use a connection starts,
+dac-plane derives a token from the tenant and attempt with an HMAC under a key only dac-plane holds, so the gateway is
+its only audience and nothing secret about it is stored; a replayed `start_turn` carries the same token. It is carried
+in `start_turn` beside the brief, only to an adapter that negotiated the `connector.gateway` capability, as
+`agent.instructions` is ([ADR-0021](0021-refuse-delegated-turns-at-dispatch.md)). On every call the gateway checks the
+MAC and then, in the database, that the attempt can still act, so the token stops working when the attempt ends and a
+revoked grant stops the next call. It is never a credential for the external application, and the gateway never
+forwards it. The Codex adapter places the gateway in the thread's
 `config.mcp_servers` with the token as an `Authorization` header, again on `thread/resume`, and sets the server's
 tool timeout above the approval wait below.
 
 **Records.** dac-plane adds two product records and reuses the existing ones for each use:
 
 - A **connection**: tenant, connector provider, the owning principal, a display name, the external account and the
-  permissions the external application reports, and a state of `authorizing`, `active`, `refresh_needed`, `revoked`,
-  `expired` or `error`. It refers to the credential the adapter holds; it holds no secret.
+  permissions the external application reports, and a state of `authorizing`, `active`, `removing` or `removed`.
+  It refers to the credential the adapter holds; it holds no secret. A credential the adapter can no longer refresh
+  fails the calls that need it, and the owner authorizes the connection again.
 - A **connection grant**: a connection, the agent or the task it applies to, the tools it allows, a permission of
   `ask` or `always`, a call ceiling per task, an expiry, and who granted and revoked it. Only the connection's owner may
   grant it. A grant is used only by a task whose owner is the connection's owner; shared connections, used by tasks of
@@ -108,8 +112,9 @@ tool timeout above the approval wait below.
 
 **Grants become attempt authority at call time.** The gateway resolves the attempt to its task and agent and looks for
 an active grant naming the connection and tool. Without one the call is refused with `no_grant` and recorded. The
-effective permission is the lower of the grant's and the tenant policy's ceiling. With `always`, the gateway issues
-the attempt a standing grant for the connection's scope and the call proceeds. With `ask`, it raises an
+effective permission is the grant's, lowered by the tenant policy when the policy names the action class, and a never
+rule always wins. With `always`, the connection grant is the owner's standing approval: the gateway issues the attempt
+a standing grant for the connection's scope, attributed to the granter, and the call proceeds. With `ask`, it raises an
 `action_approval` attention request bound to the call's input digest. The call ceiling is checked in the same
 transaction that records the use.
 
@@ -123,8 +128,10 @@ the input digest, so the same call made again after approval consumes it, and a 
 asks the connector adapter to begin authorization, and the adapter returns an authorization URL with PKCE and a
 single-use `state` of short lifetime, bound to that pending connection. The response gives the URL to the
 authenticated principal only. The external application redirects to the adapter's exact callback, the adapter
-exchanges and stores the credential, and it reports the account and permissions to dac-plane, which makes the
-connection `active`. The surface, the runtime and the model never see the credential. Removing a connection is a
+exchanges and stores the credential, and sends the browser back to the surface. The surface then asks dac-plane to
+complete the connection, dac-plane asks the adapter, and the adapter answers with the account and permissions, which
+make the connection `active`. Completion is a request rather than a provider event, because provider events are
+observations bound to an attempt. The surface, the runtime and the model never see the credential. Removing a connection is a
 provider operation: the adapter revokes the credential at the external application and destroys it, and an
 indeterminate outcome is reconciled, so deleting a record is never mistaken for revoking access.
 
@@ -156,8 +163,11 @@ artifact, database row or runtime.
   Through the gateway a call cannot skip policy, whatever the runtime or connector does.
 - **Rely on the runtime's own tool approval:** rejected as the enforcement point. Codex can prompt before an MCP tool
   call, but that is the runtime's decision, not dac-plane's, and another runtime may not ask at all.
-- **A signed, self-contained attempt token:** rejected. It could not be revoked before it expired without the same
-  database check an opaque token needs.
+- **A token that is valid by itself, such as a signed token with an expiry:** rejected. It could not be revoked
+  before it expired without the database check every call makes anyway, so the token proves only which attempt it
+  names and the database decides whether that attempt may still call.
+- **A random token stored by digest:** rejected. A `start_turn` replayed after a worker takeover must carry the same
+  token, which a stored digest cannot reproduce.
 - **Return at once for `ask` and make the model retry:** rejected as the only behaviour. Models retry unreliably; a
   bounded hold covers the common case, and the retry remains for a decision that takes longer.
 - **Hold an `ask` call open without bound:** rejected. MCP clients time tool calls out, often at 60 seconds, and
@@ -167,7 +177,7 @@ artifact, database row or runtime.
 
 ## Consequences
 
-- A new schema version adds the connection, connection grant and attempt token tables. Under
+- A new schema version adds the connection, connection grant and connector call tables. Under
   [ADR-0011](0011-roll-compatible-binaries-before-schema-migrations.md) the new binary serves the previous schema
   first, refusing connector operations as unavailable.
 - The adapter kit gains the `connector` role, its methods and the `connector.gateway` capability in a minor version.

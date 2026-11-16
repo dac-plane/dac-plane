@@ -64,13 +64,14 @@
         "delivery_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
         "tenant_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
         "attempt_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
-        "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store"] },
+        "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store", "connector"] },
         "method": {
           "enum": [
             "start_turn", "steer_turn", "interrupt", "export_artifacts",
             "provision", "stop", "observe",
             "pre_action", "post_action", "action_failed", "execute_action",
-            "authorize_upload", "stat_object", "commit_manifest"
+            "authorize_upload", "stat_object", "commit_manifest",
+            "list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool"
           ]
         },
         "arguments": { "$ref": "common.schema.json#/$defs/jsonObject" },
@@ -93,6 +94,10 @@
         {
           "if": { "properties": { "role": { "const": "artifact_store" } } },
           "then": { "properties": { "method": { "enum": ["authorize_upload", "stat_object", "commit_manifest"] } } }
+        },
+        {
+          "if": { "properties": { "role": { "const": "connector" } } },
+          "then": { "properties": { "method": { "enum": ["list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool"] } } }
         }
       ]
     },
