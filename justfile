@@ -19,8 +19,8 @@ redoc_version := "2.5.4"
 # The last published release, which the operations suite upgrades from. Both values
 # come from that release's release-manifest.json; docs/releases/README.md says when
 # they advance.
-previous_release := "v0.2.0"
-previous_release_image := "ghcr.io/dac-plane/dac-plane@sha256:4ee1bbf220a4499810b7df9b6e37f04c6e2efa825adb7ada817ca952dcc6ae7d"
+previous_release := "v0.3.0"
+previous_release_image := "ghcr.io/dac-plane/dac-plane@sha256:78a534d2d9ef3213843d4f1d34cc8c666ad01e542eca71f3ea2e10a260ec8656"
 # The documentation build tools: Zensical and its dependencies, pinned with hashes
 # in docs/requirements.txt, installed into a virtualenv named by that file's hash.
 zensical_dir := tools_dir / "zensical-" + sha256_file("docs/requirements.txt")
