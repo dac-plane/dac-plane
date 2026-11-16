@@ -238,6 +238,31 @@ qualify-codex-runtime: stack-certs
     set +a
     go test -count=1 -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/
 
+# Have a live Codex model call a connector tool through the gateway (ADR-0022):
+# the simulated connector answers, an always grant runs unasked and an ask grant
+# waits for approval. Needs no external application account.
+[doc('Qualify Codex calling a connector through the gateway (needs Docker and DAC_CODEX_API_KEY_FILE)')]
+[group('test')]
+qualify-codex-connector: stack-certs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${DAC_CODEX_API_KEY_FILE:-}" || ! -s "$DAC_CODEX_API_KEY_FILE" ]]; then echo "DAC_CODEX_API_KEY_FILE must name a non-empty Camer credential file" >&2; exit 2; fi
+    work=.work/codex-connector-qualification
+    mkdir -p "$work"
+    compose=(docker compose -p dac-codex-connector --env-file .work/stack/compose.env -f deploy/compose/compose.yaml -f deploy/compose/compose.dev.yaml -f deploy/compose/compose.codex.yaml -f deploy/compose/compose.connector.yaml --profile dev --profile qualification)
+    cleanup() { code=$?; "${compose[@]}" logs --no-color >"$work/compose.log" 2>&1 || true; for file in "$DAC_CODEX_API_KEY_FILE" .work/stack/secrets/connector-gateway-key; do if credential=$(tr -d '\r\n' <"$file") && [[ -n "$credential" ]] && grep -Fq -- "$credential" "$work/compose.log"; then echo "a credential appeared in qualification logs" >&2; code=1; fi; done; if grep -Fq -- "simulated-credential-" "$work/compose.log"; then echo "the connector credential appeared in qualification logs" >&2; code=1; fi; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; exit "$code"; }
+    trap cleanup EXIT
+    "${compose[@]}" down -v --remove-orphans
+    "${compose[@]}" up -d --build --scale sim-adapter=0
+    "${compose[@]}" run --rm --no-deps -T provision-tenant provision set-policy -tenant 01a167fd-51d9-76ba-b563-496e2bd89646 -settings '{"process.exec":"ask","fs.write":"ask"}' -ceiling '{"process.exec":"ask","fs.write":"ask"}'
+    "${compose[@]}" exec -T dac-plane /dac-plane health ready
+    set -a
+    source .work/stack/compose.env
+    set +a
+    go test -count=1 -v -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexConnectorQualification}" ./internal/codexqualification/ 2>&1 | tee "$work/test.txt"
+    logs=$("${compose[@]}" logs --no-color dac-plane)
+    if ! grep -q '"msg":"adapter connected".*"role":"connector"' <<<"$logs"; then echo "connector adapter did not connect" >&2; exit 1; fi
+
 # Run the same live Codex qualification with the bundled SeaweedFS as the artifact
 # store: Codex's result is uploaded through the S3 adapter and read back from the store.
 [doc('Qualify Codex committing through the S3 artifact store (needs Docker and DAC_CODEX_API_KEY_FILE)')]

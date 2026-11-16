@@ -22,6 +22,10 @@ write_secret "$secrets/surface-client-secret"
 write_secret "$secrets/runtime-client-secret"
 write_secret "$secrets/artifact-client-secret"
 write_secret "$secrets/environment-client-secret"
+write_secret "$secrets/connector-client-secret"
+if [ ! -s "$secrets/connector-gateway-key" ]; then
+  openssl rand -hex 32 >"$secrets/connector-gateway-key"
+fi
 write_secret "$secrets/s3-operator-secret"
 write_secret "$secrets/s3-adapter-secret"
 
@@ -95,6 +99,8 @@ DAC_SERVE_DATABASE_URL_FILE=$secrets/serve-database-url
 DAC_RUNTIME_CLIENT_SECRET_FILE=$secrets/runtime-client-secret
 DAC_ARTIFACT_CLIENT_SECRET_FILE=$secrets/artifact-client-secret
 DAC_ENVIRONMENT_CLIENT_SECRET_FILE=$secrets/environment-client-secret
+DAC_CONNECTOR_CLIENT_SECRET_FILE=$secrets/connector-client-secret
+DAC_CONNECTOR_GATEWAY_KEY_FILE=$secrets/connector-gateway-key
 DAC_STACK_SURFACE_CLIENT_SECRET_FILE=$secrets/surface-client-secret
 DAC_S3_OPERATOR_SECRET_FILE=$secrets/s3-operator-secret
 DAC_S3_ADAPTER_SECRET_FILE=$secrets/s3-adapter-secret
@@ -118,6 +124,8 @@ chmod 0444 \
   "$secrets/runtime-client-secret" \
   "$secrets/artifact-client-secret" \
   "$secrets/environment-client-secret" \
+  "$secrets/connector-client-secret" \
+  "$secrets/connector-gateway-key" \
   "$secrets/s3-operator-secret" \
   "$secrets/s3-adapter-secret" \
   "$secrets/s3-identities.json"

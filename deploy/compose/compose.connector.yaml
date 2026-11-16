@@ -1,0 +1,84 @@
+# Development connector overlay (ADR-0022): the simulator in the connector
+# role and the connector gateway on dac-plane's adapter listener. Layer it on
+# compose.dev.yaml, and on compose.codex.yaml for a live runtime: the Codex
+# adapter reaches the gateway with the CA it already trusts for dac-plane. The
+# simulator stands in for a credential holder: its consent control is a test
+# fixture on loopback, never a product interface.
+x-provision-connector: &provision
+  image: ${DAC_PLANE_IMAGE:-dac-plane:dev}
+  environment:
+    DAC_DATABASE_URL_FILE: /run/secrets/database_url
+  secrets:
+    - source: migrate_database_url
+      target: database_url
+  depends_on:
+    provision-qualify:
+      condition: service_completed_successfully
+  profiles: ["dev"]
+  read_only: true
+  tmpfs:
+    - /tmp
+  restart: "no"
+
+services:
+  provision-connector:
+    <<: *provision
+    command: ["provision", "register-provider", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-role", "connector", "-id", "01a167fd-51d9-7d55-8a3b-6c5d4e3f2a13"]
+
+  provision-connector-binding:
+    <<: *provision
+    command: ["provision", "bind-adapter", "-tenant", "01a167fd-51d9-76ba-b563-496e2bd89646", "-provider", "01a167fd-51d9-7d55-8a3b-6c5d4e3f2a13", "-role", "connector", "-issuer", "https://issuer:8443/default", "-subject", "connector-adapter"]
+    depends_on:
+      provision-connector:
+        condition: service_completed_successfully
+
+  connector-adapter:
+    image: ${DAC_SIM_ADAPTER_IMAGE:-dac-sim-adapter:dev}
+    build:
+      context: ../..
+      target: dac-sim-adapter
+    command: ["/run/config/scenario.json"]
+    environment:
+      DAC_ADAPTER_URL: wss://dac-plane:9443
+      DAC_ADAPTER_CA_FILE: /run/config/ca.crt
+      DAC_ADAPTER_TOKEN_URL: https://issuer:8443/default/token
+      DAC_ADAPTER_SCOPE: dac-plane-adapters
+      DAC_ADAPTER_CLIENT_ID: connector-adapter
+      DAC_ADAPTER_CLIENT_SECRET_FILE: /run/secrets/connector_client_secret
+      DAC_SIM_CONTROL_ADDR: :8090
+    configs:
+      - source: dev_ca
+        target: /run/config/ca.crt
+      - source: connector_scenario
+        target: /run/config/scenario.json
+    secrets:
+      - connector_client_secret
+    depends_on:
+      dac-plane:
+        condition: service_healthy
+      provision-connector-binding:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${DAC_CONNECTOR_CONTROL_PORT:-18090}:8090"
+    profiles: ["dev"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  dac-plane:
+    environment:
+      DAC_CONNECTOR_GATEWAY_URL: https://dac-plane:9443/connectors/mcp
+      DAC_CONNECTOR_GATEWAY_KEY_FILE: /run/secrets/connector_gateway_key
+    secrets:
+      - connector_gateway_key
+
+configs:
+  connector_scenario:
+    file: ./scenario.connector.json
+
+secrets:
+  connector_client_secret:
+    file: ${DAC_CONNECTOR_CLIENT_SECRET_FILE:?set DAC_CONNECTOR_CLIENT_SECRET_FILE}
+  connector_gateway_key:
+    file: ${DAC_CONNECTOR_GATEWAY_KEY_FILE:?set DAC_CONNECTOR_GATEWAY_KEY_FILE}

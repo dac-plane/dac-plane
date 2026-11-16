@@ -150,8 +150,13 @@ func (c *Connector) Send(ctx context.Context, r contracts.Request) (contracts.Re
 		default:
 			return Rejected(&contracts.Failure{Code: contracts.FailureUnknownOperation, Message: "unknown connector tool"}).stamp(r.Operation, r.Delivery)
 		}
-		// Return fixed evidence, rather than echoing arbitrary input into output.
+		// Return fixed evidence, rather than echoing arbitrary input into
+		// output. A read of an issue names only its validated number, so a
+		// live model's report can be checked against what the call returned.
 		output := json.RawMessage(`{"ok":true}`)
+		if number, ok := input["number"].(float64); e.Tool == "get_issue" && ok && number == float64(int64(number)) && number > 0 && number < 1e9 {
+			output = json.RawMessage(fmt.Sprintf(`{"number":%d,"title":"Simulated issue %d","state":"open"}`, int64(number), int64(number)))
+		}
 		result := contracts.ConnectorResult{Operation: r.Operation, Output: output, OutputDigest: identity.DigestOf(output), CompletedAt: time.Now().UTC()}
 		c.mu.Lock()
 		c.results[r.Operation] = result
