@@ -168,13 +168,10 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.recreate("replica-b")
 	h.waitAdapterReconnect("replica-b", connectionsB)
 	h.taskOn("replica-b", submitted.Task.ID)
-	// Both replicas run the new binary on the previous schema: agent writes
-	// wait for the migration, and the task in flight is unaffected (ADR-0011).
-	if problem := apiRequest[httpapi.Problem](h, "replica-a", http.MethodPost, "/agents", map[string]string{
-		"Idempotency-Key": "ops-agent-before-migration",
-	}, h.agentRequest(), http.StatusServiceUnavailable).body; !strings.HasSuffix(problem.Type, "/not-migrated") {
-		t.Fatalf("agent before the migration = %+v, want not-migrated", problem)
-	}
+	// Both replicas run the new binary on the previous schema, and the task in
+	// flight is unaffected (ADR-0011). The previous release already has schema
+	// 18, so no operation waits for the migration; the next release that adds
+	// one asserts its not-migrated answer here.
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")

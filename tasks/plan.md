@@ -166,5 +166,6 @@ Branch `chore/release-v0.3.0`, from `main` at `321cbd9`.
 - The kit moves to v0.3.0 in every module. The notes are `docs/releases/v0.3.0.md`.
 - The GitHub connector image stays unpublished until a live GitHub App qualification; #137 stays open for it and for
   runtime-host egress evidence.
-- After merge: tag `v0.3.0-rc.1`, run `just release-qualify v0.3.0-rc.1`, record it, tag `v0.3.0`, run
-  `just release-verify v0.3.0`, then advance the upgrade pin.
+- After merge: tagged `v0.3.0-rc.1` on `2881e7e`; `just release-qualify v0.3.0-rc.1` passed on its third run (the first
+  two could not bind the issuer's host port); tagged and published `v0.3.0`; `just release-verify v0.3.0` passed. The
+  record is in `docs/architecture/release-145.md`, and the upgrade test now starts from v0.3.0.
