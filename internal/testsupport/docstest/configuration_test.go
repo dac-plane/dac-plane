@@ -29,10 +29,11 @@ type binary struct {
 }
 
 var binaries = map[string]binary{
-	"dac-plane":         {sources: []string{"cmd/dac-plane", "internal"}},
-	"dac-codex-adapter": {sources: []string{"adapters/codex"}, adapter: true, notSettings: map[string]string{"DAC_CODEX_PROVIDER_API_KEY": "the variable the adapter puts the API key in for the app-server it starts"}},
-	"dac-e2b-adapter":   {sources: []string{"adapters/e2b"}, adapter: true},
-	"dac-s3-adapter":    {sources: []string{"adapters/s3"}, adapter: true},
+	"dac-plane":          {sources: []string{"cmd/dac-plane", "internal"}},
+	"dac-codex-adapter":  {sources: []string{"adapters/codex"}, adapter: true, notSettings: map[string]string{"DAC_CODEX_PROVIDER_API_KEY": "the variable the adapter puts the API key in for the app-server it starts"}},
+	"dac-e2b-adapter":    {sources: []string{"adapters/e2b"}, adapter: true},
+	"dac-github-adapter": {sources: []string{"adapters/github"}, adapter: true},
+	"dac-s3-adapter":     {sources: []string{"adapters/s3"}, adapter: true},
 }
 
 // skippedDirs hold code that is not part of a released binary: test support,

@@ -94,6 +94,9 @@ jobs:
       - name: Run deterministic S3 artifact store adapter tests
         run: just test-s3-adapter
 
+      - name: Run deterministic GitHub connector tests
+        run: just test-github-adapter
+
       - name: Run adapter protocol conformance
         run: just test-conformance
 
