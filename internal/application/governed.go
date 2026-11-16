@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dac-plane/dac-plane/internal/contracts"
@@ -199,11 +200,17 @@ func checkResourceInput(req identity.ActionRequest, input json.RawMessage, p *co
 }
 
 func checkActionAttempt(ctx context.Context, q store.Querier, r identity.ActionRequest) error {
+	return checkAttemptIn(ctx, q, r, lifecycle.AttemptExecuting, lifecycle.AttemptWaitingInput)
+}
+
+// checkAttemptIn checks that the attempt is in one of states, that the
+// request's provider runs it, and that its harness is live.
+func checkAttemptIn(ctx context.Context, q store.Querier, r identity.ActionRequest, states ...lifecycle.AttemptState) error {
 	attempt, err := store.GetAttempt(ctx, q, r.Tenant, r.Attempt)
 	if err != nil {
 		return err
 	}
-	if attempt.State != lifecycle.AttemptExecuting && attempt.State != lifecycle.AttemptWaitingInput {
+	if !slices.Contains(states, attempt.State) {
 		return &contracts.Failure{Code: contracts.FailureCancelled, Message: "attempt cannot perform governed actions"}
 	}
 	runtime, err := store.GetOperationByAttempt(ctx, q, r.Tenant, r.Attempt)

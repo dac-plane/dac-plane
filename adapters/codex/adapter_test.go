@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -715,8 +716,11 @@ func TestRestartResumesADelegatedThreadWithItsInstructions(t *testing.T) {
 	if !strings.Contains(resume.DeveloperInstructions, "Explain every change in one line.") {
 		t.Fatalf("thread/resume = %s, want the agent's instructions again", restarted.last("thread/resume"))
 	}
-	if !strings.Contains(string(restarted.last("thread/resume")), `"Authorization":"Bearer gateway-reconnect-proof"`) {
-		t.Fatal("gateway missing on thread resume")
+	if strings.Contains(string(restarted.last("thread/resume")), "gateway-reconnect-proof") {
+		t.Fatal("gateway token sent on thread resume")
+	}
+	if op, err := store.Operation(testOperation); err != nil || op.Gateway == nil || op.Gateway.Token != "gateway-reconnect-proof" {
+		t.Fatal("gateway access was not kept to relay the resumed thread's tool calls")
 	}
 }
 
@@ -1087,28 +1091,118 @@ func waitFor(t *testing.T, condition func() bool) {
 	t.Fatal("condition did not become true")
 }
 
-func TestStartConfiguresConnectorGatewayOutsidePrompt(t *testing.T) {
-	f := setup(t)
+func TestStartRelaysGatewayToolsAsDynamicTools(t *testing.T) {
 	const token = "dacg1.fixture.attempt.mac"
-	request := startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"https://dac.example/connectors/mcp","token":"` + token + `"}}`)
+	var mu sync.Mutex
+	var called []string
+	refuse := false
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("MCP-Protocol-Version") != "2025-06-18" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "tools/list":
+			_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"01a1e4d7-634e-7f22-86e7-c6c5f15dac3c__get_issue","description":"Read one issue","inputSchema":{"type":"object","properties":{"number":{"type":"integer"}}}}]}}`)
+		case "tools/call":
+			mu.Lock()
+			called = append(called, req.Params.Name+" "+string(req.Params.Arguments))
+			isError := refuse
+			mu.Unlock()
+			result := map[string]any{"content": []any{map[string]string{"type": "text", "text": `{"title":"Simulated issue 137"}`}}, "isError": isError}
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+		}
+	}))
+	defer gateway.Close()
+	f := setup(t)
+	request := startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"` + gateway.URL + `/connectors/mcp","token":"` + token + `"}}`)
 	reply, err := f.adapter.Send(context.Background(), request)
 	if err != nil || reply.Outcome != wire.OutcomeOK {
 		t.Fatalf("reply=%+v err=%v", reply, err)
 	}
 	start := string(f.native.last("thread/start"))
-	for _, want := range []string{`"mcp_servers"`, `"Authorization":"Bearer ` + token + `"`, `"tool_timeout_sec":180`} {
-		if !strings.Contains(start, want) {
-			t.Fatalf("missing gateway config %s", want)
+	name := dynamicToolName("01a1e4d7-634e-7f22-86e7-c6c5f15dac3c__get_issue")
+	if !strings.Contains(start, `"dynamicTools"`) || !strings.Contains(start, `"name":"`+name+`"`) || len(name) > 64 {
+		t.Fatalf("thread/start = %s, want the gateway's tool as dynamic tool %q", start, name)
+	}
+	for _, method := range []string{"thread/start", "turn/start"} {
+		if strings.Contains(string(f.native.last(method)), token) {
+			t.Fatalf("gateway token reached %s", method)
 		}
 	}
-	if strings.Contains(string(f.native.last("turn/start")), token) {
-		t.Fatal("gateway token leaked into prompt")
+	if strings.Contains(start, "mcp_servers") {
+		t.Fatal("the gateway is configured as an MCP server, whose tools the model never sees")
 	}
 	op, err := f.store.Operation(testOperation)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || op.Gateway == nil || op.Gateway.Token != token {
+		t.Fatal("gateway was not retained for relaying calls")
 	}
-	if op.Gateway == nil || op.Gateway.Token != token {
-		t.Fatal("gateway was not retained for reconnect")
+	call := func(id string) map[string]any {
+		f.native.requests <- appserver.Message{ID: json.RawMessage(id), Method: "item/tool/call", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","callId":"call-` + id + `","tool":"` + name + `","arguments":{"number":137}}`)}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			f.native.mu.Lock()
+			for _, raw := range f.native.replies {
+				var reply struct {
+					ID     json.RawMessage `json:"id"`
+					Result map[string]any  `json:"result"`
+				}
+				if json.Unmarshal(raw, &reply) == nil && string(reply.ID) == id {
+					f.native.mu.Unlock()
+					return reply.Result
+				}
+			}
+			f.native.mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("no reply to tool call %s", id)
+		return nil
+	}
+	answered := call("41")
+	if answered["success"] != true || !strings.Contains(fmt.Sprint(answered["contentItems"]), "Simulated issue 137") {
+		t.Fatalf("tool call reply = %v", answered)
+	}
+	mu.Lock()
+	if len(called) != 1 || called[0] != `01a1e4d7-634e-7f22-86e7-c6c5f15dac3c__get_issue {"number":137}` {
+		t.Fatalf("gateway calls = %v", called)
+	}
+	refuse = true
+	mu.Unlock()
+	if refused := call("42"); refused["success"] != false {
+		t.Fatalf("a refused call answered %v", refused)
+	}
+}
+
+func TestStartWithoutAReachableGatewayStartsWithoutTools(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "attempt cannot use connectors", http.StatusForbidden)
+	}))
+	defer gateway.Close()
+	f := setup(t)
+	reply, err := f.adapter.Send(context.Background(), startRequest(`{"brief":{"objective":"Read the issue","acceptance_criteria":["Issue read"]},"gateway":{"url":"`+gateway.URL+`/connectors/mcp","token":"dacg1.t.a.m"}}`))
+	if err != nil || reply.Outcome != wire.OutcomeOK {
+		t.Fatalf("reply=%+v err=%v", reply, err)
+	}
+	if strings.Contains(string(f.native.last("thread/start")), "dynamicTools") {
+		t.Fatal("tools declared from a gateway that refused the listing")
+	}
+}
+
+func TestDynamicToolNamesStayWithinTheFunctionLimit(t *testing.T) {
+	long := "01a1e4d7-634e-7f22-86e7-c6c5f15dac3c__" + strings.Repeat("t", 48)
+	if name := dynamicToolName(long); len(name) > 64 || !regexp.MustCompile(`^[a-zA-Z0-9_]+$`).MatchString(name) {
+		t.Fatalf("dynamicToolName(%q) = %q", long, name)
+	}
+	if dynamicToolName("a__get_issue") == dynamicToolName("b__get_issue") {
+		t.Fatal("two connections' tools share a name")
 	}
 }

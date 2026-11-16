@@ -156,9 +156,8 @@ func (a *Adapter) reconstruct() error {
 			// instructions across a resume, so they are given again.
 			resume["developerInstructions"] = op.DeveloperInstructions
 		}
-		if op.Gateway != nil {
-			resume["config"] = gatewayConfig(op.Gateway)
-		}
+		// A thread's dynamic tools are part of its thread state; the journal
+		// keeps the gateway access their calls are relayed with.
 		if err := a.config.Native.Call(ctx, "thread/resume", resume, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
@@ -574,7 +573,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		threadStart["developerInstructions"] = developerInstructions
 	}
 	if input.Gateway != nil {
-		threadStart["config"] = gatewayConfig(input.Gateway)
+		if tools := a.dynamicTools(ctx, input.Gateway); len(tools) > 0 {
+			threadStart["dynamicTools"] = tools
+		}
 	}
 	err = a.config.Native.Call(ctx, "thread/start", threadStart, &started)
 	if err != nil {
@@ -1041,6 +1042,11 @@ func (a *Adapter) turnCompleted(op journal.Operation, turnID, status string, raw
 	_ = a.config.Journal.UpdateOperation(op.ID, func(current *journal.Operation) error { current.State = outcome; return nil })
 }
 func (a *Adapter) nativeRequest(m appserver.Message) {
+	if m.Method == "item/tool/call" {
+		// Relayed off the request loop: a call can wait for an approval.
+		go a.dynamicToolCall(m)
+		return
+	}
 	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {
 		return
 	}
@@ -1302,6 +1308,9 @@ func validGateway(g *journal.GatewayAccess) bool {
 	}
 	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
 }
-func gatewayConfig(g *journal.GatewayAccess) map[string]any {
-	return map[string]any{"mcp_servers": map[string]any{"dac_plane": map[string]any{"url": g.URL, "http_headers": map[string]string{"Authorization": "Bearer " + g.Token}, "tool_timeout_sec": 180}}}
+func (a *Adapter) logger() *slog.Logger {
+	if a.config.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return a.config.Logger
 }

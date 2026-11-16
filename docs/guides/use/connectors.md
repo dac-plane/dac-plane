@@ -23,9 +23,15 @@ a task as another principal does not grant access to that owner's account.
 
 Configure the [gateway URL and signing key](../reference/configuration.md#connector-gateway).
 A runtime that negotiates `connector.gateway` receives an attempt bearer outside
-its prompt. The Codex adapter installs it as the authorization header of a
-per-thread MCP server and configures it again when that thread resumes.
+its prompt. The Codex adapter is the gateway's MCP client: when the thread starts
+it lists the attempt's tools and offers them to the model as plain functions, and
+it relays each call to the gateway with the bearer
+([ADR-0024](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0024-relay-connector-tools-to-codex-as-dynamic-tools.md)).
 Adapters that do not negotiate the capability receive no gateway field.
+A runtime may open its session and list tools while its attempt is still
+starting; a call waits until the attempt executes. When dac-plane's certificate
+is issued by a private CA, the Codex adapter trusts it through
+`DAC_ADAPTER_CA_FILE`, as it does for the adapter connection.
 
 The runtime sees tools belonging to active connections granted to its work. Each
 name combines its connection ID and tool name. Calling a tool rechecks the
