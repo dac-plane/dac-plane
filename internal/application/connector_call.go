@@ -45,6 +45,10 @@ func ConnectorPolicy(p identity.Policy, action identity.ActionClass, permission 
 
 // ConnectorAttempt authenticates a gateway token's subject against current
 // product state. A token for a completed or cancelling attempt authorizes nothing.
+// A starting attempt may open its session and list its tools: a runtime such
+// as Codex connects to its MCP servers when the thread starts, before it
+// reports the runtime started. A call still needs an executing or waiting
+// attempt, which CallConnector checks in its own transaction.
 func ConnectorAttempt(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID, id ids.AttemptID) (lifecycle.Attempt, error) {
 	a, err := store.GetAttempt(ctx, pool, tenant, id)
 	if err != nil {
@@ -54,7 +58,8 @@ func ConnectorAttempt(ctx context.Context, pool *pgxpool.Pool, tenant ids.Tenant
 	if err != nil {
 		return a, err
 	}
-	err = checkActionAttempt(ctx, pool, identity.ActionRequest{Tenant: tenant, Attempt: id, Provider: op.Provider})
+	err = checkAttemptIn(ctx, pool, identity.ActionRequest{Tenant: tenant, Attempt: id, Provider: op.Provider},
+		lifecycle.AttemptStarting, lifecycle.AttemptExecuting, lifecycle.AttemptWaitingInput)
 	return a, err
 }
 

@@ -154,3 +154,17 @@ The focused HTTP suite and exact-byte storage tests pass. Final local checks als
 `just docs-check`, and `git diff --check`.
 The hosted checks will rerun on the review-fix head; live provider and egress
 qualification remain unverified as described above.
+
+## Release v0.3.0 (#145)
+
+Branch `chore/release-v0.3.0`, from `main` at `321cbd9`.
+
+- Live validation of #137 added `compose.connector.yaml`, a consent control on the simulator and
+  `just qualify-codex-connector`. Its first runs found two faults, fixed here and recorded in
+  `docs/architecture/release-145.md` and ADR-0024: the gateway refused a starting attempt, and Camer drops Codex's
+  namespaced MCP tools, so the Codex adapter now relays the gateway's tools as dynamic tools.
+- The kit moves to v0.3.0 in every module. The notes are `docs/releases/v0.3.0.md`.
+- The GitHub connector image stays unpublished until a live GitHub App qualification; #137 stays open for it and for
+  runtime-host egress evidence.
+- After merge: tag `v0.3.0-rc.1`, run `just release-qualify v0.3.0-rc.1`, record it, tag `v0.3.0`, run
+  `just release-verify v0.3.0`, then advance the upgrade pin.

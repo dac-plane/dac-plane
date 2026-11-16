@@ -191,6 +191,7 @@ providers and deployable, without changing lifecycle ownership.
 - [ADR-0021: refuse a delegated turn at dispatch, per adapter connection](../adr/0021-refuse-delegated-turns-at-dispatch.md)
 - [ADR-0022: govern connectors at a control-plane gateway, with credentials held by connector adapters](../adr/0022-govern-connectors-at-a-control-plane-gateway.md)
 - [ADR-0023: recover connector calls and credential removal](../adr/0023-recover-connector-calls-and-credential-removal.md)
+- [ADR-0024: relay connector tools to Codex as dynamic tools, and let a starting attempt list them](../adr/0024-relay-connector-tools-to-codex-as-dynamic-tools.md)
 - [Exploration ADR-0007: SQL/outbox provisionally](../../architecture-explore/docs/adr/0007-product-durability-sql-outbox.md)
 - [Exploration ADR-0010: one lifecycle owner per resource](../../architecture-explore/docs/adr/0010-one-lifecycle-owner-per-resource.md)
 - [Exploration ADR-0013: no adopted control-plane foundation](../../architecture-explore/docs/adr/0013-control-plane-candidate-qualification.md)

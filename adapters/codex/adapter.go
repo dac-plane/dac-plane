@@ -55,6 +55,11 @@ type Config struct {
 	AttachKey []byte
 	// EnvironmentGrace is how long a lost environment may take to return.
 	EnvironmentGrace time.Duration
+	// GatewayOrigin is the only origin, scheme://host:port, the adapter sends
+	// an attempt's gateway token to. The gateway is served on the control
+	// plane's adapter listener, so the executable derives it from
+	// DAC_ADAPTER_URL. Empty, no gateway is accepted.
+	GatewayOrigin string
 }
 
 type Adapter struct {
@@ -156,9 +161,8 @@ func (a *Adapter) reconstruct() error {
 			// instructions across a resume, so they are given again.
 			resume["developerInstructions"] = op.DeveloperInstructions
 		}
-		if op.Gateway != nil {
-			resume["config"] = gatewayConfig(op.Gateway)
-		}
+		// A thread's dynamic tools are part of its thread state; the journal
+		// keeps the gateway access their calls are relayed with.
 		if err := a.config.Native.Call(ctx, "thread/resume", resume, &resumed); err != nil {
 			if op.State == "thread_started" {
 				_, _ = a.config.Journal.AppendEvent(op.ID, "recovery-blocked:"+op.ThreadID, "progress", map[string]any{"native_method": "thread/resume", "state": "unknown"})
@@ -501,7 +505,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		(agent.Instructions != "" && strings.TrimSpace(agent.Instructions) == "") || utf8.RuneCountInString(agent.Instructions) > 20_000) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid agent instructions"), nil
 	}
-	if input.Gateway != nil && !validGateway(input.Gateway) {
+	if input.Gateway != nil && !validGateway(input.Gateway, a.config.GatewayOrigin) {
 		return rejected(r, wire.FailureInvalidArguments, "invalid connector gateway"), nil
 	}
 	if input.Environment != nil && (strings.TrimSpace(input.Environment.ProviderID) == "" || strings.TrimSpace(input.Environment.ResourceRef) == "" || len(input.Environment.ResourceRef) > 2048) {
@@ -574,7 +578,9 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 		threadStart["developerInstructions"] = developerInstructions
 	}
 	if input.Gateway != nil {
-		threadStart["config"] = gatewayConfig(input.Gateway)
+		if tools := a.dynamicTools(ctx, input.Gateway); len(tools) > 0 {
+			threadStart["dynamicTools"] = tools
+		}
 	}
 	err = a.config.Native.Call(ctx, "thread/start", threadStart, &started)
 	if err != nil {
@@ -1041,6 +1047,11 @@ func (a *Adapter) turnCompleted(op journal.Operation, turnID, status string, raw
 	_ = a.config.Journal.UpdateOperation(op.ID, func(current *journal.Operation) error { current.State = outcome; return nil })
 }
 func (a *Adapter) nativeRequest(m appserver.Message) {
+	if m.Method == "item/tool/call" {
+		// Relayed off the request loop: a call can wait for an approval.
+		go a.dynamicToolCall(m)
+		return
+	}
 	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {
 		return
 	}
@@ -1292,9 +1303,15 @@ func snapshot(root string) (map[string]string, error) {
 	return out, err
 }
 
-func validGateway(g *journal.GatewayAccess) bool {
+// validGateway accepts a gateway only at the configured origin: the attempt
+// token is sent to this URL, so an allowlist of the one known destination
+// keeps it from any other host, whatever a start_turn names.
+func validGateway(g *journal.GatewayAccess, origin string) bool {
 	u, err := url.Parse(g.URL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1"))) {
+		return false
+	}
+	if origin == "" || !strings.EqualFold(u.Scheme+"://"+u.Host, origin) {
 		return false
 	}
 	if g.Token == "" || len(g.Token) > 512 {
@@ -1302,6 +1319,22 @@ func validGateway(g *journal.GatewayAccess) bool {
 	}
 	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
 }
-func gatewayConfig(g *journal.GatewayAccess) map[string]any {
-	return map[string]any{"mcp_servers": map[string]any{"dac_plane": map[string]any{"url": g.URL, "http_headers": map[string]string{"Authorization": "Bearer " + g.Token}, "tool_timeout_sec": 180}}}
+
+// GatewayOrigin is the origin of the connector gateway on the control plane
+// whose adapter endpoint is adapterURL: the same host and port over HTTPS.
+// The adapter kit accepts only https and wss endpoints, so neither ever
+// yields a plaintext origin.
+func GatewayOrigin(adapterURL string) (string, error) {
+	u, err := url.Parse(adapterURL)
+	if err != nil || u.Host == "" || (u.Scheme != "wss" && u.Scheme != "https") {
+		return "", errors.New("adapter URL must be an absolute https or wss URL")
+	}
+	return "https://" + u.Host, nil
+}
+
+func (a *Adapter) logger() *slog.Logger {
+	if a.config.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return a.config.Logger
 }

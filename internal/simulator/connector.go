@@ -26,6 +26,7 @@ type Connector struct {
 	active      map[ids.OperationID]context.CancelFunc
 	cancelled   map[ids.OperationID]bool
 	proofs      map[ids.ConnectionID]string
+	markers     map[ids.ConnectionID]string
 }
 
 func NewConnector(config Config) (*Connector, error) {
@@ -33,7 +34,7 @@ func NewConnector(config Config) (*Connector, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	return &Connector{config: config, ledger: newLedger(), deliveries: newDeliveries(), credentials: map[ids.ConnectionID]string{}, proofs: map[ids.ConnectionID]string{}, results: map[ids.OperationID]contracts.ConnectorResult{}, active: map[ids.OperationID]context.CancelFunc{}, cancelled: map[ids.OperationID]bool{}}, nil
+	return &Connector{config: config, ledger: newLedger(), deliveries: newDeliveries(), credentials: map[ids.ConnectionID]string{}, proofs: map[ids.ConnectionID]string{}, markers: map[ids.ConnectionID]string{}, results: map[ids.OperationID]contracts.ConnectorResult{}, active: map[ids.OperationID]context.CancelFunc{}, cancelled: map[ids.OperationID]bool{}}, nil
 }
 func (c *Connector) Role() contracts.Role       { return contracts.RoleConnector }
 func (c *Connector) Hello() contracts.Lifecycle { return c.config.Hello }
@@ -48,7 +49,17 @@ func (c *Connector) Consent(id ids.ConnectionID, credential string) string {
 	c.credentials[id] = credential
 	proof := strings.TrimPrefix(string(identity.DigestOf([]byte("simulator-proof:"+id.String()))), "sha256:")
 	c.proofs[id] = proof
+	c.markers[id] = strings.TrimPrefix(string(identity.DigestOf([]byte("simulator-marker:"+id.String()+":"+credential))), "sha256:")[:12]
 	return proof
+}
+
+// Marker is the value a connection's get_issue answers carry in their title.
+// It is derived from the simulated credential, so a test can tell an answer
+// the connector gave from one a model could have guessed from its prompt.
+func (c *Connector) Marker(id ids.ConnectionID) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.markers[id]
 }
 func (c *Connector) Send(ctx context.Context, r contracts.Request) (contracts.Reply, error) {
 	if err := checkRequest(c.config, c.Role(), r); err != nil {
@@ -150,8 +161,16 @@ func (c *Connector) Send(ctx context.Context, r contracts.Request) (contracts.Re
 		default:
 			return Rejected(&contracts.Failure{Code: contracts.FailureUnknownOperation, Message: "unknown connector tool"}).stamp(r.Operation, r.Delivery)
 		}
-		// Return fixed evidence, rather than echoing arbitrary input into output.
+		// Return fixed evidence, rather than echoing arbitrary input into
+		// output. A read of an issue names only its validated number, so a
+		// live model's report can be checked against what the call returned.
 		output := json.RawMessage(`{"ok":true}`)
+		if number, ok := input["number"].(float64); e.Tool == "get_issue" && ok && number == float64(int64(number)) && number > 0 && number < 1e9 {
+			c.mu.Lock()
+			marker := c.markers[e.Connection]
+			c.mu.Unlock()
+			output = json.RawMessage(fmt.Sprintf(`{"number":%d,"title":"Simulated issue %d %s","state":"open"}`, int64(number), int64(number), marker))
+		}
 		result := contracts.ConnectorResult{Operation: r.Operation, Output: output, OutputDigest: identity.DigestOf(output), CompletedAt: time.Now().UTC()}
 		c.mu.Lock()
 		c.results[r.Operation] = result

@@ -33,8 +33,8 @@ type controlHandler struct {
 }
 
 func newControlHandler(set *simulatorSet) (*controlHandler, error) {
-	if set == nil || set.runtime == nil {
-		return nil, errors.New("simulator control requires a runtime")
+	if set == nil || (set.runtime == nil && set.connector == nil) {
+		return nil, errors.New("simulator control requires a runtime or a connector")
 	}
 	return &controlHandler{set: set, pauses: map[pauseKey]*simulator.Pause{}}, nil
 }
@@ -79,6 +79,7 @@ func (h *controlHandler) routes() http.Handler {
 	mux.HandleFunc("POST /v1/pauses/{role}/{operation}/{boundary}/release", h.releasePause)
 	mux.HandleFunc("GET /v1/ledger/{role}/{operation}", h.ledger)
 	mux.HandleFunc("GET /v1/artifacts/{artifact}", h.artifact)
+	mux.HandleFunc("POST /v1/connections/{connection}/consent", h.consent)
 	return mux
 }
 
@@ -218,13 +219,41 @@ func (h *controlHandler) artifact(w http.ResponseWriter, r *http.Request) {
 func (h *controlHandler) endpoint(role contracts.Role) (*simulator.Control, *simulator.Ledger, bool) {
 	switch role {
 	case contracts.RoleRuntime:
+		if h.set.runtime == nil {
+			return nil, nil, false
+		}
 		return h.set.runtime.Control(), h.set.runtime.Ledger(), true
+	case contracts.RoleConnector:
+		if h.set.connector != nil {
+			return h.set.connector.Control(), h.set.connector.Ledger(), true
+		}
 	case contracts.RoleArtifactStore:
 		if h.set.store != nil {
 			return h.set.store.Control(), h.set.store.Ledger(), true
 		}
 	}
 	return nil, nil, false
+}
+
+// consent stands in for the owner finishing consent at the external
+// application: the connector stores a simulated credential and returns the
+// browser proof the owner then gives the Surface API. The credential itself
+// never leaves the simulator.
+func (h *controlHandler) consent(w http.ResponseWriter, r *http.Request) {
+	if h.set.connector == nil {
+		controlError(w, http.StatusBadRequest, "no connector")
+		return
+	}
+	connection, err := ids.Parse[ids.Connection](r.PathValue("connection"))
+	if err != nil {
+		controlError(w, http.StatusBadRequest, "malformed connection")
+		return
+	}
+	proof := h.set.connector.Consent(connection, "simulated-credential-"+connection.String())
+	controlJSON(w, http.StatusOK, struct {
+		Confirmation string `json:"confirmation"`
+		Marker       string `json:"marker"`
+	}{proof, h.set.connector.Marker(connection)})
 }
 
 func parsePausePath(r *http.Request) (pauseKey, bool) {

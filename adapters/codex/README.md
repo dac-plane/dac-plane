@@ -30,6 +30,21 @@ The adapter offers `agent.instructions`. A task delegated to an agent then arriv
 instructions beside the brief; the adapter passes them to `thread/start` as `developerInstructions`, and the brief stays
 untrusted turn input ([ADR-0020](../../docs/adr/0020-agents-are-product-records.md)).
 
+## Connector tools
+
+The adapter offers `connector.gateway`. A `start_turn` that carries the gateway gives the adapter the attempt's MCP
+endpoint and bearer token. Before `thread/start` the adapter lists the attempt's tools from the gateway and declares
+each as a dynamic tool named `dac_<tool>_<digest>`, which the model sees as a plain function. Codex sends each call
+back as `item/tool/call`; the adapter relays it to the gateway's `tools/call` with the token and answers with the
+tool's text. The gateway authorizes every call. The token never enters a prompt, the workspace or `thread/resume`; the
+journal keeps it to relay calls after a restart. The adapter sends the token only to the origin of its
+`DAC_ADAPTER_URL`, where the control plane serves the gateway, and refuses a start that names a gateway elsewhere.
+
+The gateway is not given to Codex as an MCP server: Codex 0.165.0 sends MCP tools to the model inside a Responses API
+`namespace` tool, which Camer and other OpenAI-compatible providers drop without an error
+([ADR-0024](../../docs/adr/0024-relay-connector-tools-to-codex-as-dynamic-tools.md)). `just qualify-codex-connector`
+checks the whole path against a live model.
+
 ## Replay boundary
 
 This adapter deliberately does not advertise `operation.replay`. It writes a `prepared` operation

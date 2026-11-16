@@ -27,6 +27,7 @@ them.
 | `compose.dev.yaml` | The development profile, below. |
 | `compose.operations.yaml` | The operations test profile, below. |
 | `compose.codex.yaml`, `compose.e2b.yaml`, `compose.containment.yaml`, `compose.artifacts.yaml`, `compose.artifacts.codex.yaml`, `compose.artifacts.dev.yaml` | Provider qualification overlays, below. |
+| `compose.connector.yaml` | The simulated connector and the connector gateway, below. |
 
 ## Development profile
 
@@ -86,6 +87,18 @@ task's sandbox. `just qualify-codex-containment` uses it. See
 
 `just qualify-providers` adds the artifact store profile below, so Codex, E2B and SeaweedFS run together with no
 simulator. See [the evidence note](../../docs/architecture/provider-qualification-75.md).
+
+## Connector profile
+
+`compose.connector.yaml` layers over `compose.dev.yaml`, and over `compose.codex.yaml` for a live runtime. It registers
+and binds the simulator in the `connector` role and turns the connector gateway on at
+`https://dac-plane:9443/connectors/mcp` with a signing key from `generate-dev-config.sh`. The Codex adapter reaches the
+gateway with the development CA it already trusts for dac-plane, and offers the gateway's tools to the model itself
+([ADR-0024](../../docs/adr/0024-relay-connector-tools-to-codex-as-dynamic-tools.md)).
+
+The simulator's control listener, on `127.0.0.1:18090`, completes a connection's consent in place of the owner's
+browser: `POST /v1/connections/{connection}/consent` returns the proof that `POST .../complete` takes. It is a test
+fixture. `just qualify-codex-connector` uses it to have a live Codex model call a connector tool through the gateway.
 
 ## Artifact store profile
 

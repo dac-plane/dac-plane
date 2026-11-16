@@ -110,9 +110,10 @@ type adapter struct {
 }
 
 type simulatorSet struct {
-	adapters []adapter
-	runtime  *simulator.Runtime
-	store    *simulator.ByteArtifactStore
+	adapters  []adapter
+	runtime   *simulator.Runtime
+	store     *simulator.ByteArtifactStore
+	connector *simulator.Connector
 }
 
 func main() {
@@ -270,7 +271,7 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simul
 		if err != nil {
 			return nil, err
 		}
-		return &simulatorSet{adapters: []adapter{{provider: s.Provider, role: wire.RoleConnector, port: connector, token: token}}}, nil
+		return &simulatorSet{adapters: []adapter{{provider: s.Provider, role: wire.RoleConnector, port: connector, token: token}}, connector: connector}, nil
 	}
 	if s.Role != string(contracts.RoleRuntime) {
 		return nil, fmt.Errorf("scenario: role: dac-sim-adapter serves a %s", contracts.RoleRuntime)
