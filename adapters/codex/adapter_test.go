@@ -1250,12 +1250,12 @@ func TestStartRefusesAGatewayAtAnotherOrigin(t *testing.T) {
 }
 
 func TestGatewayOriginFollowsTheAdapterURL(t *testing.T) {
-	for in, want := range map[string]string{"wss://dac-plane:9443": "https://dac-plane:9443", "ws://127.0.0.1:19443/": "http://127.0.0.1:19443"} {
+	for in, want := range map[string]string{"wss://dac-plane:9443": "https://dac-plane:9443", "https://127.0.0.1:19443/": "https://127.0.0.1:19443"} {
 		if got, err := GatewayOrigin(in); err != nil || got != want {
 			t.Fatalf("GatewayOrigin(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"https://dac-plane:9443", "dac-plane:9443", ""} {
+	for _, in := range []string{"ws://dac-plane:9443", "http://127.0.0.1:19443", "dac-plane:9443", ""} {
 		if _, err := GatewayOrigin(in); err == nil {
 			t.Fatalf("GatewayOrigin(%q) accepted", in)
 		}

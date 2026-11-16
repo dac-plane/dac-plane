@@ -1320,20 +1320,15 @@ func validGateway(g *journal.GatewayAccess, origin string) bool {
 	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
 }
 // GatewayOrigin is the origin of the connector gateway on the control plane
-// whose adapter endpoint is adapterURL: the same host and port, over HTTPS for
-// wss and HTTP for ws.
+// whose adapter endpoint is adapterURL: the same host and port over HTTPS.
+// The adapter kit accepts only https and wss endpoints, so neither ever
+// yields a plaintext origin.
 func GatewayOrigin(adapterURL string) (string, error) {
 	u, err := url.Parse(adapterURL)
-	if err != nil || u.Host == "" {
-		return "", errors.New("adapter URL must be absolute")
+	if err != nil || u.Host == "" || (u.Scheme != "wss" && u.Scheme != "https") {
+		return "", errors.New("adapter URL must be an absolute https or wss URL")
 	}
-	switch u.Scheme {
-	case "wss":
-		return "https://" + u.Host, nil
-	case "ws":
-		return "http://" + u.Host, nil
-	}
-	return "", errors.New("adapter URL must use wss or ws")
+	return "https://" + u.Host, nil
 }
 
 func (a *Adapter) logger() *slog.Logger {
