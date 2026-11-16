@@ -407,8 +407,8 @@ const (
 // ConnectorCall is the gateway's record of one tool call. Operation is the
 // call's stable identity: the attention request of an approval names it, and
 // an authorized call becomes a provider operation of the connector under it.
-// Execution, with the exact input, is set once the call is authorized; Result
-// once the connector answers.
+// Input is immutable from proposal onward. Execution is set once authorized;
+// Result once the connector answers.
 type ConnectorCall struct {
 	Tenant          ids.TenantID
 	Operation       ids.OperationID
@@ -418,6 +418,7 @@ type ConnectorCall struct {
 	ConnectionGrant ids.ConnectionGrantID
 	Provider        ids.ProviderID
 	Tool            string
+	Input           json.RawMessage
 	InputDigest     identity.Digest
 	State           ConnectorCallState
 	Execution       *contracts.ConnectorExecution
@@ -427,7 +428,7 @@ type ConnectorCall struct {
 }
 
 const connectorCallColumns = `tenant_id::text, operation_id::text, attempt_id::text, task_id::text, connection_id::text,
-	connection_grant_id::text, provider_id::text, tool, input_digest, state, execution, output, output_digest, is_error,
+	connection_grant_id::text, provider_id::text, tool, input, input_digest, state, execution, output, output_digest, is_error,
 	completed_at, created_at, updated_at`
 
 // InsertConnectorCall records the gateway's decision on a new call.
@@ -438,6 +439,9 @@ func InsertConnectorCall(ctx context.Context, u *UnitOfWork, c ConnectorCall) er
 	if (c.State == CallAuthorized) != (c.Execution != nil) || c.Result != nil {
 		return lifecycle.ErrInvalid
 	}
+	if err := c.validateInput(); err != nil {
+		return err
+	}
 	if err := c.matchesExecution(c.Execution); err != nil {
 		return err
 	}
@@ -447,11 +451,21 @@ func InsertConnectorCall(ctx context.Context, u *UnitOfWork, c ConnectorCall) er
 	}
 	_, err = u.Exec(ctx, `
 		insert into connector_call (tenant_id, operation_id, attempt_id, task_id, connection_id, connection_grant_id,
-		                            provider_id, tool, input_digest, state, execution, created_at, updated_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+		                            provider_id, tool, input, input_digest, state, execution, created_at, updated_at)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
 		c.Tenant.String(), c.Operation.String(), c.Attempt.String(), c.Task.String(), c.Connection.String(),
-		c.ConnectionGrant.String(), c.Provider.String(), c.Tool, string(c.InputDigest), string(c.State), execution, c.CreatedAt)
+		c.ConnectionGrant.String(), c.Provider.String(), c.Tool, string(c.Input), string(c.InputDigest), string(c.State), execution, c.CreatedAt)
 	return err
+}
+
+func (c ConnectorCall) validateInput() error {
+	if err := contracts.ValidateToolInput(c.Input); err != nil {
+		return err
+	}
+	if identity.DigestOf(c.Input) != c.InputDigest {
+		return ErrPayloadMismatch
+	}
+	return nil
 }
 
 // matchesExecution keeps the recorded decision bound to the exact execution.
@@ -570,12 +584,13 @@ func CountAuthorizedCalls(ctx context.Context, q Querier, tenant ids.TenantID, t
 func scanConnectorCall(row interface{ Scan(...any) error }) (ConnectorCall, error) {
 	var c ConnectorCall
 	var tenantText, operationText, attemptText, taskText, connectionText, grantText, providerText, digest, state string
+	var input string
 	var execution, output *string
 	var outputDigest *string
 	var isError *bool
 	var completedAt *time.Time
 	err := row.Scan(&tenantText, &operationText, &attemptText, &taskText, &connectionText, &grantText, &providerText,
-		&c.Tool, &digest, &state, &execution, &output, &outputDigest, &isError, &completedAt, &c.CreatedAt, &c.UpdatedAt)
+		&c.Tool, &input, &digest, &state, &execution, &output, &outputDigest, &isError, &completedAt, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return ConnectorCall{}, ErrNotFound
@@ -603,7 +618,11 @@ func scanConnectorCall(row interface{ Scan(...any) error }) (ConnectorCall, erro
 	if c.Provider, err = parseID[ids.Provider]("connector_call.provider_id", providerText); err != nil {
 		return ConnectorCall{}, err
 	}
+	c.Input = json.RawMessage(input)
 	c.InputDigest = identity.Digest(digest)
+	if err := c.validateInput(); err != nil {
+		return ConnectorCall{}, corruptRow("connector_call", err)
+	}
 	c.State = ConnectorCallState(state)
 	if execution != nil {
 		var e contracts.ConnectorExecution

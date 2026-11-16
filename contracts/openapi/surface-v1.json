@@ -1838,6 +1838,50 @@
           }
         }
       }
+    },
+    "/v1/tenants/{tenant}/attention/{attention}/connector-call": {
+      "get": {
+        "operationId": "getConnectorProposal",
+        "summary": "Inspect proposed connector call",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Attention"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The immutable proposed call.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/connector-proposal.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "description": "Only the task owner may read the exact canonical tool input and digest before deciding. Other actors, including tenant readers, receive 404. The ETag is the attention version for the decision."
+      }
     }
   },
   "components": {

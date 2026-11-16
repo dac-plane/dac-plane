@@ -81,6 +81,7 @@ CREATE TABLE connector_call (
   connection_grant_id uuid        NOT NULL,
   provider_id         uuid        NOT NULL,
   tool                text        NOT NULL CHECK (tool ~ '^[a-z][a-z0-9_]{0,47}$'),
+  input               text        NOT NULL CHECK (octet_length(input) <= 32768),
   input_digest        text        NOT NULL CHECK (input_digest ~ '^sha256:[0-9a-f]{64}$'),
   state               text        NOT NULL CHECK (state IN ('awaiting_approval', 'denied', 'authorized')),
   -- Text, not jsonb: digests cover the exact bytes, which jsonb would rewrite.

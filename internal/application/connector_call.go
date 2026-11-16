@@ -271,7 +271,7 @@ func callConnector(ctx context.Context, pool *pgxpool.Pool, tenant ids.TenantID,
 		}
 		request.Operation = call.Operation
 	} else {
-		call = store.ConnectorCall{Tenant: tenant, Operation: operation, Attempt: attempt, Task: task.ID, Connection: connection, ConnectionGrant: grant.ID, Provider: c.Provider, Tool: tool, InputDigest: request.InputDigest, CreatedAt: now, UpdatedAt: now}
+		call = store.ConnectorCall{Tenant: tenant, Operation: operation, Attempt: attempt, Task: task.ID, Connection: connection, ConnectionGrant: grant.ID, Provider: c.Provider, Tool: tool, Input: input, InputDigest: request.InputDigest, CreatedAt: now, UpdatedAt: now}
 	}
 	var authority *identity.AuthorityGrant
 	if policy.Effective(request.Action) == identity.PermissionAlways {

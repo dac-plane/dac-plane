@@ -232,6 +232,7 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		schema string
 		body   any
 	}{
+		"connector proposal":    {"connector-proposal.schema.json", ConnectorProposalBody{Attention: newID[ids.Attention](t), AttentionVersion: 1, Operation: newID[ids.Operation](t), Connection: connection.ID, Tool: "get_issue", Input: json.RawMessage(`{"number":7}`), InputDigest: identity.DigestOf([]byte(`{"number":7}`))}},
 		"connection created":    {"connection-created.schema.json", ConnectionCreatedBody{Connection: connection}},
 		"connection list":       {"connection-list.schema.json", ConnectionListBody{Connections: []lifecycle.Connection{connection}}},
 		"connection grant list": {"connection-grant-list.schema.json", ConnectionGrantListBody{Grants: []lifecycle.ConnectionGrant{}}},

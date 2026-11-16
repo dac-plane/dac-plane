@@ -27,7 +27,7 @@ Everything belongs to a tenant: `https://HOST:8443/v1/tenants/{tenant}/...`. Ide
 |---|---|
 | Agents | Create an agent; list, read, revise and retire agents; read an earlier revision of one. |
 | Tasks | Submit a task, to an agent or to providers you name; read it with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
-| Attention | List open attention requests; read one; decide it. |
+| Attention | List open attention requests; read one; inspect an owner-only connector proposal; decide it. |
 | Results | Review a revision: accept, request changes or reject. |
 | Budgets | Complete a submission or rework that is waiting on a spend challenge. |
 | Events | Read or stream a task's events, or the whole tenant's. |

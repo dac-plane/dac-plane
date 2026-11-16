@@ -222,7 +222,7 @@ func TestConnectorCallsKeepTheirExactBytes(t *testing.T) {
 	}
 	call := store.ConnectorCall{
 		Tenant: f.tenant, Operation: mustID[ids.Operation](t), Attempt: attempt.ID, Task: task.ID, Connection: c.ID,
-		ConnectionGrant: grant.ID, Provider: f.connector, Tool: "get_issue", InputDigest: identity.DigestOf(input),
+		ConnectionGrant: grant.ID, Provider: f.connector, Tool: "get_issue", Input: input, InputDigest: identity.DigestOf(input),
 		State: store.CallAwaitingApproval, CreatedAt: at,
 	}
 	inTx(t, ctx, pool, func(uow *store.UnitOfWork) {

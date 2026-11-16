@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/connectorgateway"
+	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/httpapi"
 	"github.com/dac-plane/dac-plane/internal/identity"
 	"github.com/dac-plane/dac-plane/internal/ids"
@@ -162,5 +164,50 @@ func TestConnectorGatewayDenialBindsWaitingRequest(t *testing.T) {
 	stored, err := store.GetConnectorCall(s.ctx, s.pool, s.tenant, attention.Operation)
 	if err != nil || stored.State != store.CallDenied {
 		t.Fatalf("denied operation: %+v %v", stored, err)
+	}
+}
+
+func TestConnectorProposalOwnerInspection(t *testing.T) {
+	s, submission, c, _ := connectorReviewFixture(t)
+	reviewGrant(t, s, submission.Task.ID, c, identity.PermissionAsk)
+	input, err := contracts.CanonicalJSON(json.RawMessage(`{"repo":"private/repository", "number":7, "body":"exact <comment>"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := application.CallConnector(s.ctx, s.pool, s.tenant, submission.Attempt.ID, c.ID, "get_issue", input)
+	if !errors.Is(err, application.ErrConnectorApprovalPending) {
+		t.Fatal(err)
+	}
+	open, err := store.ListOpenAttentionByAttempt(s.ctx, s.pool, s.tenant, submission.Attempt.ID)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("approval: %+v %v", open, err)
+	}
+	path := "/attention/" + open[0].ID.String() + "/connector-call"
+	for _, actor := range []string{"other", "reader"} {
+		s.do(t, call{method: "GET", path: path, as: actor}).want(t, 404)
+	}
+	response := s.do(t, call{method: "GET", path: path, as: "owner"})
+	if response.header.Get("ETag") != `"1"` || response.header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("proposal headers: %v", response.header)
+	}
+	proposal := decodeInto[struct {
+		Attention        ids.AttentionID  `json:"attention_id"`
+		AttentionVersion uint64           `json:"attention_version"`
+		Operation        ids.OperationID  `json:"operation_id"`
+		Connection       ids.ConnectionID `json:"connection_id"`
+		Tool             string           `json:"tool"`
+		Input            json.RawMessage  `json:"input"`
+		InputDigest      identity.Digest  `json:"input_digest"`
+	}](t, response, 200)
+	if proposal.Attention != open[0].ID || proposal.AttentionVersion != open[0].Version || proposal.Operation != pending.Operation || proposal.Connection != c.ID || proposal.Tool != "get_issue" || !bytes.Equal(proposal.Input, input) || identity.DigestOf(proposal.Input) != open[0].ActionDigest || proposal.InputDigest != pending.InputDigest {
+		t.Fatalf("proposal does not describe exact approved input: %+v", proposal)
+	}
+	s.do(t, call{method: "POST", path: "/attention/" + open[0].ID.String() + "/decisions", as: "owner", key: "approve-proposal", ifMatch: `"1"`, body: httpapi.DecisionRequest{Kind: lifecycle.DecisionApproveOnce}}).want(t, 201)
+	if _, err := application.ResumeConnectorCall(s.ctx, s.pool, s.tenant, submission.Attempt.ID, pending.Operation, json.RawMessage(`{"number":8}`)); !errors.Is(err, application.ErrConnectorDenied) {
+		t.Fatalf("changed input consumed approval: %v", err)
+	}
+	authorized, err := application.ResumeConnectorCall(s.ctx, s.pool, s.tenant, submission.Attempt.ID, pending.Operation, input)
+	if err != nil || authorized.Execution == nil || !bytes.Equal(authorized.Execution.Input, proposal.Input) {
+		t.Fatalf("approved execution differs: %+v %v", authorized, err)
 	}
 }

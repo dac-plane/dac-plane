@@ -34,11 +34,16 @@ Explicit tenant denials always win. Authorized calls record `AuthorityUse`, audi
 a durable dispatch and the exact input digest in one transaction.
 
 `ask` creates an action-approval attention request. Approve or deny it through the
-normal Surface API attention decision. Approval covers the exact tool, connection
+normal Surface API attention decision. Before deciding, the task owner reads
+`GET /v1/tenants/{tenant}/attention/{attention}/connector-call` to inspect the
+connection, tool and exact proposed arguments. Its input digest matches the
+attention request; use its ETag as the decision's `If-Match`. Other principals,
+including tenant readers, cannot read these arguments. Approval covers the exact tool, connection
 and input; changed input needs another approval. The gateway waits up to two
 minutes, sending progress when requested. If it times out, check the task's pending
 approval and retry the same tool and arguments. Expired or revoked pending waits
-are closed by the worker.
+are closed by the worker. Denying a waiting request ends that request even if
+another covering grant becomes available.
 
 Revoking a grant blocks further calls during a running attempt. Removing a
 connection also revokes all its grants atomically and records `removing` until
