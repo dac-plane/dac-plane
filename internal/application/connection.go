@@ -723,26 +723,7 @@ func FinishConnectionRemovals(ctx context.Context, pool *pgxpool.Pool, ports Con
 	if err != nil || !available {
 		return err
 	}
-	rows, err := pool.Query(ctx, `select connection_id::text from connection where tenant_id=$1 and state='removing' order by updated_at limit 10`, tenant.String())
-	if err != nil {
-		return err
-	}
-	var idsToRemove []ids.ConnectionID
-	for rows.Next() {
-		var text string
-		if err := rows.Scan(&text); err != nil {
-			rows.Close()
-			return err
-		}
-		id, err := ids.Parse[ids.Connection](text)
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		idsToRemove = append(idsToRemove, id)
-	}
-	err = rows.Err()
-	rows.Close()
+	idsToRemove, err := store.NextConnectionRemovals(ctx, pool, tenant)
 	if err != nil {
 		return err
 	}

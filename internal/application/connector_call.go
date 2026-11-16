@@ -63,15 +63,27 @@ type GrantedConnectorTool struct {
 	Tool       contracts.ConnectorTool
 }
 
+// ConnectorCatalogue retains healthy tools and safe identifiers for unavailable
+// sources, so the transport can report an outage without logging provider errors.
+type ConnectorCatalogue struct {
+	Tools       []GrantedConnectorTool
+	Unavailable []ConnectorSource
+}
+
+type ConnectorSource struct {
+	Connection ids.ConnectionID
+	Provider   ids.ProviderID
+}
+
 // ConnectorTools exposes only currently usable connections owned by this work's owner.
-func ConnectorTools(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPorts, tenant ids.TenantID, attempt ids.AttemptID) ([]GrantedConnectorTool, error) {
+func ConnectorTools(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPorts, tenant ids.TenantID, attempt ids.AttemptID) (ConnectorCatalogue, error) {
 	a, err := ConnectorAttempt(ctx, pool, tenant, attempt)
 	if err != nil {
-		return nil, err
+		return ConnectorCatalogue{}, err
 	}
 	task, err := store.GetTask(ctx, pool, tenant, a.Task)
 	if err != nil {
-		return nil, err
+		return ConnectorCatalogue{}, err
 	}
 	var agent ids.AgentID
 	if task.Agent != nil {
@@ -79,25 +91,37 @@ func ConnectorTools(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPort
 	}
 	grants, err := store.ListWorkGrants(ctx, pool, tenant, task.ID, agent)
 	if err != nil {
-		return nil, err
+		return ConnectorCatalogue{}, err
 	}
 	policy, err := store.GetPolicy(ctx, pool, tenant)
 	if err != nil {
-		return nil, err
+		return ConnectorCatalogue{}, err
 	}
-	out := []GrantedConnectorTool{}
+	out := ConnectorCatalogue{Tools: []GrantedConnectorTool{}}
+	catalogues := map[ids.ConnectionID]contracts.ToolCatalogue{}
 	seen := map[string]bool{}
 	for _, g := range grants {
 		c, err := store.GetConnection(ctx, pool, tenant, g.Connection)
 		if err != nil {
-			return nil, err
+			return ConnectorCatalogue{}, err
 		}
 		if c.State != lifecycle.ConnectionActive || c.Owner != task.Owner || !time.Now().Before(g.ExpiresAt) {
 			continue
 		}
-		catalogue, err := connectorTools(ctx, ports, c, time.Now().UTC())
-		if err != nil {
-			return nil, err
+		catalogue, loaded := catalogues[c.ID]
+		if !loaded {
+			catalogue, err = connectorTools(ctx, ports, c, time.Now().UTC())
+			if ctx.Err() != nil {
+				return ConnectorCatalogue{}, ctx.Err()
+			}
+			if err != nil && !errors.Is(err, ErrConnectorUnavailable) {
+				return ConnectorCatalogue{}, err
+			}
+			catalogues[c.ID] = catalogue
+			if err != nil {
+				out.Unavailable = append(out.Unavailable, ConnectorSource{Connection: c.ID, Provider: c.Provider})
+				continue
+			}
 		}
 		for _, tool := range catalogue.Tools {
 			key := c.ID.String() + ":" + tool.Name
@@ -105,7 +129,7 @@ func ConnectorTools(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPort
 				continue
 			}
 			seen[key] = true
-			out = append(out, GrantedConnectorTool{Connection: c.ID, Tool: tool})
+			out.Tools = append(out.Tools, GrantedConnectorTool{Connection: c.ID, Tool: tool})
 		}
 	}
 	return out, nil

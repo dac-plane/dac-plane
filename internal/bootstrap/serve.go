@@ -96,7 +96,7 @@ func (application *Application) Serve(ctx context.Context, cfg config.Config, op
 	}
 	var adapterHandler http.Handler = endpoint
 	if application.gatewayTokens != nil {
-		gateway, err := connectorgateway.New(application.pool, application.adapters, application.gatewayTokens, application.worker.Wake)
+		gateway, err := connectorgateway.New(application.pool, application.adapters, application.gatewayTokens, application.worker.Wake, logger.With("component", "connector_gateway"))
 		if err != nil {
 			return err
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
@@ -28,17 +29,18 @@ type Gateway struct {
 	ports      application.ConnectorPorts
 	tokens     *Tokens
 	wake       func()
+	logger     *slog.Logger
 	slots      chan struct{}
 	rateMu     sync.Mutex
 	rateSecond int64
 	rateCount  int
 }
 
-func New(pool *pgxpool.Pool, ports application.ConnectorPorts, tokens *Tokens, wake func()) (*Gateway, error) {
-	if pool == nil || ports == nil || tokens == nil {
+func New(pool *pgxpool.Pool, ports application.ConnectorPorts, tokens *Tokens, wake func(), logger *slog.Logger) (*Gateway, error) {
+	if pool == nil || ports == nil || tokens == nil || logger == nil {
 		return nil, errors.New("gateway dependencies are required")
 	}
-	return &Gateway{pool: pool, ports: ports, tokens: tokens, wake: wake, slots: make(chan struct{}, 64)}, nil
+	return &Gateway{pool: pool, ports: ports, tokens: tokens, wake: wake, logger: logger, slots: make(chan struct{}, 64)}, nil
 }
 
 type rpcRequest struct {
@@ -156,13 +158,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		res.Result = struct{}{}
 	case "tools/list":
-		tools, err := application.ConnectorTools(r.Context(), g.pool, g.ports, tenant, attempt)
+		catalogue, err := application.ConnectorTools(r.Context(), g.pool, g.ports, tenant, attempt)
 		if err != nil {
 			res.Error = &rpcError{-32603, "connector catalogue unavailable"}
 			break
 		}
 		listed := []any{}
-		for _, t := range tools {
+		for _, source := range catalogue.Unavailable {
+			g.logger.WarnContext(r.Context(), "connector catalogue unavailable", "tenant", tenant.String(), "attempt", attempt.String(), "connection", source.Connection.String(), "provider", source.Provider.String())
+		}
+		for _, t := range catalogue.Tools {
 			listed = append(listed, map[string]any{"name": t.Connection.String() + "__" + t.Tool.Name, "description": t.Tool.Description, "inputSchema": t.Tool.InputSchema, "annotations": map[string]any{"readOnlyHint": t.Tool.ReadOnly}})
 		}
 		res.Result = map[string]any{"tools": listed}
@@ -251,7 +256,6 @@ func (g *Gateway) call(ctx context.Context, tenant ids.TenantID, attempt ids.Att
 			}
 			if err == nil {
 				authorized = true
-				operation = call.Operation
 				if g.wake != nil {
 					g.wake()
 				}

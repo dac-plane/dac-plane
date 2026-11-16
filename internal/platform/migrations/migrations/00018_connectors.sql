@@ -32,6 +32,7 @@ CREATE TABLE connection (
   version        bigint      NOT NULL CHECK (version > 0),
   created_at     timestamptz NOT NULL,
   updated_at     timestamptz NOT NULL CHECK (updated_at >= created_at),
+  revoke_attempted_at timestamptz NOT NULL DEFAULT '-infinity',
   PRIMARY KEY (tenant_id, connection_id),
   UNIQUE (connection_id),
   CHECK ((account IS NULL) = (permissions IS NULL)),
@@ -39,6 +40,9 @@ CREATE TABLE connection (
   FOREIGN KEY (tenant_id, owner_id) REFERENCES principal (tenant_id, principal_id),
   FOREIGN KEY (tenant_id, provider_id, connector_role) REFERENCES provider_registration (tenant_id, provider_id, role)
 );
+
+-- Retry scheduling is separate from versioned lifecycle timestamps.
+CREATE INDEX connection_removal_retry ON connection (tenant_id, revoke_attempted_at, updated_at, connection_id) WHERE state='removing';
 
 CREATE TABLE connection_grant (
   tenant_id     uuid        NOT NULL,

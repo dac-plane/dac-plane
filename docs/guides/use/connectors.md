@@ -30,6 +30,8 @@ Adapters that do not negotiate the capability receive no gateway field.
 The runtime sees tools belonging to active connections granted to its work. Each
 name combines its connection ID and tool name. Calling a tool rechecks the
 connection, ownership, grant, expiry, tenant policy and task call ceiling.
+An unavailable connector is omitted from `tools/list`; healthy connections remain
+available and operators receive a warning with connection and provider IDs.
 Explicit tenant denials always win. Authorized calls record `AuthorityUse`, audit,
 a durable dispatch and the exact input digest in one transaction.
 
@@ -48,7 +50,8 @@ another covering grant becomes available.
 Revoking a grant blocks further calls during a running attempt. Removing a
 connection also revokes all its grants atomically and records `removing` until
 credential destruction is confirmed. The reconciliation loop finishes removals
-after a process restart. Already dispatched calls receive cancellation requests;
+after a process restart. Retry batches rotate through the backlog so unavailable
+adapters do not block later removals. Already dispatched calls receive cancellation requests;
 requests that may have reached the external service remain uncertain until there
 is evidence of their outcome. The worker reads recorded results with `read_call`
 and never repeats an unknown `call_tool` effect.

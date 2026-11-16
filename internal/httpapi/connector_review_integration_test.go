@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,7 +86,7 @@ func TestConnectorGatewayDenialBindsWaitingRequest(t *testing.T) {
 		case dispatched <- struct{}{}:
 		default:
 		}
-	})
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,5 +210,114 @@ func TestConnectorProposalOwnerInspection(t *testing.T) {
 	authorized, err := application.ResumeConnectorCall(s.ctx, s.pool, s.tenant, submission.Attempt.ID, pending.Operation, input)
 	if err != nil || authorized.Execution == nil || !bytes.Equal(authorized.Execution.Input, proposal.Input) {
 		t.Fatalf("approved execution differs: %+v %v", authorized, err)
+	}
+}
+
+type reviewPorts map[ids.ProviderID]contracts.Port
+
+func (p reviewPorts) Port(_ ids.TenantID, provider ids.ProviderID, _ contracts.Role) contracts.Port {
+	return p[provider]
+}
+
+func TestConnectorRemovalRetriesReachLaterConnections(t *testing.T) {
+	s := newSurface(t)
+	offline, healthy := mustID[ids.Provider](t), mustID[ids.Provider](t)
+	ports := reviewPorts{healthy: &connectionPeer{}}
+	s.seed(t, func(u *store.UnitOfWork) error {
+		for _, provider := range []ids.ProviderID{offline, healthy} {
+			if err := store.PutProviderRegistration(s.ctx, u, contracts.ProviderRegistration{Tenant: s.tenant, Provider: provider, Role: contracts.RoleConnector, UpdatedAt: s.at}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	var removing []lifecycle.Connection
+	for i := range 11 {
+		provider := offline
+		if i == 10 {
+			provider = healthy
+		}
+		c, err := lifecycle.NewConnection(mustID[ids.Connection](t), s.tenant, provider, s.owner, "Removal fixture", s.at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.seed(t, func(u *store.UnitOfWork) error {
+			if err := store.InsertConnection(s.ctx, u, c); err != nil {
+				return err
+			}
+			var err error
+			c, err = store.RemoveConnection(s.ctx, u, s.tenant, c.ID, store.Transition{ExpectedVersion: 1, At: s.at.Add(time.Duration(i+1) * time.Microsecond), Actor: lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: s.owner}, AuditID: mustID[ids.Audit](t)})
+			return err
+		})
+		removing = append(removing, c)
+	}
+	for range 2 {
+		if err := application.FinishConnectionRemovals(s.ctx, s.pool, ports, s.tenant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later, err := store.GetConnection(s.ctx, s.pool, s.tenant, removing[10].ID)
+	if err != nil || later.State != lifecycle.ConnectionRemoved {
+		t.Fatalf("healthy eleventh removal starved: %+v %v", later, err)
+	}
+	for _, before := range removing[:10] {
+		after, err := store.GetConnection(s.ctx, s.pool, s.tenant, before.ID)
+		if err != nil || after.State != lifecycle.ConnectionRemoving || before.Version != after.Version || !before.UpdatedAt.Equal(after.UpdatedAt) {
+			t.Fatalf("retry changed lifecycle state: %+v %v", after, err)
+		}
+	}
+}
+
+func TestConnectorCatalogueKeepsHealthyTools(t *testing.T) {
+	s, submission, healthy, ports := connectorReviewFixture(t)
+	reviewGrant(t, s, submission.Task.ID, healthy, identity.PermissionAlways)
+	provider := mustID[ids.Provider](t)
+	offline, err := lifecycle.NewConnection(mustID[ids.Connection](t), s.tenant, provider, s.owner, "Offline catalogue", s.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.seed(t, func(u *store.UnitOfWork) error {
+		if err := store.PutProviderRegistration(s.ctx, u, contracts.ProviderRegistration{Tenant: s.tenant, Provider: provider, Role: contracts.RoleConnector, UpdatedAt: s.at}); err != nil {
+			return err
+		}
+		if err := store.InsertConnection(s.ctx, u, offline); err != nil {
+			return err
+		}
+		var err error
+		offline, err = store.CompleteConnection(s.ctx, u, s.tenant, offline.ID, lifecycle.ConnectionAccount{Account: "offline", Permissions: []string{"issues:read"}}, store.Transition{ExpectedVersion: 1, At: time.Now().UTC(), Actor: lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: s.owner}, AuditID: mustID[ids.Audit](t)})
+		return err
+	})
+	reviewGrant(t, s, submission.Task.ID, offline, identity.PermissionAlways)
+	tokens, err := connectorgateway.NewTokens(bytes.Repeat([]byte("c"), 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	gateway, err := connectorgateway.New(s.pool, ports, tokens, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", connectorgateway.Path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+tokens.Issue(s.tenant, submission.Attempt.ID))
+	response := httptest.NewRecorder()
+	gateway.ServeHTTP(response, req)
+	var result struct {
+		Error  json.RawMessage `json:"error"`
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Error) > 0 || len(result.Result.Tools) != 1 || result.Result.Tools[0].Name != healthy.ID.String()+"__get_issue" {
+		t.Fatalf("healthy tools hidden by offline connector: %s", response.Body.String())
+	}
+	if !strings.Contains(logs.String(), offline.ID.String()) || !strings.Contains(logs.String(), provider.String()) || strings.Contains(logs.String(), "private-review-credential") {
+		t.Fatalf("unsafe or missing outage report: %s", logs.String())
 	}
 }

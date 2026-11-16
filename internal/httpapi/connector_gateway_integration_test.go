@@ -164,7 +164,7 @@ func TestConnectorGatewayGovernance(t *testing.T) {
 		if err := w.Tick(s.ctx); err != nil {
 			t.Errorf("gateway dispatch: %v", err)
 		}
-	})
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
