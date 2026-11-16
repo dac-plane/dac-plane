@@ -35,6 +35,7 @@ type DispatchBody struct {
 	// CancelReason is empty for dispatches. When set, the row asks for
 	// protocol cancellation of Operation instead of a provider call.
 	CancelReason string
+	Gateway      bool
 }
 
 // ParseDispatchBody decodes and checks the envelope. Method and role
@@ -50,6 +51,7 @@ func ParseDispatchBody(payload []byte) (DispatchBody, error) {
 		Unit         lifecycle.Unit   `json:"unit"`
 		Amount       uint64           `json:"amount"`
 		CancelReason string           `json:"cancel_reason"`
+		Gateway      bool             `json:"gateway_enabled"`
 	}
 	if err := json.Unmarshal(payload, &raw); err != nil {
 		return DispatchBody{}, fmt.Errorf("dispatch body: %w", err)
@@ -67,7 +69,7 @@ func ParseDispatchBody(payload []byte) (DispatchBody, error) {
 	return DispatchBody{
 		Operation: operation, Role: raw.Role, Method: raw.Method,
 		Arguments: raw.Arguments, Deadline: raw.Deadline,
-		Unit: raw.Unit, Amount: raw.Amount, CancelReason: raw.CancelReason,
+		Unit: raw.Unit, Amount: raw.Amount, CancelReason: raw.CancelReason, Gateway: raw.Gateway,
 	}, nil
 }
 

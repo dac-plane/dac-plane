@@ -441,3 +441,15 @@ func (r ConnectionGrantRequest) terms() lifecycle.ConnectionGrantTerms {
 type ConnectionGrantListBody struct {
 	Grants []lifecycle.ConnectionGrant `json:"grants"`
 }
+
+// CompleteConnectionRequest carries the proof returned only to the consent browser.
+type CompleteConnectionRequest struct {
+	Confirmation string `json:"confirmation"`
+}
+
+func (r CompleteConnectionRequest) Validate() error {
+	if err := contracts.ValidateConfirmation(r.Confirmation); err != nil {
+		return fmt.Errorf("%w: %v", application.ErrInvalidCommand, err)
+	}
+	return nil
+}

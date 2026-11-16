@@ -83,3 +83,51 @@ For stage 3:
   connector confirms credential destruction; repeating removal retries it.
 - Verified connection ownership, replay, stale versions, pending consent, outage
   and schema-17 behavior through real HTTP and PostgreSQL tests.
+
+For stages 4–7 (in progress):
+
+- ADR-0023 adds read-only `read_call` recovery and makes `removing` a durable,
+  automatically reconciled credential-destruction intent without an attempt.
+- Gateway tokens are HMAC-derived under an explicit shared deployment key; no
+  token is stored in product records. Codex retains its gateway access in the
+  adapter's restricted journal for reconnect and configures it outside prompts.
+- The gateway approval path consumes decisions without runtime steering. Expired
+  or revoked pending approvals are closed by the worker rather than wedging work.
+- The real-wire governed-call integration test passes, including a credential
+  canary scan over every public-schema database row and sent connector frames.
+
+## Delivery status (2026-11-16)
+
+Stages 1–9 are implemented on this branch. Final hosted checks and live provider
+qualification are separate from implementation completion.
+
+- Contracts and schema 18 storage: committed, with schema agreement and PostgreSQL coverage.
+- Surface API: connection/grant commands, idempotent consent initiation, browser-only
+  completion proof, schema-17 rollout behavior and pending-removal semantics tested.
+- Gateway and worker: MCP tools/list and tools/call over the real adapter wire;
+  ask decisions, exact-input binding, overlapping grants, per-task ceilings,
+  expired waits, revocation, output recovery and durable removal implemented.
+- Dispatch authorization is rechecked after budget and operation locks. Regression
+  coverage holds each lock past an allow-once expiry and proves the call is refused.
+- Simulator and kit: connector role has its own 14-scenario process conformance run.
+- Codex: negotiated per-thread gateway configuration, restart configuration and
+  migrated target-attempt tokens covered. Old adapters receive no gateway field.
+- GitHub: separate module and buildable image; deterministic fake-service tests
+  cover PKCE, callback-browser proof, sealed credentials, retained renewal generations,
+  refresh, revocation, cancellation, restart, unknown effects and secret projection.
+  Removing the browser-proof predicate experimentally makes the security test fail.
+- Guide, configuration, adapter documentation, ADR-0023, CI recipes and module checks
+  include the new behavior and reference connector.
+
+Observed checks: `just ci-fast`, `just test-integration ./...`,
+`just test-integration-race ./internal/httpapi/ -run 'Test(Connector|SurfaceConnections)'`,
+`just test-github-adapter`, `just test-codex-adapter`, `just test-contracts`,
+`just test-conformance`, `just docs-check`, `just vuln`, `git diff --check`,
+and a Docker build of target `dac-github-adapter` pass. The first vulnerability
+lookup had a DNS failure; the retry completed with no vulnerabilities found.
+
+Not verified locally: a real GitHub App OAuth session/API qualification, a live
+model making a connector call, runtime-host egress enforcement, and the full
+image/stack/operations CI suites. The tagged live GitHub qualification runner
+builds and has a documented dedicated-fixture procedure; it was not executed
+without a consented fixture connection. No final release publication is included.

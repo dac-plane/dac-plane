@@ -537,3 +537,12 @@ func AdvanceCursor(ctx context.Context, u *UnitOfWork, cursor contracts.Cursor) 
 	}
 	return UpsertCursor(ctx, u, cursor)
 }
+
+// GetOperationForUpdate holds the operation's send-marker row before the final
+// authorization time check, so a blocked write cannot outlive its authority.
+func GetOperationForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.OperationID) (lifecycle.ProviderOperation, error) {
+	if err := lockRow(ctx, u, "provider_operation", "operation_id", tenant.String(), id.String()); err != nil {
+		return lifecycle.ProviderOperation{}, err
+	}
+	return GetOperation(ctx, u, tenant, id)
+}

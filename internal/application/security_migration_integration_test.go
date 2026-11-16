@@ -1286,6 +1286,9 @@ func TestMigrationRestartCarriesTheDelegatedAgentsInstructions(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.tick(t, sourceRuntime)
+	if _, err := f.pool.Exec(f.ctx, `update outbox set payload=jsonb_set(payload,'{gateway_enabled}','true'::jsonb) where tenant_id=$1 and outbox_id=$2`, f.tenant.String(), s.Operation.ID.String()); err != nil {
+		t.Fatal(err)
+	}
 	if got := f.ingest(t, f.event(sourceRuntime, s, 1, simulator.RowsFrame(false, row(1, contracts.EntryRuntimeStarted, contracts.RuntimeStarted{NativeRef: "delegated-source-session"})))); got.Applied != 1 {
 		t.Fatalf("source binding ingestion=%+v", got)
 	}
@@ -1302,7 +1305,9 @@ func TestMigrationRestartCarriesTheDelegatedAgentsInstructions(t *testing.T) {
 	reaped := false
 	run := func(target *simulator.Runtime, name string, passes int) lifecycle.MigrationItem {
 		t.Helper()
-		items := reapMigration(t, f, v.Pass.ID, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: target}, environment, name, passes, &reaped)
+		items := reapMigration(t, f, v.Pass.ID, map[ids.ProviderID]contracts.Port{f.provider: sourceRuntime, cmd.To: target}, environment, name, passes, &reaped, worker.WithConnectorGateway(func(tenant ids.TenantID, attempt ids.AttemptID) *contracts.GatewayAccess {
+			return &contracts.GatewayAccess{URL: "https://dac.example/connectors/mcp", Token: "migration-gateway-" + attempt.String()}
+		}))
 		if len(items) != 1 {
 			t.Fatalf("items=%+v", items)
 		}
@@ -1321,7 +1326,7 @@ func TestMigrationRestartCarriesTheDelegatedAgentsInstructions(t *testing.T) {
 
 	// Once a runtime that negotiated them connects, the held restart carries
 	// the pinned revision's role and instructions.
-	current, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To}, simulator.RuntimeScenario{MigrationReceipts: true})
+	current, err := simulator.NewRuntime(simulator.Config{Tenant: f.tenant, Provider: cmd.To, Hello: contracts.Lifecycle{Phase: contracts.PhaseHello, Versions: []uint32{1}, Offered: []contracts.Capability{contracts.CapabilityAgentInstructions, contracts.CapabilityConnectorGateway}}}, simulator.RuntimeScenario{MigrationReceipts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1341,11 +1346,14 @@ func TestMigrationRestartCarriesTheDelegatedAgentsInstructions(t *testing.T) {
 	if restart.Recovery == nil || restart.Agent == nil || *restart.Agent != want {
 		t.Fatalf("migration restart=%+v; want recovery and agent %+v", restart, want)
 	}
+	if restart.Gateway == nil || restart.Gateway.Token != "migration-gateway-"+item.TargetAttempt.String() {
+		t.Fatalf("migration lost target-attempt gateway: %+v", restart.Gateway)
+	}
 }
 
 // reapMigration runs passes worker passes over the migration, each expiring
 // the claim the one before took, and returns the pass's items.
-func reapMigration(t *testing.T, f *fixture, pass ids.MigrationID, runtimes map[ids.ProviderID]contracts.Port, environment contracts.Port, name string, passes int, reaped *bool) []lifecycle.MigrationItem {
+func reapMigration(t *testing.T, f *fixture, pass ids.MigrationID, runtimes map[ids.ProviderID]contracts.Port, environment contracts.Port, name string, passes int, reaped *bool, options ...func(*worker.Worker)) []lifecycle.MigrationItem {
 	t.Helper()
 	for i := range passes {
 		if *reaped {
@@ -1355,7 +1363,7 @@ func reapMigration(t *testing.T, f *fixture, pass ids.MigrationID, runtimes map[
 		}
 		*reaped = true
 		w, err := worker.New(f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, worker.DefaultConfig(), fmt.Sprintf("%s-%d", name, i),
-			wiretest.Ports(t, f.pool, f.tenant, runtimes, wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: environment})))
+			append([]func(*worker.Worker){wiretest.Ports(t, f.pool, f.tenant, runtimes, wiretest.Environments(map[ids.ProviderID]contracts.Port{f.environmentProvider: environment}))}, options...)...)
 		if err != nil {
 			t.Fatal(err)
 		}

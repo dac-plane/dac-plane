@@ -1435,7 +1435,7 @@
           }
         ],
         "requestBody": {
-          "$ref": "#/components/requestBodies/EmptyCommand"
+          "required":true,"content":{"application/json":{"schema":{"$ref":"../jsonschema/surface/complete-connection-request.schema.json"}}}
         },
         "responses": {
           "200": {

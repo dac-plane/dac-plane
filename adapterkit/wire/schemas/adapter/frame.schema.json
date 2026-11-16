@@ -71,7 +71,7 @@
             "provision", "stop", "observe",
             "pre_action", "post_action", "action_failed", "execute_action",
             "authorize_upload", "stat_object", "commit_manifest",
-            "list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool"
+            "list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool", "read_call"
           ]
         },
         "arguments": { "$ref": "common.schema.json#/$defs/jsonObject" },
@@ -106,7 +106,7 @@
         },
         {
           "if": { "properties": { "role": { "const": "connector" } } },
-          "then": { "properties": { "method": { "enum": ["list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool"] } } }
+          "then": { "properties": { "method": { "enum": ["list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool", "read_call"] } } }
         }
       ]
     },

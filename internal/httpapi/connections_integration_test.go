@@ -7,10 +7,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/httpapi"
 	"github.com/dac-plane/dac-plane/internal/identity"
@@ -26,6 +28,7 @@ type connectionPeer struct {
 	contracts.Port
 	mu      sync.Mutex
 	offline bool
+	pending bool
 	status  contracts.AuthorizationStatus
 	starts  int
 }
@@ -57,7 +60,11 @@ func (p *connectionPeer) Send(_ context.Context, r contracts.Request) (contracts
 		return contracts.Reply{}, errors.New("unexpected method")
 	}
 	raw, err := json.Marshal(value)
-	return contracts.Reply{Operation: r.Operation, Delivery: r.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted, Result: raw}, err
+	durability := lifecycle.SendAccepted
+	if p.pending {
+		durability = lifecycle.SendPending
+	}
+	return contracts.Reply{Operation: r.Operation, Delivery: r.Delivery, Outcome: contracts.OutcomeOK, Durability: durability, Result: raw}, err
 }
 
 type connectionPorts struct{ peer *connectionPeer }
@@ -96,11 +103,13 @@ func TestSurfaceConnectionsThroughHTTP(t *testing.T) {
 	if starts != 3 {
 		t.Fatalf("began authorization %d times; want create, create replay, authorize once", starts)
 	}
-	s.do(t, call{method: "POST", path: path + "/complete", as: "owner", key: "complete", ifMatch: `"1"`, body: struct{}{}}).want(t, 409)
+	s.do(t, call{method: "POST", path: path + "/complete", as: "owner", key: "complete", ifMatch: `"1"`, body: httpapi.CompleteConnectionRequest{Confirmation: strings.Repeat("p", 32)}}).want(t, 409)
+	s.do(t, call{method: "POST", path: path + "/complete", as: "owner", key: "missing-proof", ifMatch: `"1"`, body: struct{}{}}).want(t, 422)
+	s.do(t, call{method: "POST", path: path + "/complete", as: "other", key: "foreign-complete", ifMatch: `"1"`, body: httpapi.CompleteConnectionRequest{Confirmation: strings.Repeat("p", 32)}}).want(t, 403)
 	peer.mu.Lock()
 	peer.status = contracts.AuthorizationAuthorized
 	peer.mu.Unlock()
-	c = decodeInto[lifecycle.Connection](t, s.do(t, call{method: "POST", path: path + "/complete", as: "owner", key: "complete", ifMatch: `"1"`, body: struct{}{}}), 200)
+	c = decodeInto[lifecycle.Connection](t, s.do(t, call{method: "POST", path: path + "/complete", as: "owner", key: "complete", ifMatch: `"1"`, body: httpapi.CompleteConnectionRequest{Confirmation: strings.Repeat("p", 32)}}), 200)
 	if c.State != lifecycle.ConnectionActive || c.Version != 2 || c.Account.Account != "octocat" {
 		t.Fatalf("complete: %+v", c)
 	}
@@ -127,6 +136,21 @@ func TestSurfaceConnectionsThroughHTTP(t *testing.T) {
 	}
 	peer.mu.Lock()
 	peer.offline = false
+	peer.pending = true
+	peer.mu.Unlock()
+	pendingRemoval := decodeInto[lifecycle.Connection](t, s.do(t, call{method: "POST", path: path + "/remove", as: "owner", key: "remove", ifMatch: `"2"`, body: struct{}{}}), 202)
+	if pendingRemoval.State != lifecycle.ConnectionRemoving {
+		t.Fatal("pending reply was treated as completed revocation")
+	}
+	if err := application.FinishConnectionRemovals(s.ctx, s.pool, connectionPorts{peer}, s.tenant); err != nil {
+		t.Fatal(err)
+	}
+	stillRemoving, err := store.GetConnection(s.ctx, s.pool, s.tenant, c.ID)
+	if err != nil || stillRemoving.State != lifecycle.ConnectionRemoving {
+		t.Fatal("background removal accepted pending revocation")
+	}
+	peer.mu.Lock()
+	peer.pending = false
 	peer.mu.Unlock()
 	c = decodeInto[lifecycle.Connection](t, s.do(t, call{method: "POST", path: path + "/remove", as: "owner", key: "remove", ifMatch: `"2"`, body: struct{}{}}), 200)
 	if c.State != lifecycle.ConnectionRemoved {

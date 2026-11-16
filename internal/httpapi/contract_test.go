@@ -31,16 +31,17 @@ var testNow = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 func schemaPath(name string) string { return filepath.Join(surfaceSchemas, name) }
 
 var (
-	submitContract     = schematest.GoContract[SubmitTaskRequest](schemaPath("submit-task-request.schema.json"))
-	assertionContract  = schematest.GoContract[SpendAssertionRequest](schemaPath("spend-assertion-request.schema.json"))
-	decisionContract   = schematest.GoContract[DecisionRequest](schemaPath("decision-request.schema.json"))
-	cancelContract     = schematest.GoContract[CancelRequest](schemaPath("cancel-request.schema.json"))
-	reviewContract     = schematest.GoContract[ReviewRequest](schemaPath("review-request.schema.json"))
-	migrationContract  = schematest.GoContract[CreateMigrationRequest](schemaPath("create-migration-request.schema.json"))
-	emptyContract      = schematest.GoContract[EmptyCommandRequest](schemaPath("empty-command-request.schema.json"))
-	connectionContract = schematest.GoContract[ConnectionRequest](schemaPath("connection-request.schema.json"))
-	connGrantContract  = schematest.GoContract[ConnectionGrantRequest](schemaPath("connection-grant-request.schema.json"))
-	agentContract      = schematest.GoContract[AgentRequest](schemaPath("agent-request.schema.json"))
+	submitContract       = schematest.GoContract[SubmitTaskRequest](schemaPath("submit-task-request.schema.json"))
+	assertionContract    = schematest.GoContract[SpendAssertionRequest](schemaPath("spend-assertion-request.schema.json"))
+	decisionContract     = schematest.GoContract[DecisionRequest](schemaPath("decision-request.schema.json"))
+	cancelContract       = schematest.GoContract[CancelRequest](schemaPath("cancel-request.schema.json"))
+	reviewContract       = schematest.GoContract[ReviewRequest](schemaPath("review-request.schema.json"))
+	migrationContract    = schematest.GoContract[CreateMigrationRequest](schemaPath("create-migration-request.schema.json"))
+	emptyContract        = schematest.GoContract[EmptyCommandRequest](schemaPath("empty-command-request.schema.json"))
+	completeConnContract = schematest.GoContract[CompleteConnectionRequest](schemaPath("complete-connection-request.schema.json"))
+	connectionContract   = schematest.GoContract[ConnectionRequest](schemaPath("connection-request.schema.json"))
+	connGrantContract    = schematest.GoContract[ConnectionGrantRequest](schemaPath("connection-grant-request.schema.json"))
+	agentContract        = schematest.GoContract[AgentRequest](schemaPath("agent-request.schema.json"))
 )
 
 func newID[K any](t *testing.T) ids.ID[K] {
@@ -72,9 +73,10 @@ func validRequests(t *testing.T) map[string]struct {
 		contract schematest.Contract
 		data     []byte
 	}{
-		"connection":       {connectionContract, schematest.Marshal(t, ConnectionRequest{Provider: newID[ids.Provider](t), Name: "My account"})},
-		"connection grant": {connGrantContract, schematest.Marshal(t, ConnectionGrantRequest{Task: task, Tools: []string{"read_issue"}, Permission: identity.PermissionAsk, CallLimit: 10, ExpiresAt: testNow.Add(time.Hour)})},
-		"submit":           {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
+		"complete connection": {completeConnContract, schematest.Marshal(t, CompleteConnectionRequest{Confirmation: strings.Repeat("p", 32)})},
+		"connection":          {connectionContract, schematest.Marshal(t, ConnectionRequest{Provider: newID[ids.Provider](t), Name: "My account"})},
+		"connection grant":    {connGrantContract, schematest.Marshal(t, ConnectionGrantRequest{Task: task, Tools: []string{"read_issue"}, Permission: identity.PermissionAsk, CallLimit: 10, ExpiresAt: testNow.Add(time.Hour)})},
+		"submit":              {submitContract, schematest.Marshal(t, SubmitTaskRequest{Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10})},
 		"submit governed person": {submitContract, schematest.Marshal(t, SubmitTaskRequest{
 			Provider: newID[ids.Provider](t), EnvironmentProvider: newID[ids.Provider](t), Objective: "Update the fixture", AcceptanceCriteria: []string{"The fixture is updated"}, Demand: contracts.DemandPerson, Deadline: testNow.Add(time.Hour), Unit: "usd_cents", Ceiling: 100, Amount: 10, Spend: true,
 		})},
@@ -113,6 +115,9 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		name, base string
 		change     func(map[string]any)
 	}{
+		{"complete without proof", "complete connection", func(d map[string]any) { delete(d, "confirmation") }},
+		{"complete short proof", "complete connection", func(d map[string]any) { d["confirmation"] = "short" }},
+		{"complete proof with space", "complete connection", func(d map[string]any) { d["confirmation"] = strings.Repeat("p", 32) + " " }},
 		{"connection no provider", "connection", func(d map[string]any) { delete(d, "provider_id") }},
 		{"connection blank name", "connection", func(d map[string]any) { d["name"] = " " }},
 		{"connection credential", "connection", func(d map[string]any) { d["token"] = "canary" }},

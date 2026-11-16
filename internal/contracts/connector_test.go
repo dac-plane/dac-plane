@@ -13,6 +13,7 @@ import (
 )
 
 var (
+	completeAuthContract  = schematest.GoContract[CompleteAuthorization](filepath.Join(schemaDir, "complete-authorization.schema.json"))
 	catalogueContract     = schematest.GoContract[ToolCatalogue](filepath.Join(schemaDir, "tool-catalogue.schema.json"))
 	connectionRefContract = schematest.GoContract[ConnectionReference](filepath.Join(schemaDir, "connection-reference.schema.json"))
 	beginAuthContract     = schematest.GoContract[BeginAuthorization](filepath.Join(schemaDir, "begin-authorization.schema.json"))
@@ -57,18 +58,19 @@ func TestContractConformanceConnectorProtocol(t *testing.T) {
 		contract schematest.Contract
 		value    any
 	}{
-		"catalogue":          {catalogueContract, catalogue},
-		"reference":          {connectionRefContract, ConnectionReference{Connection: newID[ids.Connection](t)}},
-		"begin":              {beginAuthContract, BeginAuthorization{Connection: newID[ids.Connection](t), ExpiresAt: testNow}},
-		"started":            {authStartedContract, AuthorizationStarted{URL: "https://github.com/login/oauth/authorize?client_id=x&state=y", ExpiresAt: testNow}},
-		"loopback started":   {authStartedContract, AuthorizationStarted{URL: "http://127.0.0.1:8090/authorize?state=y", ExpiresAt: testNow}},
-		"pending":            {authResultContract, AuthorizationResult{Status: AuthorizationPending}},
-		"authorized":         {authResultContract, AuthorizationResult{Status: AuthorizationAuthorized, Account: &lifecycle.ConnectionAccount{Account: "octocat", Permissions: []string{"issues:write"}}}},
-		"standing execution": {connExecutionContract, newConnectorExecution(t)},
-		"approved execution": {connExecutionContract, approved},
-		"result":             {connResultContract, newConnectorResult(t)},
-		"refused result":     {connResultContract, failed},
-		"gateway":            {gatewayContract, GatewayAccess{URL: "https://dac.example/connectors/mcp", Token: "dacg1.abc.def"}},
+		"complete authorization": {completeAuthContract, CompleteAuthorization{Connection: newID[ids.Connection](t), Confirmation: strings.Repeat("p", 32)}},
+		"catalogue":              {catalogueContract, catalogue},
+		"reference":              {connectionRefContract, ConnectionReference{Connection: newID[ids.Connection](t)}},
+		"begin":                  {beginAuthContract, BeginAuthorization{Connection: newID[ids.Connection](t), ExpiresAt: testNow}},
+		"started":                {authStartedContract, AuthorizationStarted{URL: "https://github.com/login/oauth/authorize?client_id=x&state=y", ExpiresAt: testNow}},
+		"loopback started":       {authStartedContract, AuthorizationStarted{URL: "http://127.0.0.1:8090/authorize?state=y", ExpiresAt: testNow}},
+		"pending":                {authResultContract, AuthorizationResult{Status: AuthorizationPending}},
+		"authorized":             {authResultContract, AuthorizationResult{Status: AuthorizationAuthorized, Account: &lifecycle.ConnectionAccount{Account: "octocat", Permissions: []string{"issues:write"}}}},
+		"standing execution":     {connExecutionContract, newConnectorExecution(t)},
+		"approved execution":     {connExecutionContract, approved},
+		"result":                 {connResultContract, newConnectorResult(t)},
+		"refused result":         {connResultContract, failed},
+		"gateway":                {gatewayContract, GatewayAccess{URL: "https://dac.example/connectors/mcp", Token: "dacg1.abc.def"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := schematest.Marshal(t, tc.value)

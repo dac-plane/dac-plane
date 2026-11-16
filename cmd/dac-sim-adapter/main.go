@@ -261,6 +261,17 @@ func (s scenarioFile) adapters(tlsConfig *tls.Config, artifactOnly bool) (*simul
 	if err != nil {
 		return nil, fmt.Errorf("scenario: provider_id: %w", err)
 	}
+	if s.Role == string(contracts.RoleConnector) {
+		token, err := tokenSource("DAC_ADAPTER", tlsConfig)
+		if err != nil {
+			return nil, err
+		}
+		connector, err := simulator.NewConnector(simulator.Config{Tenant: tenant, Provider: provider})
+		if err != nil {
+			return nil, err
+		}
+		return &simulatorSet{adapters: []adapter{{provider: s.Provider, role: wire.RoleConnector, port: connector, token: token}}}, nil
+	}
 	if s.Role != string(contracts.RoleRuntime) {
 		return nil, fmt.Errorf("scenario: role: dac-sim-adapter serves a %s", contracts.RoleRuntime)
 	}

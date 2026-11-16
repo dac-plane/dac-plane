@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dac-plane/dac-plane/internal/application"
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/ids"
 	"github.com/dac-plane/dac-plane/internal/lifecycle"
@@ -106,6 +107,8 @@ type Worker struct {
 	owner        string
 	cfg          Config
 	stats        Stats
+	gateway      func(ids.TenantID, ids.AttemptID) *contracts.GatewayAccess
+	wake         chan struct{}
 }
 
 // New builds a worker. ports maps provider identities to their ports and
@@ -127,7 +130,7 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, ports map[ids.ProviderID]contr
 	for provider, port := range ports {
 		registry[provider] = port
 	}
-	w := &Worker{pool: pool, logger: logger, ports: registry, owner: owner, cfg: cfg}
+	w := &Worker{pool: pool, logger: logger, ports: registry, owner: owner, cfg: cfg, wake: make(chan struct{}, 1)}
 	for _, option := range options {
 		option(w)
 	}
@@ -163,6 +166,10 @@ func (w *Worker) loop(ctx context.Context, wg *sync.WaitGroup, interval time.Dur
 		select {
 		case <-ctx.Done():
 			return
+		case <-w.dispatchWake(name):
+			if err := pass(ctx); err != nil {
+				w.logger.Error("worker pass failed", "loop", name, "error", err)
+			}
 		case <-ticker.C:
 			if err := pass(ctx); err != nil {
 				w.logger.Error("worker pass failed", "loop", name, "error", err)
@@ -180,6 +187,9 @@ func (w *Worker) Tick(ctx context.Context) error {
 	}
 	var firstErr error
 	for _, tenant := range tenants {
+		if err := application.ExpireConnectorApprovals(ctx, w.pool, tenant); err != nil {
+			return err
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -209,4 +219,21 @@ func (w *Worker) tickTenant(ctx context.Context, tenant ids.TenantID) error {
 		}
 	}
 	return nil
+}
+
+// Wake requests an early dispatch pass without starting a concurrent Tick.
+func (w *Worker) Wake() {
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+func (w *Worker) dispatchWake(name string) <-chan struct{} {
+	if name == "dispatch" {
+		return w.wake
+	}
+	return nil
+}
+func WithConnectorGateway(access func(ids.TenantID, ids.AttemptID) *contracts.GatewayAccess) func(*Worker) {
+	return func(w *Worker) { w.gateway = access }
 }

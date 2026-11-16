@@ -91,11 +91,12 @@ func (a *API) completeConnection(w http.ResponseWriter, r *http.Request, actor i
 	if err != nil {
 		return err
 	}
-	if _, err := decode[EmptyCommandRequest](r); err != nil {
+	body, err := decode[CompleteConnectionRequest](r)
+	if err != nil {
 		return err
 	}
 	connection, err := application.CompleteConnection(r.Context(), a.pool, a.options.Connectors, application.CompleteConnectionCommand{
-		Command: cmd, At: a.options.Now(), Connection: id,
+		Command: cmd, At: a.options.Now(), Connection: id, Confirmation: body.Confirmation,
 	})
 	if err != nil {
 		return err

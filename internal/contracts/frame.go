@@ -279,7 +279,7 @@ func (r Request) Validate() error {
 // about a connection rather than about an attempt's work: they are sent
 // outside any attempt and never become provider operations.
 func ConnectionMethod(role Role, method Method) bool {
-	return role == RoleConnector && method != MethodCallTool && slices.Contains(Methods(RoleConnector), method)
+	return role == RoleConnector && method != MethodCallTool && method != MethodReadCall && slices.Contains(Methods(RoleConnector), method)
 }
 
 func validArguments(arguments json.RawMessage) error {

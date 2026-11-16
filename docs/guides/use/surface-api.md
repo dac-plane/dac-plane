@@ -101,7 +101,8 @@ adapter. Register one with `POST /connections`, specifying `provider_id` and
 `name`. The response includes the connection and, when the adapter is reachable,
 an `authorization` URL. Open that URL to consent at the connector, then send
 `POST /connections/{connection}/complete` with the connection's ETag in
-`If-Match`. Pending consent returns `409 authorization-pending`.
+`If-Match` and a JSON `confirmation` proof received only by the callback browser.
+The proof is never returned by polling. Pending consent returns `409 authorization-pending`.
 
 If the initial response has no URL, request one with
 `POST /connections/{connection}/authorize` and an empty JSON object. This command

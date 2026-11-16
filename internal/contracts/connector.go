@@ -24,7 +24,7 @@ const (
 	// MaxToolInputBytes bounds one call's input.
 	MaxToolInputBytes = 32 << 10
 	// MaxToolOutputBytes bounds one call's output.
-	MaxToolOutputBytes = 256 << 10
+	MaxToolOutputBytes = 32 << 10
 	// maxAuthorizationURLBytes bounds an authorization URL.
 	maxAuthorizationURLBytes = 4 << 10
 	// maxGatewayTokenBytes bounds an attempt's gateway token.
@@ -76,6 +76,10 @@ func (c ToolCatalogue) Validate() error {
 			return fmt.Errorf("%w: catalogue names a tool twice", ErrInvalid)
 		}
 		seen[tool.Name] = true
+	}
+	raw, err := json.Marshal(c)
+	if err != nil || len(raw) > 48<<10 {
+		return fmt.Errorf("%w: connector catalogue exceeds the frame budget", ErrInvalid)
 	}
 	return nil
 }
@@ -314,6 +318,30 @@ func (g GatewayAccess) Validate() error {
 	}
 	if g.Token == "" || len(g.Token) > maxGatewayTokenBytes || bytes.ContainsFunc([]byte(g.Token), func(r rune) bool { return r <= ' ' || r > '~' }) {
 		return fmt.Errorf("%w: gateway token must be bounded printable ASCII", ErrInvalid)
+	}
+	return nil
+}
+
+// CompleteAuthorization confirms consent using the proof delivered only to the
+// callback browser. Polling state alone can never activate another user's account.
+type CompleteAuthorization struct {
+	Connection   ids.ConnectionID `json:"connection_id"`
+	Confirmation string           `json:"confirmation"`
+}
+
+func (c CompleteAuthorization) Validate() error {
+	if c.Connection.IsZero() {
+		return fmt.Errorf("%w: connection required", ErrInvalid)
+	}
+	return ValidateConfirmation(c.Confirmation)
+}
+
+// ValidateConfirmation bounds a browser-only, URL-safe completion proof.
+func ValidateConfirmation(proof string) error {
+	if len(proof) < 32 || len(proof) > 128 || strings.ContainsFunc(proof, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+	}) {
+		return fmt.Errorf("%w: bounded browser confirmation proof required", ErrInvalid)
 	}
 	return nil
 }

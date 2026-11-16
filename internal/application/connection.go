@@ -79,10 +79,11 @@ type CreateConnectionCommand struct {
 }
 
 type connectionPayload struct {
-	Connection      string `json:"connection,omitempty"`
-	Provider        string `json:"provider,omitempty"`
-	Name            string `json:"name,omitempty"`
-	ExpectedVersion uint64 `json:"expected_version,omitempty"`
+	Connection         string          `json:"connection,omitempty"`
+	Provider           string          `json:"provider,omitempty"`
+	Name               string          `json:"name,omitempty"`
+	ExpectedVersion    uint64          `json:"expected_version,omitempty"`
+	ConfirmationDigest identity.Digest `json:"confirmation_digest,omitempty"`
 }
 
 // CreateConnection runs the command, then asks the connector for a consent
@@ -193,8 +194,9 @@ func AuthorizeConnection(ctx context.Context, pool *pgxpool.Pool, ports Connecto
 // ExpectedVersion is the connection version the owner read.
 type CompleteConnectionCommand struct {
 	Command
-	At         time.Time
-	Connection ids.ConnectionID
+	At           time.Time
+	Connection   ids.ConnectionID
+	Confirmation string
 }
 
 // CompleteConnection asks the connector whether the owner's consent finished
@@ -206,10 +208,10 @@ func CompleteConnection(ctx context.Context, pool *pgxpool.Pool, ports Connector
 	if err := cmd.Command.validate(false); err != nil {
 		return lifecycle.Connection{}, err
 	}
-	if cmd.At.IsZero() || cmd.Connection.IsZero() {
+	if cmd.At.IsZero() || cmd.Connection.IsZero() || contracts.ValidateConfirmation(cmd.Confirmation) != nil {
 		return lifecycle.Connection{}, fmt.Errorf("%w: a connection and a command time are required", ErrInvalidCommand)
 	}
-	digest, err := fingerprint(commandCompleteConnection, connectionPayload{Connection: cmd.Connection.String(), ExpectedVersion: cmd.ExpectedVersion})
+	digest, err := fingerprint(commandCompleteConnection, connectionPayload{Connection: cmd.Connection.String(), ExpectedVersion: cmd.ExpectedVersion, ConfirmationDigest: identity.DigestOf([]byte(cmd.Confirmation))})
 	if err != nil {
 		return lifecycle.Connection{}, err
 	}
@@ -224,7 +226,7 @@ func CompleteConnection(ctx context.Context, pool *pgxpool.Pool, ports Connector
 		return lifecycle.Connection{}, err
 	}
 	var result contracts.AuthorizationResult
-	if err := connectionRequest(ctx, ports, connection, contracts.MethodCompleteAuthorization, contracts.ConnectionReference{Connection: connection.ID}, cmd.At, &result); err != nil {
+	if err := connectionRequest(ctx, ports, connection, contracts.MethodCompleteAuthorization, contracts.CompleteAuthorization{Connection: connection.ID, Confirmation: cmd.Confirmation}, cmd.At, &result); err != nil {
 		return lifecycle.Connection{}, err
 	}
 	if err := result.Validate(); err != nil {
@@ -319,13 +321,13 @@ func RemoveConnection(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPo
 		}
 		return lifecycle.Connection{}, err
 	}
-	return finishRemoval(ctx, pool, cmd.Actor, connection)
+	return finishRemoval(ctx, pool, cmd.Command.actor(), connection)
 }
 
 // finishRemoval records that the connector revoked and destroyed the
 // credential. A concurrent removal that finished first answers with its
 // result.
-func finishRemoval(ctx context.Context, pool *pgxpool.Pool, actor identity.AuthorizationContext, connection lifecycle.Connection) (lifecycle.Connection, error) {
+func finishRemoval(ctx context.Context, pool *pgxpool.Pool, actor lifecycle.Actor, connection lifecycle.Connection) (lifecycle.Connection, error) {
 	u, err := store.Begin(ctx, pool)
 	if err != nil {
 		return lifecycle.Connection{}, err
@@ -337,7 +339,7 @@ func finishRemoval(ctx context.Context, pool *pgxpool.Pool, actor identity.Autho
 	}
 	removed, err := store.FinishConnectionRemoval(ctx, u, connection.Tenant, connection.ID, store.Transition{
 		ExpectedVersion: connection.Version, At: time.Now().UTC().Truncate(time.Microsecond),
-		Actor: lifecycle.Actor{Kind: lifecycle.ActorPrincipal, Principal: actor.Principal().ID}, AuditID: auditID,
+		Actor: actor, AuditID: auditID,
 	})
 	if err != nil {
 		var refusal *lifecycle.TransitionError
@@ -614,7 +616,7 @@ func connectionRequest(ctx context.Context, ports ConnectorPorts, connection lif
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrConnectorUnavailable, err)
 	}
-	if reply.Validate() != nil || reply.Operation != operation || reply.Delivery != delivery || reply.Outcome != contracts.OutcomeOK {
+	if reply.Validate() != nil || reply.Operation != operation || reply.Delivery != delivery || reply.Outcome != contracts.OutcomeOK || reply.Durability != lifecycle.SendAccepted {
 		if reply.Failure != nil {
 			return fmt.Errorf("%w: %s", ErrConnectorUnavailable, reply.Failure.Code)
 		}
@@ -711,4 +713,56 @@ func idText[K any](id ids.ID[K]) string {
 		return ""
 	}
 	return id.String()
+}
+
+// FinishConnectionRemovals recovers credential destruction after a process dies
+// between recording removing and receiving the connector's confirmation. The
+// connector's revocation is idempotent by connection, including after a lost reply.
+func FinishConnectionRemovals(ctx context.Context, pool *pgxpool.Pool, ports ConnectorPorts, tenant ids.TenantID) error {
+	available, err := store.ConnectorSchemaAvailable(ctx, pool)
+	if err != nil || !available {
+		return err
+	}
+	rows, err := pool.Query(ctx, `select connection_id::text from connection where tenant_id=$1 and state='removing' order by updated_at limit 10`, tenant.String())
+	if err != nil {
+		return err
+	}
+	var idsToRemove []ids.ConnectionID
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			rows.Close()
+			return err
+		}
+		id, err := ids.Parse[ids.Connection](text)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		idsToRemove = append(idsToRemove, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range idsToRemove {
+		c, err := store.GetConnection(ctx, pool, tenant, id)
+		if err != nil {
+			return err
+		}
+		if c.State != lifecycle.ConnectionRemoving {
+			continue
+		}
+		if err := connectionRequest(ctx, ports, c, contracts.MethodRevokeConnection, contracts.ConnectionReference{Connection: id}, time.Now().UTC(), nil); err != nil {
+			if errors.Is(err, ErrConnectorUnavailable) {
+				continue
+			}
+			return err
+		}
+		if _, err := finishRemoval(ctx, pool, lifecycle.Actor{Kind: lifecycle.ActorSystem}, c); err != nil {
+			return err
+		}
+	}
+	return nil
 }

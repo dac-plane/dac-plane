@@ -92,7 +92,7 @@ func Methods(role Role) []string {
 	case RoleArtifactStore:
 		return []string{"authorize_upload", "stat_object", "commit_manifest"}
 	case RoleConnector:
-		return []string{"list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool"}
+		return []string{"list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool", "read_call"}
 	}
 	return nil
 }

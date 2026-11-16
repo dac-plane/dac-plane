@@ -460,7 +460,7 @@ func (c ConnectorCall) matchesExecution(e *contracts.ConnectorExecution) error {
 		return nil
 	}
 	r := e.Request
-	if r.Tenant != c.Tenant || r.Operation != c.Operation || r.Attempt != c.Attempt ||
+	if r.Tenant != c.Tenant || r.Operation != c.Operation || r.Attempt != c.Attempt || r.Provider != c.Provider ||
 		e.Connection != c.Connection || e.ConnectionGrant != c.ConnectionGrant || e.Tool != c.Tool || r.InputDigest != c.InputDigest {
 		return ErrPayloadMismatch
 	}
@@ -618,4 +618,22 @@ func scanConnectorCall(row interface{ Scan(...any) error }) (ConnectorCall, erro
 		c.Result = &r
 	}
 	return c, nil
+}
+
+// GetConnectionGrantForUpdate serializes the call ceiling with revocation.
+func GetConnectionGrantForUpdate(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, id ids.ConnectionGrantID) (lifecycle.ConnectionGrant, error) {
+	if err := lockRow(ctx, u, "connection_grant", "grant_id", tenant.String(), id.String()); err != nil {
+		return lifecycle.ConnectionGrant{}, err
+	}
+	return GetConnectionGrant(ctx, u, tenant, id)
+}
+
+// RecordConnectorUse records only safe authority evidence; raw call bytes stay
+// in connector_call and are never copied to audit or event payloads.
+func RecordConnectorUse(ctx context.Context, u *UnitOfWork, use identity.AuthorityUse, tr Transition) error {
+	if _, _, err := InsertUse(ctx, u, use); err != nil {
+		return err
+	}
+	change := lifecycle.Change{Tenant: use.Tenant, Record: lifecycle.RecordAuthorityUse, RecordID: use.Operation.Untyped(), Event: "authorize", From: "requested", To: string(use.Outcome), Version: 1}
+	return appendHistory(ctx, u, change, change.Audit(tr.AuditID, tr.Actor, tr.At), tr.Outbox)
 }

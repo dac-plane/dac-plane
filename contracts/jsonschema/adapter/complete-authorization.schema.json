@@ -1,0 +1,10 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "title":"CompleteAuthorization",
+ "description":"Confirms consent using a proof delivered only to the callback browser, never by polling.",
+ "type":"object","additionalProperties":false,"required":["connection_id","confirmation"],
+ "properties":{
+  "connection_id":{"$ref":"../identity/common.schema.json#/$defs/uuidv7"},
+  "confirmation":{"type":"string","minLength":32,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"}
+ }
+}

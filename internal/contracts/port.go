@@ -54,6 +54,7 @@ const (
 	MethodCompleteAuthorization Method = "complete_authorization"
 	MethodRevokeConnection      Method = "revoke_connection"
 	MethodCallTool              Method = "call_tool"
+	MethodReadCall              Method = "read_call"
 )
 
 // Methods is the catalogue of operations for a role; any other method is an
@@ -69,7 +70,7 @@ func Methods(role Role) []Method {
 	case RoleArtifactStore:
 		return []Method{MethodAuthorizeUpload, MethodStatObject, MethodCommitManifest}
 	case RoleConnector:
-		return []Method{MethodListTools, MethodBeginAuthorization, MethodCompleteAuthorization, MethodRevokeConnection, MethodCallTool}
+		return []Method{MethodListTools, MethodBeginAuthorization, MethodCompleteAuthorization, MethodRevokeConnection, MethodCallTool, MethodReadCall}
 	}
 	return nil
 }

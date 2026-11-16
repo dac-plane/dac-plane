@@ -45,11 +45,18 @@ func scenarioRedelivery(ctx context.Context, h *harness, f Fixture) error {
 func scenarioForeignMethod(ctx context.Context, h *harness, f Fixture) error {
 	request := delivery(f.Request)
 	request.Operation = newID()
-	for _, role := range []wire.Role{wire.RoleRuntime, wire.RoleEnvironment, wire.RoleEnforcement, wire.RoleArtifactStore} {
+	for _, role := range []wire.Role{wire.RoleRuntime, wire.RoleEnvironment, wire.RoleEnforcement, wire.RoleArtifactStore, wire.RoleConnector} {
 		if role != f.Role {
 			request.Role, request.Method, request.Arguments = role, wire.Methods(role)[0], nil
 			break
 		}
+	}
+	// Connection administration has no attempt; a foreign runtime request
+	// still needs one to be a valid frame before role rejection is tested.
+	if request.Role == wire.RoleConnector && request.Method != "call_tool" && request.Method != "read_call" {
+		request.Attempt = ""
+	} else if request.Attempt == "" {
+		request.Attempt = newID()
 	}
 	reply, err := h.exchange(ctx, request)
 	if err != nil {
