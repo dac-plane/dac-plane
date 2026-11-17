@@ -28,7 +28,7 @@ Everything belongs to a tenant: `https://HOST:8443/v1/tenants/{tenant}/...`. Ide
 | Agents | Create an agent; list, read, revise and retire agents; read an earlier revision of one. |
 | Tasks | Submit a task, to an agent or to providers you name; read it with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
 | Attention | List open attention requests; read one; inspect an owner-only connector proposal; decide it. |
-| Results | Review a revision: accept, request changes or reject. |
+| Results | Read an artifact of a revision and download its content; review a revision: accept, request changes or reject. |
 | Budgets | Complete a submission or rework that is waiting on a spend challenge. |
 | Events | Read or stream a task's events, or the whole tenant's. |
 | Administration | Migration passes for moving work between runtime harnesses, and revoking a standing authority grant. |
@@ -91,8 +91,21 @@ client then reads the record again rather than assuming it missed nothing.
 
 ## Artifacts
 
-A result revision lists its artifacts by identifier. Version 1 of the Surface API does not serve artifact bytes; they
-stay in the artifact store.
+A result revision lists its artifacts by identifier. Read one with
+`GET /tasks/{task}/artifacts/{artifact}`: its kind, media type, size, SHA-256 digest, producer and commit time. Download
+its bytes with `GET /tasks/{task}/artifacts/{artifact}/content`. Both are readable by whoever may read the task
+([ADR-0025](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0025-serve-artifacts-to-surfaces-through-the-control-plane.md)).
+
+The control plane relays the content from the artifact store, which a surface never reaches, and checks it on the way:
+
+- The response carries the record's media type and length, its digest as `Repr-Digest: sha-256=:...:` and as the
+  `ETag`, and is sent as an attachment with `X-Content-Type-Options: nosniff` and a sandboxing
+  `Content-Security-Policy`. The bytes are agent output; open them in a viewer, not in the surface's own page.
+- A store that answers with another length is refused with `502 artifact-mismatch` before anything is sent.
+- Bytes whose digest differs are found while relaying, and the response is aborted before its last bytes. A response
+  that ends early did not deliver the artifact; read it again.
+- `503 artifact-unavailable` means the content cannot be read now: the store is not connected to this replica, does not
+  offer downloads, refused, or the deployment has not set `DAC_ARTIFACT_DOWNLOAD_ORIGINS`. The record stays readable.
 
 ## Connections and grants
 

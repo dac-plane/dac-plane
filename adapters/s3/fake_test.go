@@ -63,6 +63,14 @@ func (f *fakeStore) PresignPut(_ context.Context, key, contentType string, size 
 	return url, nil
 }
 
+func (f *fakeStore) PresignGetObject(_ context.Context, key, version string, ttl time.Duration) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	url := fmt.Sprintf("https://store.test/objects/%s?versionId=%s&ttl=%s", key, version, ttl)
+	f.presigns = append(f.presigns, url)
+	return url, nil
+}
+
 func (f *fakeStore) HeadStaging(_ context.Context, key string) (Object, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

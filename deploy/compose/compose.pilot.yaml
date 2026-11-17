@@ -20,8 +20,12 @@ services:
     environment:
       # Pinned so no env file can admit a development issuer (ADR-0009).
       DAC_DEPLOYMENT: production
-      # Extends the system roots so issuer discovery trusts a private issuer.
+      # Extends the system roots so issuer discovery trusts a private issuer,
+      # and artifact downloads the store's certificate.
       SSL_CERT_FILE: /run/config/trust.crt
+      # Surfaces download artifacts through the control plane, which fetches
+      # the store's presigned reads only from this origin (ADR-0025).
+      DAC_ARTIFACT_DOWNLOAD_ORIGINS: https://artifact-store:8443
     configs:
       - source: trust_bundle
         target: /run/config/trust.crt

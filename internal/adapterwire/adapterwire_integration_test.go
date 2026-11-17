@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -706,4 +707,37 @@ func (p *acceptAll) Cancel(context.Context, contracts.Cancel) error { return nil
 
 func (p *acceptAll) Subscribe(context.Context, contracts.Cursor) (contracts.Stream, error) {
 	return nil, io.EOF
+}
+
+// TestAdapterWireSelectsArtifactDownloads shows the control plane offers
+// artifact.download (ADR-0025): an artifact store adapter that offers it has
+// it selected and is reachable for downloads; one that does not is not.
+func TestAdapterWireSelectsArtifactDownloads(t *testing.T) {
+	f := setup(t, adapterwire.Options{})
+	subject := f.wire.Bind(t, f.tenant, f.provider, contracts.RoleArtifactStore, nil)
+	connect := func(offered ...contracts.Capability) {
+		a, _, err := f.dial(t, f.wire.Token(t, subject, time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.send(t, contracts.Frame{Kind: contracts.FrameLifecycle, Lifecycle: &contracts.Lifecycle{Phase: contracts.PhaseHello, Versions: []uint32{1}, Offered: offered}})
+		ready := a.next(t)
+		if ready.Kind != contracts.FrameLifecycle || ready.Lifecycle.Phase != contracts.PhaseReady || !slices.Equal(ready.Lifecycle.Selected, offered) {
+			t.Fatalf("negotiation answered %+v, want %v selected", ready, offered)
+		}
+	}
+	connect()
+	f.wire.WaitConnected(t, f.tenant, f.provider, contracts.RoleArtifactStore)
+	scoped := f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleArtifactStore).(contracts.CapabilityScoped)
+	if scoped.Requiring(contracts.CapabilityArtifactDownload) != nil {
+		t.Fatal("a store that did not offer downloads is reachable for them")
+	}
+	connect(contracts.CapabilityArtifactDownload)
+	deadline := time.Now().Add(10 * time.Second)
+	for f.wire.Registry.Port(f.tenant, f.provider, contracts.RoleArtifactStore).(contracts.CapabilityScoped).Requiring(contracts.CapabilityArtifactDownload) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the store that offered downloads is not reachable for them")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

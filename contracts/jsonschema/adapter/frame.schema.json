@@ -70,7 +70,7 @@
             "start_turn", "steer_turn", "interrupt", "export_artifacts",
             "provision", "stop", "observe",
             "pre_action", "post_action", "action_failed", "execute_action",
-            "authorize_upload", "stat_object", "commit_manifest",
+            "authorize_upload", "stat_object", "commit_manifest", "authorize_download",
             "list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool", "read_call"
           ]
         },
@@ -102,7 +102,7 @@
         },
         {
           "if": { "properties": { "role": { "const": "artifact_store" } } },
-          "then": { "properties": { "method": { "enum": ["authorize_upload", "stat_object", "commit_manifest"] } } }
+          "then": { "properties": { "method": { "enum": ["authorize_upload", "stat_object", "commit_manifest", "authorize_download"] } } }
         },
         {
           "if": { "properties": { "role": { "const": "connector" } } },

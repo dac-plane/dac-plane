@@ -48,6 +48,10 @@ const (
 	MethodAuthorizeUpload Method = "authorize_upload"
 	MethodStatObject      Method = "stat_object"
 	MethodCommitManifest  Method = "commit_manifest"
+	// MethodAuthorizeDownload presigns a read of one committed artifact
+	// version (ADR-0025). It is sent only to an adapter that selected
+	// CapabilityArtifactDownload.
+	MethodAuthorizeDownload Method = "authorize_download"
 
 	MethodListTools             Method = "list_tools"
 	MethodBeginAuthorization    Method = "begin_authorization"
@@ -68,7 +72,7 @@ func Methods(role Role) []Method {
 	case RoleEnforcement:
 		return []Method{MethodPreAction, MethodPostAction, MethodActionFailed, MethodExecuteAction}
 	case RoleArtifactStore:
-		return []Method{MethodAuthorizeUpload, MethodStatObject, MethodCommitManifest}
+		return []Method{MethodAuthorizeUpload, MethodStatObject, MethodCommitManifest, MethodAuthorizeDownload}
 	case RoleConnector:
 		return []Method{MethodListTools, MethodBeginAuthorization, MethodCompleteAuthorization, MethodRevokeConnection, MethodCallTool, MethodReadCall}
 	}

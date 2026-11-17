@@ -83,6 +83,14 @@ func (s *S3Store) PresignPut(ctx context.Context, key, contentType string, size 
 	return request.URL, nil
 }
 
+func (s *S3Store) PresignGetObject(ctx context.Context, key, version string, ttl time.Duration) (string, error) {
+	request, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.cfg.ObjectsBucket), Key: aws.String(key), VersionId: aws.String(version)}, func(o *s3.PresignOptions) { o.Expires = ttl })
+	if err != nil {
+		return "", err
+	}
+	return request.URL, nil
+}
+
 func (s *S3Store) HeadStaging(ctx context.Context, key string) (Object, error) {
 	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.cfg.StagingBucket), Key: aws.String(key)})
 	if err != nil {

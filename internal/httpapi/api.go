@@ -63,6 +63,12 @@ type Options struct {
 	// outside any attempt. Without it those requests answer
 	// connector-unavailable.
 	Connectors application.ConnectorPorts
+	// ArtifactStores resolves artifact store ports for downloads (ADR-0025).
+	ArtifactStores application.ConnectorPorts
+	// ArtifactDownloads fetches the stores' presigned reads. Without it
+	// artifact records are served and their content answers
+	// artifact-unavailable.
+	ArtifactDownloads *ArtifactFetcher
 }
 
 // API is the Surface API handler.
@@ -127,6 +133,8 @@ func (a *API) routes() []route {
 		{"POST " + prefix + "/tasks/{task}/reviews", a.authenticated(a.reviewResult)},
 		{"GET " + prefix + "/tasks/{task}/attempts/{attempt}", a.authenticated(a.getAttempt)},
 		{"GET " + prefix + "/tasks/{task}/revisions/{revision}", a.authenticated(a.getRevision)},
+		{"GET " + prefix + "/tasks/{task}/artifacts/{artifact}", a.authenticated(a.getArtifact)},
+		{"GET " + prefix + "/tasks/{task}/artifacts/{artifact}/content", a.authenticated(a.getArtifactContent)},
 		{"GET " + prefix + "/tasks/{task}/events", a.authenticated(a.taskEvents)},
 		{"GET " + prefix + "/attention", a.authenticated(a.listAttention)},
 		{"GET " + prefix + "/attention/{attention}", a.authenticated(a.getAttention)},
@@ -329,6 +337,10 @@ func problemFor(err error) Problem {
 		return newProblem(http.StatusConflict, "agent-name-taken", "Agent name is taken", "Another active agent of this tenant has this name.")
 	case errors.Is(err, application.ErrNoConnector):
 		return newProblem(http.StatusUnprocessableEntity, "no-connector-provider", "No registered connector provider", "")
+	case errors.Is(err, application.ErrArtifactUnavailable):
+		return newProblem(http.StatusServiceUnavailable, "artifact-unavailable", "The artifact's content cannot be read now", "The record stays readable. Retry later; the store may be connected to another replica or not offer downloads.")
+	case errors.Is(err, errArtifactMismatch):
+		return newProblem(http.StatusBadGateway, "artifact-mismatch", "The store's bytes differ from the admitted artifact", "")
 	case errors.Is(err, application.ErrConnectorUnavailable):
 		return newProblem(http.StatusServiceUnavailable, "connector-unavailable", "The connector is not reachable", "Retry the request with the same idempotency key.")
 	case errors.Is(err, application.ErrAuthorizationPending):

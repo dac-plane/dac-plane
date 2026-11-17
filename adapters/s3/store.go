@@ -47,4 +47,7 @@ type ObjectStore interface {
 	Freeze(ctx context.Context, stagingKey, version, objectKey string, metadata map[string]string) (Object, error)
 	// FirstObject reports the oldest version of an objects key.
 	FirstObject(ctx context.Context, key string) (Object, error)
+	// PresignGetObject returns a URL that reads exactly one version of an
+	// objects key until it expires.
+	PresignGetObject(ctx context.Context, key, version string, ttl time.Duration) (string, error)
 }

@@ -32,6 +32,11 @@ const (
 	maxUploadTTL = 7 * 24 * time.Hour
 	// maxCapabilityBytes is the protocol's limit on an upload capability.
 	maxCapabilityBytes = 4096
+	// defaultDownloadTTL bounds how long a presigned read stays usable. The
+	// control plane uses it at once (ADR-0025).
+	defaultDownloadTTL = 5 * time.Minute
+	// maxDownloadTTL is the protocol's bound on a download's lifetime.
+	maxDownloadTTL = 15 * time.Minute
 	// writeAttempts bounds retries of a lost compare-and-swap race.
 	writeAttempts = 8
 
@@ -50,7 +55,9 @@ type Config struct {
 	ProviderID string
 	// UploadTTL is the lifetime of an upload capability.
 	UploadTTL time.Duration
-	Now       func() time.Time
+	// DownloadTTL is the lifetime of a presigned read of a committed object.
+	DownloadTTL time.Duration
+	Now         func() time.Time
 }
 
 type Adapter struct {
@@ -112,6 +119,12 @@ func New(cfg Config) (*Adapter, error) {
 	if cfg.UploadTTL < time.Second || cfg.UploadTTL > maxUploadTTL {
 		return nil, errors.New("upload TTL must be between one second and seven days")
 	}
+	if cfg.DownloadTTL == 0 {
+		cfg.DownloadTTL = defaultDownloadTTL
+	}
+	if cfg.DownloadTTL < time.Second || cfg.DownloadTTL > maxDownloadTTL {
+		return nil, errors.New("download TTL must be between one second and fifteen minutes")
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -123,6 +136,9 @@ func New(cfg Config) (*Adapter, error) {
 func (a *Adapter) Send(ctx context.Context, r wire.Request) (wire.Reply, error) {
 	if r.Role != wire.RoleArtifactStore {
 		return rejected(r, wire.FailureInvalidArguments, "request is not for an artifact store"), nil
+	}
+	if r.Method == "authorize_download" {
+		return a.download(ctx, r)
 	}
 	var t transfer
 	if err := decodeStrict(r.Arguments, &t); err != nil || validate(t) != nil {
@@ -149,6 +165,53 @@ func (a *Adapter) Send(ctx context.Context, r wire.Request) (wire.Reply, error) 
 		return a.commit(ctx, r, t.Manifest)
 	}
 	return rejected(r, wire.FailureUnknownOperation, "unknown artifact store method"), nil
+}
+
+type downloadRequest struct {
+	Manifest      manifest `json:"manifest"`
+	ObjectVersion string   `json:"object_version"`
+}
+
+type downloadAuthorized struct {
+	Download  string    `json:"download"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// download presigns a read of the committed object (ADR-0025). It signs only
+// the version that won the commit, and only when its receipt is the manifest
+// the product admitted, so the URL can read nothing else. It reads and
+// writes no state, so a repeated request is answered the same way.
+func (a *Adapter) download(ctx context.Context, r wire.Request) (wire.Reply, error) {
+	var d downloadRequest
+	if err := decodeStrict(r.Arguments, &d); err != nil || validateManifest(d.Manifest) != nil || d.ObjectVersion == "" || len(d.ObjectVersion) > 256 {
+		return rejected(r, wire.FailureInvalidArguments, "invalid download request"), nil
+	}
+	if d.Manifest.TenantID != r.Tenant || d.Manifest.AttemptID != r.Attempt {
+		return rejected(r, wire.FailureInvalidArguments, "artifact manifest is bound to another attempt"), nil
+	}
+	winner, err := a.cfg.Store.FirstObject(ctx, objectKey(d.Manifest))
+	if errors.Is(err, ErrNotFound) {
+		return rejected(r, wire.FailureInvalidArguments, "the artifact has no committed object"), nil
+	}
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	receipt, err := decodeReceipt(winner)
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	if winner.Version != d.ObjectVersion || receipt.Manifest != d.Manifest {
+		return rejected(r, wire.FailureStalePrecondition, "the committed object is not the one requested"), nil
+	}
+	expires := a.cfg.Now().UTC().Add(a.cfg.DownloadTTL).Truncate(time.Second)
+	url, err := a.cfg.Store.PresignGetObject(ctx, objectKey(d.Manifest), winner.Version, a.cfg.DownloadTTL)
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	if len(url) > maxCapabilityBytes {
+		return wire.Reply{}, errors.New("presigned download does not fit the capability limit")
+	}
+	return accepted(r, downloadAuthorized{Download: url, ExpiresAt: expires}), nil
 }
 
 // Cancel has nothing to stop: every stage finishes within its delivery.

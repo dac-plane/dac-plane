@@ -5,8 +5,10 @@ package stacktest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,6 +83,7 @@ func TestDevelopmentStackLifecycle(t *testing.T) {
 	}
 
 	revision := ready.value.Revisions[0].Revision
+	checkArtifact(t, ctx, client, token, taskPath+"/artifacts/"+revision.Artifacts[0].String())
 	request[httpapi.ReviewBody](t, ctx, client, token, http.MethodPost, taskPath+"/reviews", map[string]string{
 		"Idempotency-Key": "stack-review-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 		"If-Match":        ready.header.Get("ETag"),
@@ -92,6 +95,39 @@ func TestDevelopmentStackLifecycle(t *testing.T) {
 	})
 	if len(succeeded.Revisions) != 1 || len(succeeded.Revisions[0].Reviews) != 1 {
 		t.Fatalf("succeeded task has %d revisions and %d reviews", len(succeeded.Revisions), len(succeeded.Revisions[0].Reviews))
+	}
+}
+
+// checkArtifact reads the revision's artifact record. Where the stack's
+// store offers downloads (DAC_STACK_ARTIFACT_DOWNLOADS=1, the S3 profile),
+// the bytes must match the record; elsewhere the content answers 503 and the
+// record stays readable (ADR-0025).
+func checkArtifact(t *testing.T, ctx context.Context, client *http.Client, token, path string) {
+	t.Helper()
+	record := request[lifecycle.Artifact](t, ctx, client, token, http.MethodGet, path, nil, nil, http.StatusOK).value
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiRoot+path+"/content", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(res.Body, int64(record.Size)+1))
+	if err != nil {
+		t.Fatalf("artifact content: %v", err)
+	}
+	if os.Getenv("DAC_STACK_ARTIFACT_DOWNLOADS") != "1" {
+		if res.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("artifact content without downloads = %d: %s", res.StatusCode, data)
+		}
+		return
+	}
+	sum := sha256.Sum256(data)
+	if res.StatusCode != http.StatusOK || "sha256:"+hex.EncodeToString(sum[:]) != string(record.Digest) || res.Header.Get("Content-Type") != record.MediaType {
+		t.Fatalf("artifact content = %d, %d bytes, %s; record %+v", res.StatusCode, len(data), res.Header.Get("Content-Type"), record)
 	}
 }
 

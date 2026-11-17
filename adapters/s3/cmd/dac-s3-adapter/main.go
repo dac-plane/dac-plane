@@ -78,7 +78,7 @@ func serve(ctx context.Context, getenv func(string) string) error {
 		return err
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleArtifactStore, Handler: handler, Offered: []string{wire.CapabilityOperationReplay}, TLS: tlsConfig, Logger: logger})
+	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleArtifactStore, Handler: handler, Offered: []string{wire.CapabilityOperationReplay, wire.CapabilityArtifactDownload}, TLS: tlsConfig, Logger: logger})
 }
 
 func provision(ctx context.Context, getenv func(string) string) error {

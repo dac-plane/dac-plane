@@ -3,6 +3,12 @@
 # (ADR-0017), replacing the simulator's byte store. The operator owns the store's volume and backups, as
 # with PostgreSQL. Commit evidence is read from the store by version.
 services:
+  # Surfaces download artifacts through the control plane, which fetches the
+  # store's presigned reads only from this origin (ADR-0025).
+  dac-plane:
+    environment:
+      DAC_ARTIFACT_DOWNLOAD_ORIGINS: https://artifact-store:8443
+
   # The proxy owns the network identity and SeaweedFS joins its namespace, so a
   # store restart rejoins a live namespace. SeaweedFS binds every listener to
   # loopback because its plaintext S3, filer, master, volume and IAM gRPC ports

@@ -33,7 +33,14 @@ Qualified store: SeaweedFS `4.51`, pinned by digest in [`qualification/run.sh`](
    - A different manifest or a stale epoch is `fenced`. The reply carries no observation, so a late upload
      cannot change it.
 
-The adapter keeps no local state and offers `operation.replay`.
+5. **`authorize_download`** ([ADR-0025](../../docs/adr/0025-serve-artifacts-to-surfaces-through-the-control-plane.md))
+   - Reads the committed object, the oldest version of `{tenant}/{artifact}`, and its receipt.
+   - Refuses unless that version is the one requested and its receipt is the admitted manifest.
+   - Returns a presigned GET of exactly that version of the objects bucket, signed for the public endpoint,
+     valid for five minutes. The control plane fetches it and relays the bytes to the surface; the surface
+     never reaches the store.
+
+The adapter keeps no local state and offers `operation.replay` and `artifact.download`.
 
 ## Buckets and keys
 

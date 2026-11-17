@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DownloadRequest",
+  "description": "Arguments of authorize_download (ADR-0025): the admitted manifest of one artifact and the committed object version its verification recorded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest", "object_version"],
+  "properties": {
+    "manifest": { "$ref": "../lifecycle/artifact-manifest.schema.json" },
+    "object_version": { "type": "string", "minLength": 1, "maxLength": 256 }
+  }
+}
