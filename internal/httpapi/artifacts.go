@@ -34,12 +34,19 @@ var errArtifactMismatch = errors.New("artifact bytes differ from the admitted re
 // been hashed, so a body whose digest differs is never delivered complete.
 const heldTail = 64 << 10
 
+// defaultStallTimeout bounds how long a download waits for the store's next
+// bytes. The Surface API has no write timeout, because it serves streams, so
+// without it a store that stalls after its headers would hold the request,
+// both connections and their buffers until the client gave up.
+const defaultStallTimeout = 30 * time.Second
+
 // ArtifactFetcher reads presigned artifact downloads. It fetches only from
 // the origins the operator lists and follows no redirect, so an artifact
 // store cannot make the control plane read anything else.
 type ArtifactFetcher struct {
 	origins map[string]bool
 	client  *http.Client
+	stall   time.Duration
 }
 
 // NewArtifactFetcher accepts plain HTTPS origins, such as
@@ -61,6 +68,7 @@ func NewArtifactFetcher(origins []string, roots *x509.CertPool) (*ArtifactFetche
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	return &ArtifactFetcher{
+		stall:   defaultStallTimeout,
 		origins: allowed,
 		client: &http.Client{
 			Transport:     transport,
@@ -132,11 +140,15 @@ func (a *API) getArtifactContent(w http.ResponseWriter, r *http.Request, actor i
 	if err != nil {
 		return err
 	}
-	response, err := a.options.ArtifactDownloads.open(r.Context(), download.URL)
+	fetch, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	response, err := a.options.ArtifactDownloads.open(fetch, download.URL)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
+	body := guardStall(response.Body, a.options.ArtifactDownloads.stall, cancel)
+	defer body.stop()
 	record := download.Artifact
 	if response.ContentLength >= 0 && uint64(response.ContentLength) != record.Size {
 		return fmt.Errorf("%w: the store reports %d bytes, the record %d", errArtifactMismatch, response.ContentLength, record.Size)
@@ -158,7 +170,7 @@ func (a *API) getArtifactContent(w http.ResponseWriter, r *http.Request, actor i
 	header.Set("Cache-Control", "private, no-store")
 	w.WriteHeader(http.StatusOK)
 
-	if err := relayChecked(w, response.Body, record, want); err != nil {
+	if err := relayChecked(w, body, record, want); err != nil {
 		a.logger.ErrorContext(r.Context(), "artifact download aborted", "tenant", record.Tenant.String(), "task", record.Task.String(), "artifact", record.Artifact.String(), "error", err)
 		// Aborting the response tells the client the body is incomplete.
 		panic(http.ErrAbortHandler)
@@ -166,6 +178,28 @@ func (a *API) getArtifactContent(w http.ResponseWriter, r *http.Request, actor i
 	a.logger.InfoContext(r.Context(), "artifact downloaded", "tenant", record.Tenant.String(), "task", record.Task.String(), "artifact", record.Artifact.String(), "principal", actor.Principal().ID.String(), "size", record.Size)
 	return nil
 }
+
+// stallGuard cancels a download whose store sends nothing for the stall
+// timeout; the cancelled read then ends the relay.
+type stallGuard struct {
+	body  io.Reader
+	stall time.Duration
+	timer *time.Timer
+}
+
+func guardStall(body io.Reader, stall time.Duration, cancel context.CancelFunc) *stallGuard {
+	return &stallGuard{body: body, stall: stall, timer: time.AfterFunc(stall, cancel)}
+}
+
+func (g *stallGuard) Read(p []byte) (int, error) {
+	n, err := g.body.Read(p)
+	if n > 0 {
+		g.timer.Reset(g.stall)
+	}
+	return n, err
+}
+
+func (g *stallGuard) stop() { g.timer.Stop() }
 
 // relayChecked copies exactly the record's size, holding back the last bytes
 // until the digest of the whole body is known to match.

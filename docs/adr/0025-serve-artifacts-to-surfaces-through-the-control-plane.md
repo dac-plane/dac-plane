@@ -40,7 +40,8 @@ lists in `DAC_ARTIFACT_DOWNLOAD_ORIGINS`, trusting the roots in `DAC_ARTIFACT_DO
 no redirect. The response carries the admitted media type, length and digest (`Repr-Digest`, RFC 9530) and is sent
 as an attachment with `X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`, because the bytes
 are agent output. A store answer whose length differs from the record is refused before any byte is sent; bytes
-whose digest differs abort the response, so no complete body with the wrong digest is ever delivered.
+whose digest differs abort the response, so no complete body with the wrong digest is ever delivered. A store that sends
+nothing for thirty seconds ends the download the same way, since the Surface API has no write timeout of its own.
 
 ## Alternatives considered
 
