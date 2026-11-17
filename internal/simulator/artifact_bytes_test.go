@@ -110,3 +110,62 @@ func TestArtifactByteStoreFencesUnallocatedCommit(t *testing.T) {
 		t.Fatalf("unallocated generation=%+v", c)
 	}
 }
+
+func TestArtifactByteStoreAuthorizesDownloadsOfCommittedVersionsOnly(t *testing.T) {
+	config := testConfig(t)
+	s, err := simulator.NewByteArtifactStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := artifactManifest(t, config, mustID[ids.Task](t), mustID[ids.Attempt](t), mustID[ids.Operation](t), []byte("review"), 1)
+	send := func(method contracts.Method, arguments any) contracts.Reply {
+		t.Helper()
+		raw, e := json.Marshal(arguments)
+		if e != nil {
+			t.Fatal(e)
+		}
+		r := newRoleRequest(t, config, mustID[ids.Operation](t), contracts.RoleArtifactStore, method, raw)
+		if method == contracts.MethodCommitManifest {
+			r.Operation = m.Operation
+		}
+		r.Attempt = m.Attempt
+		reply, e := s.Send(context.Background(), r)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return reply
+	}
+	download := func(version string) contracts.Reply {
+		return send(contracts.MethodAuthorizeDownload, contracts.DownloadRequest{Manifest: m, ObjectVersion: version})
+	}
+	if reply := download("v1"); reply.Outcome != contracts.OutcomeFailed || reply.Failure.Code != contracts.FailureStalePrecondition {
+		t.Fatalf("download before commit = %+v", reply)
+	}
+
+	transfer := contracts.ArtifactTransfer{Manifest: m, NativeRef: "review"}
+	var auth contracts.UploadAuthorized
+	if err = json.Unmarshal(send(contracts.MethodAuthorizeUpload, transfer).Result, &auth); err != nil {
+		t.Fatal(err)
+	}
+	transfer.Upload = auth.Upload
+	if err = s.Upload(transfer, []byte("review")); err != nil {
+		t.Fatal(err)
+	}
+	transfer.Upload = ""
+	var committed contracts.ArtifactCommitted
+	if err = json.Unmarshal(send(contracts.MethodCommitManifest, transfer).Result, &committed); err != nil || committed.Outcome != lifecycle.CommitCommitted {
+		t.Fatalf("commit = %+v %v", committed, err)
+	}
+
+	reply := download(committed.ObjectVersion)
+	var authorized contracts.DownloadAuthorized
+	if reply.Outcome != contracts.OutcomeOK || json.Unmarshal(reply.Result, &authorized) != nil || authorized.Validate() != nil {
+		t.Fatalf("download = %+v", reply)
+	}
+	if authorized.Download != simulator.DownloadPrefix+m.Artifact.String() || !s.Committed(m.Artifact) {
+		t.Fatalf("download names %s", authorized.Download)
+	}
+	if reply := download("another-version"); reply.Outcome != contracts.OutcomeFailed {
+		t.Fatal("download of another version authorized")
+	}
+}

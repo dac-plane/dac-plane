@@ -12,6 +12,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +60,9 @@ func configureArtifactOnly(set *simulatorSet, getenv func(string) string) (*arti
 		return nil, errors.New("artifact-only mode found no artifact adapter")
 	}
 	artifact.port = h
+	// Only this fixture can serve what a download names, so only it offers
+	// downloads (ADR-0025).
+	artifact.offered = append(slices.Clone(artifact.offered), wire.CapabilityArtifactDownload)
 	kept := []adapter{artifact}
 	for _, candidate := range set.adapters {
 		if candidate.role == wire.RoleEnvironment {
@@ -78,6 +83,9 @@ func (h *artifactUploadHandler) Subscribe(ctx context.Context, cursor contracts.
 }
 func (h *artifactUploadHandler) Send(ctx context.Context, request contracts.Request) (contracts.Reply, error) {
 	reply, err := h.store.Send(ctx, request)
+	if err == nil && request.Method == contracts.MethodAuthorizeDownload && reply.Outcome == contracts.OutcomeOK {
+		return h.publicDownload(reply)
+	}
 	if err != nil || request.Method != contracts.MethodAuthorizeUpload || reply.Outcome != contracts.OutcomeOK {
 		return reply, err
 	}
@@ -95,9 +103,26 @@ func (h *artifactUploadHandler) Send(ctx context.Context, request contracts.Requ
 	return reply, err
 }
 
+// publicDownload points the store's download at this fixture, which serves
+// the committed bytes at /v1/downloads/{artifact}.
+func (h *artifactUploadHandler) publicDownload(reply contracts.Reply) (contracts.Reply, error) {
+	var authorized contracts.DownloadAuthorized
+	if json.Unmarshal(reply.Result, &authorized) != nil || !strings.HasPrefix(authorized.Download, simulator.DownloadPrefix) {
+		return contracts.Reply{}, contracts.ErrInvalid
+	}
+	authorized.Download = h.public + "/v1/downloads/" + strings.TrimPrefix(authorized.Download, simulator.DownloadPrefix)
+	var err error
+	reply.Result, err = json.Marshal(authorized)
+	return reply, err
+}
+
 func (h *artifactUploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/evidence/") {
 		h.evidence(w, r)
+		return
+	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/downloads/") {
+		h.serveDownload(w, r)
 		return
 	}
 	if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/v1/uploads/") {
@@ -130,6 +155,25 @@ func (h *artifactUploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveDownload serves a committed artifact's bytes. Unlike evidence, it
+// refuses an artifact the store has not committed.
+func (h *artifactUploadHandler) serveDownload(w http.ResponseWriter, r *http.Request) {
+	artifact, err := ids.Parse[ids.Artifact](strings.TrimPrefix(r.URL.Path, "/v1/downloads/"))
+	if err != nil || !h.store.Committed(artifact) {
+		http.NotFound(w, r)
+		return
+	}
+	data, ok := h.store.Bytes(artifact)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (h *artifactUploadHandler) evidence(w http.ResponseWriter, r *http.Request) {

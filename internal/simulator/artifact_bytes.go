@@ -62,6 +62,16 @@ func (s *ByteArtifactStore) Bytes(artifact ids.ArtifactID) ([]byte, bool) {
 	data, ok := s.staged[artifact]
 	return append([]byte(nil), data...), ok
 }
+
+// Committed reports whether the store committed artifact. It is used by
+// the simulator adapter's download fixture.
+func (s *ByteArtifactStore) Committed(artifact ids.ArtifactID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.winners[artifact]
+	return ok
+}
+
 func (s *ByteArtifactStore) Cancel(ctx context.Context, c contracts.Cancel) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -97,6 +107,9 @@ func (s *ByteArtifactStore) Send(ctx context.Context, r contracts.Request) (cont
 	}
 	if err := checkRequest(s.config, s.Role(), r); err != nil {
 		return contracts.Reply{}, err
+	}
+	if r.Method == contracts.MethodAuthorizeDownload {
+		return s.download(r)
 	}
 	var t contracts.ArtifactTransfer
 	if err := decodeArtifactRequest(r.Arguments, &t); err != nil {
@@ -188,6 +201,43 @@ func (s *ByteArtifactStore) Send(ctx context.Context, r contracts.Request) (cont
 	return contracts.Reply{Operation: r.Operation, Delivery: r.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted, Result: raw}, nil
 }
 
+// DownloadPrefix begins every download the simulator authorizes. It names no
+// reachable host: an HTTPS fixture that serves the bytes replaces it
+// (cmd/dac-sim-adapter), and Download resolves what follows it.
+const DownloadPrefix = "https://simulator.invalid/downloads/"
+
+// download authorizes a read of a committed artifact (ADR-0025). Like the S3
+// adapter it signs only the winning version of the admitted manifest, and it
+// records no effect: a download changes nothing.
+func (s *ByteArtifactStore) download(r contracts.Request) (contracts.Reply, error) {
+	var d contracts.DownloadRequest
+	if err := decodeArtifactRequest(r.Arguments, &d); err != nil {
+		return contracts.Reply{}, err
+	}
+	if err := d.Validate(); err != nil {
+		return contracts.Reply{}, err
+	}
+	if d.Manifest.Tenant != r.Tenant || d.Manifest.Attempt != r.Attempt {
+		return contracts.Reply{}, contracts.ErrInvalid
+	}
+	s.ledger.recordRequest(r)
+	s.mu.Lock()
+	winner, ok := s.winners[d.Manifest.Artifact]
+	s.mu.Unlock()
+	if !ok || winner.Manifest != d.Manifest || winner.ObjectVersion != d.ObjectVersion {
+		failure := contracts.Failure{Code: contracts.FailureStalePrecondition, Message: "the committed object is not the one requested"}
+		return contracts.Reply{Operation: r.Operation, Delivery: r.Delivery, Outcome: contracts.OutcomeFailed, Durability: lifecycle.SendRejected, Failure: &failure}, nil
+	}
+	raw, err := json.Marshal(contracts.DownloadAuthorized{
+		Download:  DownloadPrefix + d.Manifest.Artifact.String(),
+		ExpiresAt: time.Now().UTC().Add(contracts.MaxDownloadLifetime).Truncate(time.Second),
+	})
+	if err != nil {
+		return contracts.Reply{}, err
+	}
+	return contracts.Reply{Operation: r.Operation, Delivery: r.Delivery, Outcome: contracts.OutcomeOK, Durability: lifecycle.SendAccepted, Result: raw}, nil
+}
+
 func (s *ByteArtifactStore) observe(m lifecycle.ArtifactManifest) contracts.ArtifactStored {
 	data, present := s.staged[m.Artifact]
 	if !present {
@@ -204,6 +254,10 @@ func decodeArtifactRequest(raw []byte, target any) error {
 	switch p := target.(type) {
 	case *contracts.ArtifactTransfer:
 		v, err := contracts.DecodeEntry[contracts.ArtifactTransfer](entry)
+		*p = v
+		return err
+	case *contracts.DownloadRequest:
+		v, err := contracts.DecodeEntry[contracts.DownloadRequest](entry)
 		*p = v
 		return err
 	}

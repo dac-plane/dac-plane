@@ -27,7 +27,7 @@ func TestAdapterKitConformance(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			_ = adapterkit.Run(runCtx, adapterkit.Config{URL: endpoint.URL, Token: token, Provider: fixture.Provider, Role: wire.RoleArtifactStore, Handler: handler, Offered: []string{wire.CapabilityOperationReplay}, TLS: &tls.Config{RootCAs: endpoint.RootCAs, MinVersion: tls.VersionTLS12}})
+			_ = adapterkit.Run(runCtx, adapterkit.Config{URL: endpoint.URL, Token: token, Provider: fixture.Provider, Role: wire.RoleArtifactStore, Handler: handler, Offered: []string{wire.CapabilityOperationReplay, wire.CapabilityArtifactDownload}, TLS: &tls.Config{RootCAs: endpoint.RootCAs, MinVersion: tls.VersionTLS12}})
 		}()
 		return func() { cancel(); <-done }, nil
 	}})

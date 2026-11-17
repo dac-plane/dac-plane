@@ -95,6 +95,47 @@ func TestArtifactUploadHandlerTransfersExactBytes(t *testing.T) {
 	if err != nil || evidence.StatusCode != http.StatusOK || !bytes.Equal(got, data) {
 		t.Fatalf("evidence status=%d bytes=%q err=%v", evidence.StatusCode, got, err)
 	}
+
+	// Before the commit nothing can be downloaded; after it, the fixture
+	// serves exactly the committed bytes (ADR-0025).
+	if early, err := http.Get(server.URL + "/v1/downloads/" + manifest.Artifact.String()); err != nil || early.StatusCode != http.StatusNotFound {
+		t.Fatalf("download before commit: %v %v", early, err)
+	} else {
+		_ = early.Body.Close()
+	}
+	send := func(operation string, method contracts.Method, arguments any) contracts.Reply {
+		t.Helper()
+		raw, err := json.Marshal(arguments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := request
+		r.Operation = fixtureID[ids.Operation](t, operation)
+		r.Method, r.Arguments = method, raw
+		reply, err := handler.Send(context.Background(), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reply
+	}
+	var committed contracts.ArtifactCommitted
+	if err := json.Unmarshal(send(manifest.Operation.String(), contracts.MethodCommitManifest, transfer).Result, &committed); err != nil || committed.Outcome != lifecycle.CommitCommitted {
+		t.Fatalf("commit=%+v %v", committed, err)
+	}
+	reply = send("01a18305-0000-7000-8000-00000000000a", contracts.MethodAuthorizeDownload, contracts.DownloadRequest{Manifest: manifest, ObjectVersion: committed.ObjectVersion})
+	var download contracts.DownloadAuthorized
+	if err := json.Unmarshal(reply.Result, &download); err != nil || download.Download != server.URL+"/v1/downloads/"+manifest.Artifact.String() {
+		t.Fatalf("download=%+v %v", download, err)
+	}
+	fetched, err := http.Get(download.Download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fetched.Body.Close()
+	body, err := io.ReadAll(fetched.Body)
+	if err != nil || fetched.StatusCode != http.StatusOK || !bytes.Equal(body, data) {
+		t.Fatalf("download status=%d bytes=%q err=%v", fetched.StatusCode, body, err)
+	}
 }
 
 func fixtureID[T any](t *testing.T, raw string) ids.ID[T] {
