@@ -379,7 +379,9 @@ test-artifact-store-stack: stack-certs
     set -a
     source .work/stack/compose.env
     set +a
-    go test -count=1 -tags=stack ./internal/stacktest/
+    # The S3 adapter offers downloads: the stack test reads the committed
+    # bytes back through the Surface API (ADR-0025).
+    DAC_STACK_ARTIFACT_DOWNLOADS=1 go test -count=1 -tags=stack ./internal/stacktest/
     # Read the frozen bytes back through SeaweedFS's loopback filer: exactly
     # one committed version, holding the simulator's fixture.
     stored="$("${compose[@]}" exec -T artifact-store-seaweedfs sh -c 'list() { curl -sf -H "Accept: application/json" "http://127.0.0.1:8888$1/" | grep -o "\"FullPath\":\"[^\"]*\"" | cut -d\" -f4; }; for d in $(list /buckets/dac-objects/01a167fd-51d9-76ba-b563-496e2bd89646); do for f in $(list "$d"); do curl -sf "http://127.0.0.1:8888$f"; echo "--"; done; done')"

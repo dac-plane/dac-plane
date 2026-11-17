@@ -26,6 +26,8 @@ use.
 | `DAC_OPS_ADDR` | no | `127.0.0.1:8081` | Listen address of the operations listener (health and readiness). On loopback it serves plain HTTP; on any other address it serves TLS. |
 | `DAC_CONNECTOR_GATEWAY_URL` | no | | Runtime-reachable HTTPS `/connectors/mcp` endpoint; enable with the signing key. |
 | `DAC_CONNECTOR_GATEWAY_KEY` | with gateway URL | | At least 32 random bytes shared across replicas; supports `_FILE`. |
+| `DAC_ARTIFACT_DOWNLOAD_ORIGINS` | no | | Comma-separated HTTPS origins the control plane may fetch artifact stores' presigned reads from, such as `https://artifact-store:8333`. Without it the Surface API serves artifact records but answers `503 artifact-unavailable` for their content. |
+| `DAC_ARTIFACT_DOWNLOAD_CA_FILE` | no | system roots | PEM bundle of the roots that sign those origins' certificates. When set, it replaces the system roots. Requires `DAC_ARTIFACT_DOWNLOAD_ORIGINS`. |
 | `DAC_DEPLOYMENT` | no | `production` | `production` or `development`. Production refuses an identity configuration that trusts a development issuer. |
 
 ## Every adapter

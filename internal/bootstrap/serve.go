@@ -3,11 +3,13 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -86,7 +88,24 @@ func (application *Application) Serve(ctx context.Context, cfg config.Config, op
 	if err != nil {
 		return err
 	}
-	api, err := httpapi.New(application.pool, authenticator, logger.With("component", "surface"), httpapi.Options{Connectors: application.adapters})
+	options := httpapi.Options{Connectors: application.adapters, ArtifactStores: application.adapters}
+	if len(cfg.ArtifactDownloadOrigins) > 0 {
+		var roots *x509.CertPool
+		if cfg.ArtifactDownloadCAFile != "" {
+			pem, err := os.ReadFile(cfg.ArtifactDownloadCAFile)
+			if err != nil {
+				return fmt.Errorf("DAC_ARTIFACT_DOWNLOAD_CA_FILE: %w", err)
+			}
+			roots = x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(pem) {
+				return errors.New("DAC_ARTIFACT_DOWNLOAD_CA_FILE holds no PEM certificate")
+			}
+		}
+		if options.ArtifactDownloads, err = httpapi.NewArtifactFetcher(cfg.ArtifactDownloadOrigins, roots); err != nil {
+			return err
+		}
+	}
+	api, err := httpapi.New(application.pool, authenticator, logger.With("component", "surface"), options)
 	if err != nil {
 		return err
 	}

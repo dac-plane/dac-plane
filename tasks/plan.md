@@ -31,3 +31,18 @@ Needed by: the reference application (#97), whose reviewer must read the review 
 ## Decisions
 
 Recorded as each stage settles them.
+
+- The download request carries the admitted manifest and the verification's object version; both the S3 adapter and
+  the simulator refuse any version but the committed one and any manifest but its receipt, with `stale_precondition`.
+- The S3 adapter presigns for five minutes (the protocol allows fifteen) and keeps no state for downloads.
+- The control plane offers `artifact.download` in its own hello. The first stack run answered 503 because it did not:
+  capabilities are selected only when both sides offer them. `TestAdapterWireSelectsArtifactDownloads` now guards it.
+- The content response holds back its last 64 KiB until the digest of the whole body is checked; removing the hold
+  makes `TestSurfaceServesArtifactsThroughTheControlPlane` fail, because a wrong body is then delivered complete.
+- A store that states another length is refused with 502 before any byte; one that states none is checked while
+  relaying and aborted. S3 always states it.
+- `SSL_CERT_FILE` already gives `serve` the stack's roots, so the compose stacks set only
+  `DAC_ARTIFACT_DOWNLOAD_ORIGINS=https://artifact-store:8443`; `DAC_ARTIFACT_DOWNLOAD_CA_FILE` is for deployments
+  that keep the store's roots apart.
+- Downloads are logged with tenant, task, artifact and principal; the presigned URL never is, and transport errors
+  are stripped of it before logging.

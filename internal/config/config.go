@@ -59,6 +59,13 @@ type Config struct {
 	Deployment              Deployment
 	ConnectorGatewayURL     string
 	ConnectorGatewayKey     string
+	// ArtifactDownloadOrigins are the HTTPS origins the control plane may
+	// fetch artifact stores' presigned reads from (ADR-0025). Empty, the
+	// Surface API serves artifact records but not their content.
+	ArtifactDownloadOrigins []string
+	// ArtifactDownloadCAFile names a PEM bundle that replaces the system
+	// roots for those fetches.
+	ArtifactDownloadCAFile string
 }
 
 // Load reads configuration through lookup. A secret-bearing setting may
@@ -114,6 +121,20 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		if len(cfg.ConnectorGatewayKey) < 32 {
 			return Config{}, errors.New("DAC_CONNECTOR_GATEWAY_KEY must contain at least 32 bytes")
 		}
+	}
+	for _, origin := range strings.Split(setting(lookup, "DAC_ARTIFACT_DOWNLOAD_ORIGINS", ""), ",") {
+		if origin = strings.TrimSpace(origin); origin == "" {
+			continue
+		}
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			return Config{}, errors.New("DAC_ARTIFACT_DOWNLOAD_ORIGINS must list plain HTTPS origins")
+		}
+		cfg.ArtifactDownloadOrigins = append(cfg.ArtifactDownloadOrigins, origin)
+	}
+	cfg.ArtifactDownloadCAFile = setting(lookup, "DAC_ARTIFACT_DOWNLOAD_CA_FILE", "")
+	if cfg.ArtifactDownloadCAFile != "" && len(cfg.ArtifactDownloadOrigins) == 0 {
+		return Config{}, errors.New("DAC_ARTIFACT_DOWNLOAD_CA_FILE needs DAC_ARTIFACT_DOWNLOAD_ORIGINS")
 	}
 	if cfg.Deployment != DeploymentProduction && cfg.Deployment != DeploymentDevelopment {
 		return Config{}, errors.New("DAC_DEPLOYMENT must be production or development")

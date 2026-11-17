@@ -61,6 +61,14 @@ A runtime adapter may offer `wire.CapabilityAgentInstructions` to take tasks del
 brief is the owner's request, the instructions are the tenant's. dac-plane never sends the field to a connection that
 did not select the capability, so an adapter that decodes its arguments strictly keeps working without it.
 
+An artifact store adapter may offer `wire.CapabilityArtifactDownload` to let surfaces download what it stores
+([ADR-0025](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0025-serve-artifacts-to-surfaces-through-the-control-plane.md)).
+It is then sent `authorize_download` with an admitted `manifest` and the committed `object_version`, and answers with
+a `download`, an HTTPS URL that reads exactly that version, and its `expires_at`, at most fifteen minutes away. Refuse
+any other version. The control plane fetches the URL itself, only from origins the operator lists, so it must reach
+the URL's host; it never stores or forwards it. A store that does not offer the capability is never sent the request,
+and its artifacts' content answers `503` to surfaces.
+
 [`examples/minimal`](https://github.com/dac-plane/dac-plane/tree/main/adapterkit/examples/minimal) is a complete
 adapter that passes the conformance suite, and the
 [Codex](https://github.com/dac-plane/dac-plane/tree/main/adapters/codex),
