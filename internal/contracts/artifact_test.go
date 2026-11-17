@@ -23,6 +23,8 @@ func TestContractConformanceArtifactProtocol(t *testing.T) {
 		{schematest.GoContract[UploadAuthorized](filepath.Join(schemaDir, "upload-authorized.schema.json")), UploadAuthorized{Upload: "opaque"}},
 		{schematest.GoContract[ArtifactStored](filepath.Join(schemaDir, "artifact-stored.schema.json")), ArtifactStored{Present: true, Digest: m.Digest, Size: m.Size}},
 		{schematest.GoContract[ArtifactCommitted](filepath.Join(schemaDir, "artifact-committed.schema.json")), ArtifactCommitted{Manifest: m, Outcome: lifecycle.CommitCommitted, ObjectVersion: "v1", Observed: ArtifactStored{Present: true, Digest: m.Digest, Size: m.Size}, CommittedAt: testNow}},
+		{schematest.GoContract[DownloadRequest](filepath.Join(schemaDir, "download-request.schema.json")), DownloadRequest{Manifest: m, ObjectVersion: "v1"}},
+		{schematest.GoContract[DownloadAuthorized](filepath.Join(schemaDir, "download-authorized.schema.json")), DownloadAuthorized{Download: "https://store.example/objects/a?X-Amz-Signature=s", ExpiresAt: testNow}},
 	} {
 		raw := schematest.Marshal(t, tc.v)
 		if err := tc.c.GoAccept(raw); err != nil {
@@ -36,6 +38,18 @@ func TestContractConformanceArtifactProtocol(t *testing.T) {
 		if tc.c.GoAccept(bad) == nil || schematest.Accepts(t, s, bad) == nil {
 			t.Fatal("unknown field accepted")
 		}
+	}
+	for _, bad := range []DownloadAuthorized{
+		{Download: "http://store.example/a", ExpiresAt: testNow},
+		{Download: "https://store.example/a"},
+		{Download: "", ExpiresAt: testNow},
+	} {
+		if bad.Validate() == nil {
+			t.Fatalf("download %+v accepted", bad)
+		}
+	}
+	if (DownloadRequest{Manifest: m}).Validate() == nil {
+		t.Fatal("download request without an object version accepted")
 	}
 	p.Artifacts = append(p.Artifacts, p.Artifacts[0])
 	if p.Validate() == nil {

@@ -41,6 +41,14 @@ const CapabilityAgentInstructions = "agent.instructions"
 // external application and ends with the attempt.
 const CapabilityConnectorGateway = "connector.gateway"
 
+// CapabilityArtifactDownload accepts authorize_download requests: the
+// artifact store returns a short-lived URL that reads exactly one committed
+// object version, which the control plane fetches and relays to a surface.
+// An artifact store adapter offers it only when that URL reads nothing else
+// and the control plane can reach it. The control plane never sends
+// authorize_download to a connection that did not select it.
+const CapabilityArtifactDownload = "artifact.download"
+
 // DefaultMaxFrameBytes bounds one frame unless a peer configures another limit.
 const DefaultMaxFrameBytes = 1 << 20
 
@@ -90,7 +98,7 @@ func Methods(role Role) []string {
 	case RoleEnforcement:
 		return []string{"pre_action", "post_action", "action_failed", "execute_action"}
 	case RoleArtifactStore:
-		return []string{"authorize_upload", "stat_object", "commit_manifest"}
+		return []string{"authorize_upload", "stat_object", "commit_manifest", "authorize_download"}
 	case RoleConnector:
 		return []string{"list_tools", "begin_authorization", "complete_authorization", "revoke_connection", "call_tool", "read_call"}
 	}

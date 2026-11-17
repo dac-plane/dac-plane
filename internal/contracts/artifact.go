@@ -161,3 +161,42 @@ func (c ArtifactCommitted) Validate() error {
 	}
 	return nil
 }
+
+// MaxDownloadLifetime bounds how long a presigned read may stay usable.
+const MaxDownloadLifetime = 15 * time.Minute
+
+// DownloadRequest asks the artifact store for a read of one committed
+// version: the admitted manifest and the object version its verification
+// recorded (ADR-0025).
+type DownloadRequest struct {
+	Manifest      lifecycle.ArtifactManifest `json:"manifest"`
+	ObjectVersion string                     `json:"object_version"`
+}
+
+func (d DownloadRequest) Validate() error {
+	if err := d.Manifest.Validate(); err != nil {
+		return err
+	}
+	if !validRef(d.ObjectVersion) {
+		return fmt.Errorf("%w: invalid object version", ErrInvalid)
+	}
+	return nil
+}
+
+// DownloadAuthorized is a short-lived HTTPS URL that reads exactly the
+// requested version. It is a bearer capability: the control plane uses it
+// once and never stores, logs or forwards it.
+type DownloadAuthorized struct {
+	Download  string    `json:"download"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (d DownloadAuthorized) Validate() error {
+	if len(d.Download) < len("https://x") || len(d.Download) > 4096 || d.Download[:len("https://")] != "https://" {
+		return fmt.Errorf("%w: a download must be an https URL of at most 4096 bytes", ErrInvalid)
+	}
+	if d.ExpiresAt.IsZero() {
+		return fmt.Errorf("%w: a download needs its expiry", ErrInvalid)
+	}
+	return nil
+}

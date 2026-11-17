@@ -177,6 +177,11 @@ const (
 	// attempt's connector gateway endpoint and token (ADR-0022). A runtime
 	// adapter that did not select it is never sent them.
 	CapabilityConnectorGateway Capability = "connector.gateway"
+	// CapabilityArtifactDownload permits authorize_download requests: the
+	// artifact store presigns a read of a committed version for the control
+	// plane to relay to a surface (ADR-0025). An adapter that did not select
+	// it is never sent one.
+	CapabilityArtifactDownload Capability = "artifact.download"
 )
 
 // Lifecycle establishes or ends a session. A hello advertises supported
