@@ -180,7 +180,9 @@ func (a *API) getArtifactContent(w http.ResponseWriter, r *http.Request, actor i
 }
 
 // stallGuard cancels a download whose store sends nothing for the stall
-// timeout; the cancelled read then ends the relay.
+// timeout; the cancelled read then ends the relay. Only time spent waiting on
+// the store counts: the timer runs during each read and is stopped while the
+// relay writes, so a client that reads slowly or pauses is not cut short.
 type stallGuard struct {
 	body  io.Reader
 	stall time.Duration
@@ -188,14 +190,15 @@ type stallGuard struct {
 }
 
 func guardStall(body io.Reader, stall time.Duration, cancel context.CancelFunc) *stallGuard {
-	return &stallGuard{body: body, stall: stall, timer: time.AfterFunc(stall, cancel)}
+	timer := time.AfterFunc(stall, cancel)
+	timer.Stop()
+	return &stallGuard{body: body, stall: stall, timer: timer}
 }
 
 func (g *stallGuard) Read(p []byte) (int, error) {
+	g.timer.Reset(g.stall)
 	n, err := g.body.Read(p)
-	if n > 0 {
-		g.timer.Reset(g.stall)
-	}
+	g.timer.Stop()
 	return n, err
 }
 

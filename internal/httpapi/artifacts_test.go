@@ -69,6 +69,54 @@ func TestStalledStoreEndsTheDownload(t *testing.T) {
 	}
 }
 
+// slowClient takes longer to accept each write than the stall timeout.
+type slowClient struct {
+	bytes.Buffer
+	pause time.Duration
+}
+
+func (c *slowClient) Write(p []byte) (int, error) {
+	time.Sleep(c.pause)
+	return c.Buffer.Write(p)
+}
+
+// TestSlowClientIsNotCutShort pauses on every write for longer than the
+// stall timeout while the store answers at once: only waiting on the store
+// counts, so the whole body is relayed.
+func TestSlowClientIsNotCutShort(t *testing.T) {
+	data := bytes.Repeat([]byte("y"), 300<<10)
+	store := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		_, _ = w.Write(data)
+	}))
+	defer store.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(store.Certificate())
+	fetcher, err := NewArtifactFetcher([]string{store.URL}, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	response, err := fetcher.open(ctx, store.URL+"/objects/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	stall := 50 * time.Millisecond
+	body := guardStall(response.Body, stall, cancel)
+	defer body.stop()
+	sum := sha256.Sum256(data)
+	record := lifecycle.Artifact{ArtifactManifest: lifecycle.ArtifactManifest{Size: uint64(len(data)), Digest: identity.DigestOf(data)}}
+	client := &slowClient{pause: 3 * stall}
+	if err := relayChecked(client, body, record, sum[:]); err != nil {
+		t.Fatalf("a slow client was cut short: %v", err)
+	}
+	if !bytes.Equal(client.Bytes(), data) {
+		t.Fatalf("relayed %d of %d bytes", client.Len(), len(data))
+	}
+}
+
 // TestFetcherRefusesUnlistedOriginsAndRedirects keeps the control plane on the
 // operator's origins: another host is refused before any request, and a
 // redirect from a listed one is not followed. Neither error names the URL.
