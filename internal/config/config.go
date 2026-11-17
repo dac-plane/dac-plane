@@ -42,7 +42,7 @@ const (
 	DeploymentDevelopment Deployment = "development"
 )
 
-// Config contains the configuration needed to bootstrap the control-plane process.
+// Config contains the configuration needed to bootstrap the dac-plane process.
 type Config struct {
 	DatabaseURL            string
 	DatabaseConnectTimeout time.Duration
@@ -59,7 +59,7 @@ type Config struct {
 	Deployment              Deployment
 	ConnectorGatewayURL     string
 	ConnectorGatewayKey     string
-	// ArtifactDownloadOrigins are the HTTPS origins the control plane may
+	// ArtifactDownloadOrigins are the HTTPS origins dac-plane may
 	// fetch artifact stores' presigned reads from (ADR-0025). Empty, the
 	// Surface API serves artifact records but not their content.
 	ArtifactDownloadOrigins []string

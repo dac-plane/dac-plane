@@ -3,7 +3,7 @@
 // artifact-store providers, the replayable event stream, event binding,
 // action interception hooks and stateful-action preconditions.
 //
-// Providers report native state; only the control-plane application decides
+// Providers report native state; only the dac-plane application decides
 // whether an observation changes product records. Nothing here performs I/O.
 package contracts
 
@@ -178,8 +178,8 @@ const (
 	// adapter that did not select it is never sent them.
 	CapabilityConnectorGateway Capability = "connector.gateway"
 	// CapabilityArtifactDownload permits authorize_download requests: the
-	// artifact store presigns a read of a committed version for the control
-	// plane to relay to a surface (ADR-0025). An adapter that did not select
+	// artifact store presigns a read of a committed version for dac-plane
+	// to relay to a surface (ADR-0025). An adapter that did not select
 	// it is never sent one.
 	CapabilityArtifactDownload Capability = "artifact.download"
 )

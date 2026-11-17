@@ -150,7 +150,7 @@ func ActorKinds() []ActorKind {
 }
 
 // Actor attributes a change: a principal's command, a provider observation or
-// the control plane itself (reconciliation, expiry).
+// dac-plane itself (reconciliation, expiry).
 type Actor struct {
 	Kind      ActorKind       `json:"kind"`
 	Principal ids.PrincipalID `json:"principal_id,omitzero"`

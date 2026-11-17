@@ -14,9 +14,9 @@ import (
 	"github.com/dac-plane/dac-plane/adapterkit/wire"
 )
 
-// ErrUnauthenticated reports that the control plane refused the token or the
+// ErrUnauthenticated reports that dac-plane refused the token or the
 // identity it names.
-var ErrUnauthenticated = errors.New("adapterkit: control plane refused the adapter's credentials")
+var ErrUnauthenticated = errors.New("adapterkit: dac-plane refused the adapter's credentials")
 
 // maxFailureMessage bounds a failure message, as the protocol does.
 const maxFailureMessage = 1024
@@ -84,7 +84,7 @@ func connect(ctx context.Context, config Config, client *http.Client) (*session,
 	s := &session{config: config, conn: conn, expiry: token.Expiry, streams: map[streamKey]*openStream{}}
 	if conn.Subprotocol() != wire.Subprotocol {
 		_ = conn.Close(websocket.StatusPolicyViolation, "subprotocol not selected")
-		return nil, errors.New("adapterkit: control plane did not select the ControlFrame subprotocol")
+		return nil, errors.New("adapterkit: dac-plane did not select the ControlFrame subprotocol")
 	}
 	conn.SetReadLimit(config.MaxFrameBytes)
 	if err := s.negotiate(hctx); err != nil {
@@ -114,9 +114,9 @@ func (s *session) negotiate(ctx context.Context) error {
 	case wire.PhaseShutdown:
 		s.conn.CloseNow()
 		if ready.Failure != nil {
-			return fmt.Errorf("adapterkit: control plane refused the session: %w", ready.Failure)
+			return fmt.Errorf("adapterkit: dac-plane refused the session: %w", ready.Failure)
 		}
-		return errors.New("adapterkit: control plane refused the session")
+		return errors.New("adapterkit: dac-plane refused the session")
 	case wire.PhaseReady:
 	default:
 		return s.refuse(ctx, wire.FailureProtocolMismatch, "expected ready")
@@ -231,7 +231,7 @@ func (s *session) handleRequest(ctx context.Context, request wire.Request) {
 func (s *session) reply(ctx context.Context, reply wire.Reply) {
 	frame := wire.Frame{Kind: wire.KindReply, Reply: &reply}
 	if err := wire.Validate(frame); err != nil {
-		// An invalid reply would end the session at the control plane; the
+		// An invalid reply would end the session at dac-plane; the
 		// outcome is unknown instead.
 		s.config.Logger.Error("handler produced an invalid reply", "operation", reply.Operation, "error", err)
 		fallback := failedReply(wire.Request{Operation: reply.Operation, Delivery: reply.Delivery}, wire.DurabilityUnknown, wire.FailureProviderFailed, "handler produced an invalid reply")
@@ -309,7 +309,7 @@ func (s *session) forget(key streamKey, opened *openStream) {
 	}
 }
 
-// keepAlive pings the control plane; a missed pong ends the session.
+// keepAlive pings dac-plane; a missed pong ends the session.
 func (s *session) keepAlive(ctx context.Context) {
 	ticker := time.NewTicker(s.config.PingInterval)
 	defer ticker.Stop()
@@ -322,7 +322,7 @@ func (s *session) keepAlive(ctx context.Context) {
 			err := s.conn.Ping(pctx)
 			cancel()
 			if err != nil && ctx.Err() == nil {
-				s.config.Logger.Warn("control plane missed a pong; closing", "provider", s.config.Provider)
+				s.config.Logger.Warn("dac-plane missed a pong; closing", "provider", s.config.Provider)
 				s.conn.CloseNow()
 				return
 			}

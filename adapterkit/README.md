@@ -1,7 +1,7 @@
 # dac-plane adapter kit
 
-Build a provider adapter for [dac-plane](https://github.com/dac-plane/dac-plane) in Go. The kit dials the control
-plane, negotiates the ControlFrame protocol, keeps the connection alive and hands your code each request.
+Build a provider adapter for [dac-plane](https://github.com/dac-plane/dac-plane) in Go. The kit dials
+dac-plane, negotiates the ControlFrame protocol, keeps the connection alive and hands your code each request.
 
 ```sh
 go get github.com/dac-plane/dac-plane/adapterkit@v0.3.0
@@ -24,7 +24,7 @@ err := adapterkit.Run(ctx, adapterkit.Config{
 guarantee: the operation identifier is its idempotency key, and it may offer `wire.CapabilityOperationReplay` only if
 it can answer a redelivery from what it already did, across a process failure. A runtime adapter may offer
 `wire.CapabilityAgentInstructions` when it places a delegated task's `agent` role and instructions where its runtime
-takes standing instructions; the control plane sends the field only to a connection that selected it.
+takes standing instructions; dac-plane sends the field only to a connection that selected it.
 
 ## Conformance
 
@@ -36,10 +36,10 @@ go run github.com/dac-plane/dac-plane/adapterkit/cmd/adapter-conformance@v0.3.0 
 
 ## Versions
 
-The kit is versioned separately from the control plane, with tags named `adapterkit/vX.Y.Z`. While it is v0 it speaks
+The kit is versioned separately from dac-plane, with tags named `adapterkit/vX.Y.Z`. While it is v0 it speaks
 ControlFrame protocol 1, and a minor version may change its Go API
 ([ADR-0018](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0018-release-versioning-and-gate.md)). Each
-release's notes name the control-plane versions it works with.
+release's notes name the dac-plane versions it works with.
 
 ## Connector role
 

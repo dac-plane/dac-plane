@@ -33,7 +33,7 @@ const (
 	// maxCapabilityBytes is the protocol's limit on an upload capability.
 	maxCapabilityBytes = 4096
 	// defaultDownloadTTL bounds how long a presigned read stays usable. The
-	// control plane uses it at once (ADR-0025).
+	// dac-plane uses it at once (ADR-0025).
 	defaultDownloadTTL = 5 * time.Minute
 	// maxDownloadTTL is the protocol's bound on a download's lifetime.
 	maxDownloadTTL = 15 * time.Minute

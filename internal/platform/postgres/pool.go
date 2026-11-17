@@ -1,4 +1,4 @@
-// Package postgres owns PostgreSQL connection setup for the control plane.
+// Package postgres owns PostgreSQL connection setup for dac-plane.
 package postgres
 
 import (

@@ -137,7 +137,7 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, ports map[ids.ProviderID]contr
 	return w, nil
 }
 
-// SystemActor attributes worker-driven transitions to the control plane.
+// SystemActor attributes worker-driven transitions to dac-plane.
 func SystemActor() lifecycle.Actor {
 	return lifecycle.Actor{Kind: lifecycle.ActorSystem}
 }

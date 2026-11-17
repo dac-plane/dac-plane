@@ -102,7 +102,7 @@ func run() error {
 	return adapterkit.Run(ctx, adapterkit.Config{URL: adapterURL, Token: token, Provider: provider, Role: wire.RoleEnvironment, Handler: handler, Offered: []string{wire.CapabilityOperationReplay}, TLS: tlsConfig, Logger: logger})
 }
 
-// adapterTLS configures the connections to the control plane and its token
+// adapterTLS configures the connections to dac-plane and its token
 // issuer only. The E2B API client keeps the system roots.
 func adapterTLS() (*tls.Config, error) {
 	config := &tls.Config{MinVersion: tls.VersionTLS12}

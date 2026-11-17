@@ -107,8 +107,8 @@ vet-integration:
 [group('check')]
 deps-check:
     go list -deps ./cmd/dac-plane | while IFS= read -r dep; do case "$dep" in */internal/simulator|*/internal/testsupport|*/internal/testsupport/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "release binary imports forbidden package: $dep"; exit 1;; esac; done
-    cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*) echo "Codex adapter imports control-plane internal package: $dep"; exit 1;; esac; done
-    cd {{ e2b_adapter_dir }} && go list -deps ./cmd/dac-e2b-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*) echo "E2B adapter imports control-plane internal package: $dep"; exit 1;; esac; done
+    cd {{ codex_adapter_dir }} && go list -deps ./cmd/dac-codex-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*) echo "Codex adapter imports dac-plane internal package: $dep"; exit 1;; esac; done
+    cd {{ e2b_adapter_dir }} && go list -deps ./cmd/dac-e2b-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*) echo "E2B adapter imports dac-plane internal package: $dep"; exit 1;; esac; done
     cd {{ s3_adapter_dir }} && go list -deps ./cmd/dac-s3-adapter | while IFS= read -r dep; do case "$dep" in github.com/dac-plane/dac-plane/internal|github.com/dac-plane/dac-plane/internal/*|*/adapterkit/conformance|*/adapterkit/conformance/*) echo "S3 adapter imports a forbidden package: $dep"; exit 1;; esac; done
 
 # Run unit tests, including the JSON Schema contract conformance suites
@@ -466,7 +466,7 @@ qualify-providers: stack-certs
     for role in runtime environment artifact_store; do if ! grep -q "\"msg\":\"adapter connected\".*\"role\":\"$role\"" <<<"$logs"; then echo "$role adapter did not connect" >&2; exit 1; fi; done
 
 # The conformance suite runs the simulator adapter as a separate OS process,
-# the way a real provider adapter runs outside the control plane.
+# the way a real provider adapter runs outside dac-plane.
 [group('test')]
 test-conformance:
     go build -o .work/dac-sim-adapter ./cmd/dac-sim-adapter
@@ -542,7 +542,7 @@ test-surface-race:
 test-contracts:
     go test ./... -run 'ContractConformance|SchemaAndGo|SchemasAccept|SchemaEnums|EveryContractSchema|EveryValidatedRecord|NoVendorIdentifiers'
 
-# Build the control plane, simulator and Codex adapter images from pinned bases.
+# Build dac-plane, simulator and Codex adapter images from pinned bases.
 [group('image')]
 image-build:
     docker buildx build --load --target dac-plane -t dac-plane:dev .
@@ -667,7 +667,7 @@ _trivy:
 stack-certs:
     ./deploy/compose/generate-dev-config.sh
 
-# Start the development profile: issuer, provisioners, control plane and both
+# Start the development profile: issuer, provisioners, dac-plane and both
 # simulator roles. The base file alone remains the production-shaped stack.
 [group('stack')]
 stack-up: stack-certs

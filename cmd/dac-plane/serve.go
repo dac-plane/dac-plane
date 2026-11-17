@@ -30,13 +30,13 @@ func runServe() int {
 
 	application, err := bootstrap.New(processContext, processConfig, logger)
 	if err != nil {
-		logger.Error("control plane startup failed", "error", err)
+		logger.Error("dac-plane startup failed", "error", err)
 		return 1
 	}
 	defer application.Close()
 
 	if err := application.Serve(processContext, processConfig); err != nil {
-		logger.Error("control plane stopped with an error", "error", err)
+		logger.Error("dac-plane stopped with an error", "error", err)
 		return 1
 	}
 	return 0

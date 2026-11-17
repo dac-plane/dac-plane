@@ -14,7 +14,7 @@ import (
 )
 
 // runProvision performs one trusted provisioning operation (ADR-0007). The
-// database URL is read from the same configuration as the control plane.
+// database URL is read from the same configuration as dac-plane.
 func runProvision(args []string, stdout, stderr io.Writer) int {
 	processContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

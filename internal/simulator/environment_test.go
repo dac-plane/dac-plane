@@ -113,7 +113,7 @@ func TestEnvironmentDefaultAppliesEachMethodsEffect(t *testing.T) {
 	if len(applied) != 2 || applied[0].Kind != simulator.EnvironmentProvisioned || applied[1].Kind != simulator.EnvironmentStopped {
 		t.Fatalf("Applied() = %+v, want a provision then a stop", applied)
 	}
-	// The control plane follows a defaulted provision for its observation.
+	// dac-plane follows a defaulted provision for its observation.
 	stream, err := sim.Subscribe(context.Background(), contracts.Cursor{
 		Tenant: config.Tenant, Attempt: mustID[ids.Attempt](t), Operation: provision, Stream: "events", Generation: 1,
 	})

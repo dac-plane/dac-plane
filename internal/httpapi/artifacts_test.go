@@ -117,7 +117,7 @@ func TestSlowClientIsNotCutShort(t *testing.T) {
 	}
 }
 
-// TestFetcherRefusesUnlistedOriginsAndRedirects keeps the control plane on the
+// TestFetcherRefusesUnlistedOriginsAndRedirects keeps dac-plane on the
 // operator's origins: another host is refused before any request, and a
 // redirect from a listed one is not followed. Neither error names the URL.
 func TestFetcherRefusesUnlistedOriginsAndRedirects(t *testing.T) {

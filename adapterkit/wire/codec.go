@@ -17,12 +17,12 @@ import (
 )
 
 // maxArgumentsBytes bounds request arguments and reply results, as the
-// control plane does.
+// dac-plane does.
 const maxArgumentsBytes = 64 << 10
 
 // schemas holds copies of the adapter frame schemas and the identity
 // definitions they reference, kept byte-identical to contracts/jsonschema by a
-// test in the control-plane repository.
+// test in the dac-plane repository.
 //
 //go:embed schemas
 var schemas embed.FS

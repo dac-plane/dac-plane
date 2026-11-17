@@ -117,7 +117,7 @@ func (a *Adapter) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// User and installation reports are safe projections. Neither token ever
-	// enters a callback response or a control-plane protocol value.
+	// enters a callback response or a dac-plane protocol value.
 	var user struct {
 		Login string `json:"login"`
 	}

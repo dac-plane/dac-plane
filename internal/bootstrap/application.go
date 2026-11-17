@@ -1,4 +1,4 @@
-// Package bootstrap composes and owns the initial control-plane process.
+// Package bootstrap composes and owns the initial dac-plane process.
 package bootstrap
 
 import (
@@ -71,14 +71,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 			return gatewayTokens.Access(cfg.ConnectorGatewayURL, tenant, attempt)
 		}))
 	}
-	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "control-plane-"+ownerID.String(), options...)
+	dispatchWorker, err := worker.New(pool, logger.With("component", "worker"), nil, worker.DefaultConfig(), "dac-plane-"+ownerID.String(), options...)
 	if err != nil {
 		adapters.Close()
 		pool.Close()
 		return nil, err
 	}
 
-	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker, gatewayTokens: gatewayTokens, owner: "control-plane-" + ownerID.String()}, nil
+	return &Application{logger: logger, pool: pool, adapters: adapters, worker: dispatchWorker, gatewayTokens: gatewayTokens, owner: "dac-plane-" + ownerID.String()}, nil
 }
 
 // Adapters is the registry the adapter endpoint registers connections in.
@@ -92,7 +92,7 @@ func (application *Application) Adapters() *adapterwire.Registry {
 // A nil worker runs nothing; tests and future surfaces use that to skip
 // dispatch without a pool.
 func (application *Application) Run(ctx context.Context) error {
-	application.logger.Info("control plane initialized", "worker_owner", application.owner)
+	application.logger.Info("dac-plane initialized", "worker_owner", application.owner)
 	application.running.Store(true)
 	defer application.running.Store(false)
 	if application.worker != nil {
@@ -108,7 +108,7 @@ func (application *Application) Run(ctx context.Context) error {
 	} else {
 		<-ctx.Done()
 	}
-	application.logger.Info("control plane stopping")
+	application.logger.Info("dac-plane stopping")
 	return nil
 }
 

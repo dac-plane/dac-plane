@@ -34,7 +34,7 @@ func SigningAlgorithms() []string {
 	return []string{"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"}
 }
 
-// Config lists the identity providers whose access tokens the control plane
+// Config lists the identity providers whose access tokens dac-plane
 // accepts: Issuers for Surface API callers (ADR-0007) and AdapterIssuers for
 // provider adapters (ADR-0008). It is loaded from the file
 // DAC_IDENTITY_CONFIG_FILE names and mirrors

@@ -2,7 +2,7 @@
 
 A connection lets work use an external account while its credential stays with a
 connector adapter. The surface and the runtime receive references and safe
-results. The control plane owns each grant, approval, limit and audit entry.
+results. dac-plane owns each grant, approval, limit and audit entry.
 
 ## Register and authorize
 

@@ -171,7 +171,7 @@ func (a *rawAdapter) next(t *testing.T) contracts.Frame {
 	}
 }
 
-// waitClosed waits for the control plane to end the session and returns the
+// waitClosed waits for dac-plane to end the session and returns the
 // shutdown failure it sent first, if any.
 func (a *rawAdapter) waitClosed(t *testing.T) *contracts.Failure {
 	t.Helper()
@@ -709,7 +709,7 @@ func (p *acceptAll) Subscribe(context.Context, contracts.Cursor) (contracts.Stre
 	return nil, io.EOF
 }
 
-// TestAdapterWireSelectsArtifactDownloads shows the control plane offers
+// TestAdapterWireSelectsArtifactDownloads shows dac-plane offers
 // artifact.download (ADR-0025): an artifact store adapter that offers it has
 // it selected and is reachable for downloads; one that does not is not.
 func TestAdapterWireSelectsArtifactDownloads(t *testing.T) {

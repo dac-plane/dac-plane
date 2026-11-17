@@ -1,4 +1,4 @@
-# Open Source Agent Control Plane
+# dac-plane
 
 dac-plane is the open source platform for building agent products. You deploy and operate it yourself, and you offer the product it powers under your own name; dac-plane is not a hosted service. Give the people you serve agents that do real work, from the surface you choose (Slack, a web app, an IDE, a ticket system or your own application), running on the agent runtime and environment you choose. Your users create agents and work with them through your surface. You decide which providers run them, and you can change a surface, a runtime or an environment without changing the others.
 

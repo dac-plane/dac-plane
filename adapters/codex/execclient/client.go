@@ -42,7 +42,7 @@ type rpcError struct {
 
 // Dial connects and completes exec-server's handshake. It trusts the system
 // roots, unlike the adapter's own client, because the endpoint is the provider's
-// public port host rather than the control plane.
+// public port host rather than dac-plane.
 func Dial(ctx context.Context, endpoint, token string) (*Client, error) {
 	conn, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}})
 	if resp != nil && resp.Body != nil {

@@ -56,8 +56,8 @@ type Config struct {
 	// EnvironmentGrace is how long a lost environment may take to return.
 	EnvironmentGrace time.Duration
 	// GatewayOrigin is the only origin, scheme://host:port, the adapter sends
-	// an attempt's gateway token to. The gateway is served on the control
-	// plane's adapter listener, so the executable derives it from
+	// an attempt's gateway token to. The gateway is served on
+	// dac-plane's adapter listener, so the executable derives it from
 	// DAC_ADAPTER_URL. Empty, no gateway is accepted.
 	GatewayOrigin string
 }
@@ -470,7 +470,7 @@ type runtimeStart struct {
 }
 
 // agentInstructions is the role and standing instructions of the agent a task
-// was delegated to. The control plane sends it only because Offered names
+// was delegated to. dac-plane sends it only because Offered names
 // wire.CapabilityAgentInstructions.
 type agentInstructions struct {
 	Role         string `json:"role"`
@@ -1320,7 +1320,7 @@ func validGateway(g *journal.GatewayAccess, origin string) bool {
 	return !strings.ContainsFunc(g.Token, func(r rune) bool { return r <= ' ' || r > '~' })
 }
 
-// GatewayOrigin is the origin of the connector gateway on the control plane
+// GatewayOrigin is the origin of the connector gateway on dac-plane
 // whose adapter endpoint is adapterURL: the same host and port over HTTPS.
 // The adapter kit accepts only https and wss endpoints, so neither ever
 // yields a plaintext origin.

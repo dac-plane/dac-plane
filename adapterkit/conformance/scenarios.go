@@ -137,7 +137,7 @@ func boundsCursor(e *wire.Event, cursor wire.Cursor, provider string) bool {
 // scenarioResubscribeRelay subscribes the fixture's stale cursor twice and
 // requires the kit to serve the script again without state from the previous
 // subscription. The cursor_too_old body
-// the provider scripts must travel verbatim for the control plane to decide
+// the provider scripts must travel verbatim for dac-plane to decide
 // rehydration (ADR-0010). An unsubscribed stream then stays silent for the
 // bounded window; at most one stray event from the subscription cancelled a
 // moment before is tolerated while it drains on the shared connection.

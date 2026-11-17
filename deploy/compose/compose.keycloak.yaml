@@ -82,7 +82,7 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # The control plane discovers the issuer at start, so it waits for it.
+  # dac-plane discovers the issuer at start, so it waits for it.
   dac-plane:
     depends_on:
       keycloak:

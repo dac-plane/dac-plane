@@ -1,4 +1,4 @@
-// Command dac-plane is the control plane's single binary (ADR-0009): serve
+// Command dac-plane is dac-plane's single binary (ADR-0009): serve
 // runs every role of a serving process, migrate applies schema migrations,
 // provision performs trusted provisioning, health probes the operations
 // listener, so a container health check needs no shell, and version names the

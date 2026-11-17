@@ -474,7 +474,7 @@
       "get": {
         "operationId": "getArtifactContent",
         "summary": "Download an artifact's content",
-        "description": "The committed bytes, relayed by the control plane from the artifact store and checked against the record (ADR-0025). Served as an attachment with the record's media type, Content-Length and Repr-Digest (RFC 9530); never rendered in this origin. A response aborted before its end did not deliver the artifact.",
+        "description": "The committed bytes, relayed by dac-plane from the artifact store and checked against the record (ADR-0025). Served as an attachment with the record's media type, Content-Length and Repr-Digest (RFC 9530); never rendered in this origin. A response aborted before its end did not deliver the artifact.",
         "parameters": [
           {
             "$ref": "#/components/parameters/Tenant"

@@ -6,9 +6,9 @@
 # with the `provision` tool service. docs/guides/deploy/index.md is the runbook.
 #
 # One trust bundle (DAC_TRUST_BUNDLE_FILE) holds every private root the stack
-# needs: the control plane's and artifact store's certificate issuer, and the
+# needs: dac-plane's and artifact store's certificate issuer, and the
 # OIDC issuer's if it is private. An adapter's CA file replaces its roots for
-# the control plane and token issuer; provider APIs keep the system roots.
+# dac-plane and token issuer; provider APIs keep the system roots.
 services:
   migrate:
     image: ${DAC_PLANE_IMAGE:?set DAC_PLANE_IMAGE to the published image by digest}
@@ -23,7 +23,7 @@ services:
       # Extends the system roots so issuer discovery trusts a private issuer,
       # and artifact downloads the store's certificate.
       SSL_CERT_FILE: /run/config/trust.crt
-      # Surfaces download artifacts through the control plane, which fetches
+      # Surfaces download artifacts through dac-plane, which fetches
       # the store's presigned reads only from this origin (ADR-0025).
       DAC_ARTIFACT_DOWNLOAD_ORIGINS: https://artifact-store:8443
     configs:

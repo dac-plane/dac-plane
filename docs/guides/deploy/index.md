@@ -11,11 +11,11 @@ availability, throughput or cost claim. [Operate](../operate/index.md) covers ru
 
 ## What runs where
 
-![One host runs the control plane with its database, the Codex, E2B and S3 adapters, the SeaweedFS artifact store behind HAProxy, and Keycloak with its database. Only the Surface API and Keycloak are published, on loopback. The adapters connect to the control plane over the Compose network. E2B sandboxes and the model provider are in the cloud, reached outbound.](../assets/deployment.png)
+![One host runs dac-plane with its database, the Codex, E2B and S3 adapters, the SeaweedFS artifact store behind HAProxy, and Keycloak with its database. Only the Surface API and Keycloak are published, on loopback. The adapters connect to dac-plane over the Compose network. E2B sandboxes and the model provider are in the cloud, reached outbound.](../assets/deployment.png)
 
 | Role | Service | Where |
 |---|---|---|
-| Control plane | `dac-plane`, `migrate`, `provision` | this host |
+| dac-plane service | `dac-plane`, `migrate`, `provision` | this host |
 | Database | `postgres` | this host |
 | Runtime | `codex-adapter` (Codex app-server inside) | this host; its commands run in the sandbox |
 | Environment | `e2b-adapter` | this host; sandboxes run in E2B's cloud |
@@ -24,7 +24,7 @@ availability, throughput or cost claim. [Operate](../operate/index.md) covers ru
 | Model | the model provider Codex is configured for | the provider's cloud |
 
 Only the Surface API (`DAC_SURFACE_BIND:DAC_SURFACE_PORT`) and Keycloak (`DAC_ISSUER_BIND:DAC_ISSUER_PORT`) are
-published, on loopback by default. Adapters reach the control plane on the Compose network. Every connection to E2B
+published, on loopback by default. Adapters reach dac-plane on the Compose network. Every connection to E2B
 and the model provider is outbound.
 
 ## Prerequisites
@@ -64,7 +64,7 @@ gh release download v0.1.0 -R dac-plane/dac-plane -p release-manifest.json -D "$
 "$PILOT_COMPOSE/generate-pilot-config.sh" "$PILOT_HOME" "$PILOT_COMPOSE/release-manifest.json" [EXTRA_HOST_NAME...]
 ```
 
-This writes a private CA, one server certificate for the control plane, artifact store and Keycloak, database, S3,
+This writes a private CA, one server certificate for dac-plane, artifact store and Keycloak, database, S3,
 Keycloak and attach-key secrets, `config/identity.json` and `pilot.env`, with image digests from the manifest. It
 never overwrites an existing key, secret or certificate. Pass the names other machines use to reach the host, for
 example its Tailscale name, as extra host names; they are added to the certificate.

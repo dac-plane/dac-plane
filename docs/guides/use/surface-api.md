@@ -96,7 +96,7 @@ A result revision lists its artifacts by identifier. Read one with
 its bytes with `GET /tasks/{task}/artifacts/{artifact}/content`. Both are readable by whoever may read the task
 ([ADR-0025](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0025-serve-artifacts-to-surfaces-through-the-control-plane.md)).
 
-The control plane relays the content from the artifact store, which a surface never reaches, and checks it on the way:
+dac-plane relays the content from the artifact store, which a surface never reaches, and checks it on the way:
 
 - The response carries the record's media type and length, its digest as `Repr-Digest: sha-256=:...:` and as the
   `ETag`, and is sent as an attachment with `X-Content-Type-Options: nosniff` and a sandboxing

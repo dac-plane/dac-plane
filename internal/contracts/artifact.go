@@ -184,7 +184,7 @@ func (d DownloadRequest) Validate() error {
 }
 
 // DownloadAuthorized is a short-lived HTTPS URL that reads exactly the
-// requested version. It is a bearer capability: the control plane uses it
+// requested version. It is a bearer capability: dac-plane uses it
 // once and never stores, logs or forwards it.
 type DownloadAuthorized struct {
 	Download  string    `json:"download"`

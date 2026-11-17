@@ -33,7 +33,7 @@ Before opening a pull request, run the focused checks for your change and `git d
 
 | Path | What it holds |
 |---|---|
-| `cmd/dac-plane` | The control-plane process |
+| `cmd/dac-plane` | The dac-plane process |
 | `internal/` | Application modules |
 | `adapterkit/` | The adapter kit, a separate Go module |
 | `adapters/` | The Codex, E2B and S3 adapters, each a separate Go module |

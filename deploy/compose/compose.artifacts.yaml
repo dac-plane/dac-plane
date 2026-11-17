@@ -3,7 +3,7 @@
 # (ADR-0017), replacing the simulator's byte store. The operator owns the store's volume and backups, as
 # with PostgreSQL. Commit evidence is read from the store by version.
 services:
-  # Surfaces download artifacts through the control plane, which fetches the
+  # Surfaces download artifacts through dac-plane, which fetches the
   # store's presigned reads only from this origin (ADR-0025).
   dac-plane:
     environment:

@@ -1,8 +1,8 @@
 // Command dac-sim-adapter runs a deterministic simulator as a reference
 // adapter (ADR-0008): it reads its scenario from a JSON file and connects to
-// the control plane the adapter kit way. It serves the conformance runner and
+// dac-plane the adapter kit way. It serves the conformance runner and
 // the reference stack's development profile (ADR-0009). It links the
-// simulator, so it is a test and demonstration binary; the control plane
+// simulator, so it is a test and demonstration binary; dac-plane
 // never depends on it.
 //
 // Settings come from the environment:

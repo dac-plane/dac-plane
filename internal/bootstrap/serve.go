@@ -159,7 +159,7 @@ func (application *Application) Serve(ctx context.Context, cfg config.Config, op
 		go func() { serveErrors <- l.serve() }()
 	}
 	serving.Store(true)
-	logger.Info("control plane serving", "surface", cfg.SurfaceAddr, "adapter", cfg.AdapterAddr, "operations", cfg.OpsAddr)
+	logger.Info("dac-plane serving", "surface", cfg.SurfaceAddr, "adapter", cfg.AdapterAddr, "operations", cfg.OpsAddr)
 
 	var failure error
 	select {

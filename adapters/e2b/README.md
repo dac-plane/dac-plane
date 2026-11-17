@@ -1,6 +1,6 @@
 # E2B Cloud environment adapter
 
-`dac-e2b-adapter` is an independent environment adapter. It imports `adapterkit` and its own durable journal; it does not import DAC internals. It uses E2B Cloud's managed control plane at `https://api.e2b.app`. E2B operates the Linux hosts and Firecracker microVMs; this deployment requires no customer-owned KVM machine.
+`dac-e2b-adapter` is an independent environment adapter. It imports `adapterkit` and its own durable journal; it does not import DAC internals. It uses E2B Cloud's managed dac-plane at `https://api.e2b.app`. E2B operates the Linux hosts and Firecracker microVMs; this deployment requires no customer-owned KVM machine.
 
 ## Managed provider surface
 

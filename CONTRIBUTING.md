@@ -15,7 +15,7 @@ type(optional scope)optional-!: subject
 - **Type** is one of `feat`, `fix`, `perf`, `deps`, `revert`, `refactor`,
   `docs`, `test`, `build`, `ci`, `chore`, `style`.
 - **Scope** is optional and free-form, for example `(architecture)`,
-  `(adr)`, `(control-plane)`.
+  `(adr)`, `(platform)`.
 - `!` after the type (or a `BREAKING CHANGE:` footer in the body) marks a
   breaking change.
 - The subject is lowercase, imperative, and does not end with a period.

@@ -58,7 +58,7 @@ if [ ! -s "$config/ca.crt" ] || [ ! -s "$secrets/ca.key" ]; then
     -keyout "$secrets/ca.key" -out "$config/ca.crt"
 fi
 
-# One certificate serves the control plane, the artifact store and Keycloak,
+# One certificate serves dac-plane, the artifact store and Keycloak,
 # under their Compose service names and any extra names given.
 sans="DNS:dac-plane,DNS:artifact-store,DNS:keycloak,DNS:localhost,IP:127.0.0.1"
 for name in "$@"; do

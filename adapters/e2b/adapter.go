@@ -421,7 +421,7 @@ func (a *Adapter) finishTaskProvision(ctx context.Context, req wire.Request, sbx
 
 // errSandboxDiscarded reports a sandbox that could not serve commands and is
 // known to be gone, so the provision has no effect and can be rejected. An
-// unknown reply would leave its task provisioning, because the control plane
+// unknown reply would leave its task provisioning, because dac-plane
 // never dispatches an uncertain operation again.
 var errSandboxDiscarded = errors.New("sandbox could not serve commands and was deleted")
 
@@ -643,7 +643,7 @@ func (a *Adapter) stopResource(ctx context.Context, operation string) (string, e
 }
 
 // RetryStops finishes journaled stops until ctx ends, including those a previous
-// process left behind. The control plane never sends a stop twice, so a failed
+// process left behind. dac-plane never sends a stop twice, so a failed
 // or interrupted one can only complete from here.
 func (a *Adapter) RetryStops(ctx context.Context) {
 	ticker := time.NewTicker(a.cfg.StopRetryInterval)

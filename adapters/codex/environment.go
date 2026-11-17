@@ -35,7 +35,7 @@ var resourceIdentifier = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 func resourceID(ref string) string { return ref[strings.LastIndexByte(ref, ':')+1:] }
 
 // attachToken derives a resource's bearer token. The environment adapter derives
-// the same value from the shared key, so no secret crosses the control plane.
+// the same value from the shared key, so no secret crosses dac-plane.
 func attachToken(key []byte, ref string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(attachTokenLabel + ref))

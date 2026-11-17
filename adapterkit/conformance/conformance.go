@@ -1,6 +1,6 @@
-// Package conformance checks that an adapter speaks ControlFrame the way the
-// dac-plane control plane requires (ADR-0008, ADR-0010). The harness plays the
-// control plane: it listens over TLS, waits for the adapter under test to
+// Package conformance checks that an adapter speaks ControlFrame the way
+// dac-plane requires (ADR-0008, ADR-0010). The harness plays
+// dac-plane: it listens over TLS, waits for the adapter under test to
 // dial in, and drives scenarios over that connection: negotiation, request
 // and reply correlation, idempotent redelivery, rejection of foreign methods,
 // cancellation, subscription, resubscription replaying the cursor's stream
@@ -136,7 +136,7 @@ func Check(ctx context.Context, target Target) []Result {
 	return results
 }
 
-// harness is the stand-in control plane.
+// harness is the stand-in dac-plane.
 type harness struct {
 	server  *httptest.Server
 	conns   chan *websocket.Conn
@@ -273,7 +273,7 @@ func (h *harness) open(ctx context.Context, timeout time.Duration) error {
 	}
 	if len(hello.Required) > 0 {
 		l.conn.CloseNow()
-		return fmt.Errorf("hello requires capabilities %v the control plane does not define", hello.Required)
+		return fmt.Errorf("hello requires capabilities %v dac-plane does not define", hello.Required)
 	}
 	if err := l.write(ctx, wire.Frame{Kind: wire.KindLifecycle, Lifecycle: &wire.Lifecycle{Phase: wire.PhaseReady, Version: wire.ProtocolVersion}}); err != nil {
 		l.conn.CloseNow()

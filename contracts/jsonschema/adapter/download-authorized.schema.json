@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "DownloadAuthorized",
-  "description": "Result of authorize_download: an HTTPS URL that reads exactly the requested version until it expires. A bearer capability, used once by the control plane and never stored, logged or forwarded.",
+  "description": "Result of authorize_download: an HTTPS URL that reads exactly the requested version until it expires. A bearer capability, used once by dac-plane and never stored, logged or forwarded.",
   "type": "object",
   "additionalProperties": false,
   "required": ["download", "expires_at"],

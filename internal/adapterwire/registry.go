@@ -66,7 +66,7 @@ func (r *Registry) Close() {
 	}
 	r.mu.Unlock()
 	for _, c := range all {
-		c.shutdown(websocket.StatusGoingAway, nil, "control plane shutting down")
+		c.shutdown(websocket.StatusGoingAway, nil, "dac-plane shutting down")
 	}
 	r.cancel()
 }

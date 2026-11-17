@@ -1,8 +1,8 @@
-// Package wire is the ControlFrame codec an adapter speaks to the dac-plane
-// control plane (ADR-0008, ADR-0010): one JSON frame per WebSocket text
+// Package wire is the ControlFrame codec an adapter speaks to
+// dac-plane (ADR-0008, ADR-0010): one JSON frame per WebSocket text
 // message. The types mirror the adapter JSON Schemas, and Decode and Encode
 // validate every frame against those schemas, embedded here, so an adapter is
-// held to the same contract as the control plane.
+// held to the same contract as dac-plane.
 //
 // Arguments, results and stream entry payloads are carried as raw JSON; their
 // meaning belongs to the method or entry kind, not to the frame.
@@ -29,7 +29,7 @@ const CapabilityOperationReplay = "operation.replay"
 // start_turn arguments: the role and standing instructions of the agent
 // revision the task was delegated to. A runtime adapter offers it only when it
 // places them where its runtime takes standing instructions, apart from the
-// brief. The control plane never sends a delegated task's start_turn to a
+// brief. dac-plane never sends a delegated task's start_turn to a
 // connection that did not select it.
 const CapabilityAgentInstructions = "agent.instructions"
 
@@ -43,9 +43,9 @@ const CapabilityConnectorGateway = "connector.gateway"
 
 // CapabilityArtifactDownload accepts authorize_download requests: the
 // artifact store returns a short-lived URL that reads exactly one committed
-// object version, which the control plane fetches and relays to a surface.
+// object version, which dac-plane fetches and relays to a surface.
 // An artifact store adapter offers it only when that URL reads nothing else
-// and the control plane can reach it. The control plane never sends
+// and dac-plane can reach it. dac-plane never sends
 // authorize_download to a connection that did not select it.
 const CapabilityArtifactDownload = "artifact.download"
 
@@ -258,7 +258,7 @@ type StreamFrame struct {
 }
 
 // Event is a stream frame with the binding the provider claims for it. The
-// control plane checks the claim against the session's authenticated
+// dac-plane checks the claim against the session's authenticated
 // provider and the subscribed cursor.
 type Event struct {
 	Tenant     string      `json:"tenant_id"`

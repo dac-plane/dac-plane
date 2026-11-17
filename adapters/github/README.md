@@ -51,7 +51,7 @@ issue and verify replay does not post a second comment. This is an explicit
 external write. The runner prints test outcomes and never prints credentials or
 unrestricted GitHub responses. Remove the fixture connection through the Surface
 API afterwards to test remote revocation, then restart the connector to let the
-control plane confirm removal.
+dac-plane confirm removal.
 
 This recipe qualifies the adapter's GitHub API behavior. Product gateway tests,
 runtime behavior, and runtime-host egress containment are separate checks. The

@@ -26,7 +26,7 @@ const (
 	// defaultSandboxDomain is E2B's public port host.
 	defaultSandboxDomain = "e2b.app"
 	// execServerReadyTimeout bounds the wait for exec-server to listen. It stays
-	// under the control plane's 30-second send timeout, so that a failed start
+	// under dac-plane's 30-second send timeout, so that a failed start
 	// is answered rather than lost as an unknown outcome.
 	execServerReadyTimeout = 20 * time.Second
 	execServerPollInterval = 250 * time.Millisecond
@@ -38,8 +38,8 @@ const (
 const attachTokenLabel = "dac-exec-server-v1\x00"
 
 // attachToken derives the bearer token for a resource. The runtime adapter
-// derives the same value from the shared key, so no secret crosses the control
-// plane and nothing needs storing to attach again after a restart.
+// derives the same value from the shared key, so no secret crosses
+// dac-plane and nothing needs storing to attach again after a restart.
 func attachToken(key []byte, ref string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(attachTokenLabel + ref))

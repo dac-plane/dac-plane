@@ -19,7 +19,7 @@ no metrics endpoint in v0.1.0.
 ## 9. Back up and restore
 
 A backup is the two databases and three volumes, taken together: the artifact store's objects and the state of the
-Codex and E2B adapters, each of which records the operations it holds for the control plane. `$PILOT_HOME`, which
+Codex and E2B adapters, each of which records the operations it holds for dac-plane. `$PILOT_HOME`, which
 holds the keys, is kept encrypted elsewhere by the operator.
 
 ```sh
@@ -102,7 +102,7 @@ a file with `mv`, or with an editor that writes a new file, leaves the container
 pilot's rehearsal, a rotated adapter failed with `cannot open the client secret file` at its next renewal. So
 recreate the container after every credential change, as the table says.
 
-The control plane reloads its TLS certificate from the mounted files for new connections. Keep the old certificate
+dac-plane reloads its TLS certificate from the mounted files for new connections. Keep the old certificate
 valid until existing connections have drained.
 
 Never paste a credential into a command line, log or ticket; write it to its file.

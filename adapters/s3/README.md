@@ -18,7 +18,7 @@ Qualified store: SeaweedFS `4.51`, pinned by digest in [`qualification/run.sh`](
      the host, the manifest's media type and its exact length. It expires after `DAC_S3_UPLOAD_TTL`.
    - A replay presigns the same key again. The same operation with other arguments is rejected, compared
      through a digest at `authorizations/{tenant}/{operation}`.
-2. **The runtime uploads directly to the staging bucket.** Bytes never pass through the control plane or
+2. **The runtime uploads directly to the staging bucket.** Bytes never pass through dac-plane or
    this adapter.
 3. **`stat_object`** hashes the current staging version. It is diagnostic only.
 4. **`commit_manifest`**
@@ -37,7 +37,7 @@ Qualified store: SeaweedFS `4.51`, pinned by digest in [`qualification/run.sh`](
    - Reads the committed object, the oldest version of `{tenant}/{artifact}`, and its receipt.
    - Refuses unless that version is the one requested and its receipt is the admitted manifest.
    - Returns a presigned GET of exactly that version of the objects bucket, signed for the public endpoint,
-     valid for five minutes. The control plane fetches it and relays the bytes to the surface; the surface
+     valid for five minutes. dac-plane fetches it and relays the bytes to the surface; the surface
      never reaches the store.
 
 The adapter keeps no local state and offers `operation.replay` and `artifact.download`.

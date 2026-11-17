@@ -117,7 +117,7 @@ func TestTaskCancellationQualification(t *testing.T) {
 	})
 
 	// The frames below reach a paused adapter's socket and die with it, so the
-	// control plane believes they were delivered and the adapter never saw them.
+	// dac-plane believes they were delivered and the adapter never saw them.
 	t.Run("interrupt lost with its adapter", func(t *testing.T) {
 		started := time.Now()
 		task := s.startActiveTask(t)

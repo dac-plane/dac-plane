@@ -42,7 +42,7 @@ const defaultStallTimeout = 30 * time.Second
 
 // ArtifactFetcher reads presigned artifact downloads. It fetches only from
 // the origins the operator lists and follows no redirect, so an artifact
-// store cannot make the control plane read anything else.
+// store cannot make dac-plane read anything else.
 type ArtifactFetcher struct {
 	origins map[string]bool
 	client  *http.Client

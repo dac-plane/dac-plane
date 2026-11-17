@@ -1,5 +1,5 @@
-// Package application is the transport-neutral command boundary of the
-// control plane. Every mutating command is authenticated (it carries an
+// Package application is the transport-neutral command boundary of
+// dac-plane. Every mutating command is authenticated (it carries an
 // identity.AuthorizationContext), authorized (the principal must exist in its
 // tenant), idempotent (a client nonce binds the command to the fingerprint of
 // its first payload and to its outcome) and version checked where it changes

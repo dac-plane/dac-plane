@@ -1,6 +1,6 @@
 // Package wiretest runs provider ports as out-of-process adapters for the
 // integration suites (ADR-0008): each port is served by the adapter kit over
-// a real TLS WebSocket to the control plane's adapter endpoint, authenticated
+// a real TLS WebSocket to dac-plane's adapter endpoint, authenticated
 // with a client-credentials token from a test issuer and a provisioned
 // binding, and the worker resolves it through the connection registry. The
 // adapter runs in the test binary, so scenario scripts, pause control and

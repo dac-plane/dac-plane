@@ -1,5 +1,5 @@
 // Command adapter-conformance runs the ControlFrame conformance suite
-// against an adapter written in any language. It plays the control plane,
+// against an adapter written in any language. It plays dac-plane,
 // starts the adapter command with where to connect, and reports each
 // scenario:
 //

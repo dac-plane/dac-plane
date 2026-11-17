@@ -35,7 +35,7 @@ import (
 	testpostgres "github.com/dac-plane/dac-plane/internal/testsupport/postgres"
 )
 
-// serving is one control-plane process under test with its configuration.
+// serving is one dac-plane process under test with its configuration.
 type serving struct {
 	cfg      config.Config
 	issuer   *oidctest.Issuer

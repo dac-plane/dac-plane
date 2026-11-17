@@ -33,7 +33,7 @@ import (
 // downloadStore stands in for a connected artifact store adapter: the
 // simulator's byte store answers authorize_download, and a TLS server plays
 // the store's presigned reads. Tests change what it serves to show that the
-// control plane checks the bytes, not the store's word.
+// dac-plane checks the bytes, not the store's word.
 type downloadStore struct {
 	mu         sync.Mutex
 	store      *simulator.ByteArtifactStore
@@ -233,7 +233,7 @@ func TestSurfaceServesArtifactsThroughTheControlPlane(t *testing.T) {
 	download.unknownLength.Store(false)
 	download.set(true, nil)
 
-	// The control plane fetches only from listed origins.
+	// dac-plane fetches only from listed origins.
 	other, err := httpapi.NewArtifactFetcher([]string{"https://elsewhere.example"}, roots)
 	if err != nil {
 		t.Fatal(err)

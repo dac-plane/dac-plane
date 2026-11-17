@@ -261,7 +261,7 @@ func stopObservations(t *testing.T, store *journal.Store, operation string) []ob
 	return observed
 }
 
-// The control plane never sends a stop twice, so an unconfirmed DELETE must
+// dac-plane never sends a stop twice, so an unconfirmed DELETE must
 // complete from the adapter and publish the observation that settles it.
 func TestFailedTaskStopRetriesUntilObserved(t *testing.T) {
 	fake := &fakeE2B{sandboxes: map[string]sandbox{}, failDeletes: 2}

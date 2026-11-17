@@ -62,9 +62,9 @@ Protocols and deployment are shown in the views below; vendor selections and tru
 Question answered: **What independently running software and stores form the product, and how do they
 connect?**
 
-Audience: engineers implementing the control plane, its Surface API and provider adapters.
+Audience: engineers implementing dac-plane, its Surface API and provider adapters.
 
-One modular control-plane application owns the lifecycle and PostgreSQL. API handling, lifecycle
+One modular dac-plane application owns the lifecycle and PostgreSQL. API handling, lifecycle
 transitions, outbox dispatch, reconciliation and the adapter endpoint are modules of that application,
 not separate services ([ADR-0002](../adr/0002-initial-application-boundary.md)). Surfaces use the
 Surface API over HTTPS with replayable events; the web workspace is later and uses the same API
@@ -86,12 +86,12 @@ runtime or an environment provider.
 Question answered: **What runs where in the first supported deployment, and who opens each
 connection?**
 
-Audience: operators and engineers packaging the control plane.
+Audience: operators and engineers packaging dac-plane.
 
 One image runs identical `serve` replicas, each with the Surface API, the adapter endpoint and the
 worker, against one PostgreSQL primary. Schema changes happen only in a separate `migrate` step before
 a rollout. Surface clients and provider adapters both connect in over TLS with tokens from the
-operator's OpenID Connect provider; the control plane never dials an adapter. Simulator adapters and a
+operator's OpenID Connect provider; dac-plane never dials an adapter. Simulator adapters and a
 test issuer exist only in a development profile. See
 [ADR-0009](../adr/0009-deployment-unit-and-first-substrate.md) and the
 [deployment guide](../guides/deploy/index.md). The checked-in Compose development
@@ -139,7 +139,7 @@ provider boundaries:
 - `ActionPrecondition` tokens plus serialized stateful actions.
 
 These contracts refine adapter behavior; they do not change ownership, deployment or container
-boundaries. A provider reports native state and effects. Only the control-plane application decides
+boundaries. A provider reports native state and effects. Only the dac-plane application decides
 whether those observations change authoritative product records.
 
 ## Initial implementation boundary

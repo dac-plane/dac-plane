@@ -38,7 +38,7 @@ The Surface API listens on `127.0.0.1:18443` and the issuer on `127.0.0.1:18080`
 `DAC_SURFACE_PORT` or `DAC_ISSUER_PORT` with a free port before `just stack-up`. Everything the stack generates is a
 test fixture: never reuse its keys or issuer anywhere else.
 
-Check that the control plane is ready:
+Check that dac-plane is ready:
 
 ```bash
 docker compose -p dac-plane exec -T dac-plane /dac-plane health ready

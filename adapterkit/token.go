@@ -18,7 +18,7 @@ const maxTokenFileBytes = 16 << 10
 // FileToken returns a TokenSource that reads a JWT access token from path on
 // every connection, so a sidecar or the platform can refresh the file. The
 // expiry is read from the token's exp claim only to schedule renewal; the
-// control plane verifies the token. Errors never include the token.
+// dac-plane verifies the token. Errors never include the token.
 func FileToken(path string) TokenSource {
 	return func(context.Context) (Token, error) {
 		file, err := os.Open(path)

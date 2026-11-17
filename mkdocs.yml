@@ -2,7 +2,7 @@
 # and check it with `just docs-check`. Only docs/guides/ is built: ADRs, the
 # architecture baseline and evidence notes stay on GitHub and are linked from it.
 site_name: dac-plane
-site_description: The durable record of work you delegate to AI agents.
+site_description: The open source platform for building agent products.
 site_url: https://dac-plane.github.io/dac-plane/
 repo_url: https://github.com/dac-plane/dac-plane
 repo_name: dac-plane/dac-plane

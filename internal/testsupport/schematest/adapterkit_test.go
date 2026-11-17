@@ -13,7 +13,7 @@ const repoRoot = "../../../"
 // TestEveryContractSchemaGuardsTheAdapterKit guards the adapter kit's embedded
 // frame schemas byte-for-byte against contracts/jsonschema: the kit is the
 // published ControlFrame contract for external adapters, and a silent drift
-// between the two copies would let the kit and the control plane disagree
+// between the two copies would let the kit and dac-plane disagree
 // about valid frames without any test noticing.
 func TestEveryContractSchemaGuardsTheAdapterKit(t *testing.T) {
 	pairs := []struct{ embedded, canonical string }{

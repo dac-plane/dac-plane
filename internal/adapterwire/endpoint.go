@@ -1,4 +1,4 @@
-// Package adapterwire is the control plane's side of the adapter wire
+// Package adapterwire is dac-plane's side of the adapter wire
 // transport (ADR-0008, ADR-0010). Adapters dial the Endpoint over HTTPS and
 // upgrade to one WebSocket carrying ControlFrames. The endpoint verifies the
 // adapter's client-credentials token, resolves its stored binding to the one
@@ -58,7 +58,7 @@ type Options struct {
 	// subscriber that falls further behind loses its stream and resumes from
 	// its durable cursor.
 	StreamBuffer int
-	// Hello is the control plane's side of negotiation (version 1).
+	// Hello is dac-plane's side of negotiation (version 1).
 	Hello contracts.Lifecycle
 	// Now is the clock (time.Now).
 	Now func() time.Time

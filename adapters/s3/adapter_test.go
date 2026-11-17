@@ -97,7 +97,7 @@ func authorize(t *testing.T, a *Adapter, m manifest, operation string) string {
 var schemas sync.Map
 
 // conform checks a reply payload against the product's JSON Schema, so the
-// adapter cannot drift from the contract the control plane decodes.
+// adapter cannot drift from the contract dac-plane decodes.
 func conform(t *testing.T, name string, raw []byte) {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", "..", "contracts", "jsonschema", "adapter", name+".schema.json"))

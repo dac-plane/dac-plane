@@ -7,9 +7,9 @@ does, how to build one with the Go adapter kit, how to test it, and how to conne
 
 ## What an adapter does
 
-An adapter is its own process. It opens a TLS WebSocket to the control plane's adapter endpoint, authenticates with
-an OAuth 2.0 access token, and agrees the protocol version. The control plane never connects to it. Over that
-connection the control plane sends it:
+An adapter is its own process. It opens a TLS WebSocket to dac-plane's adapter endpoint, authenticates with
+an OAuth 2.0 access token, and agrees the protocol version. dac-plane never connects to it. Over that
+connection dac-plane sends it:
 
 - **requests**: one operation each, such as provisioning a workspace, starting a turn or committing an artifact.
   The adapter performs it against its provider and replies with the outcome;
@@ -47,7 +47,7 @@ err := adapterkit.Run(ctx, adapterkit.Config{
 Two rules matter more than any other:
 
 - **The operation identifier is the idempotency key.** The same request can arrive more than once, after a reconnect
-  or a control-plane restart. Performing it twice must not do the work twice.
+  or a dac-plane restart. Performing it twice must not do the work twice.
 - **An error from `Send` means the outcome is unknown.** The kit reports it that way, and dac-plane reconciles from
   what the adapter later observes. Return an error only when you cannot tell what happened; otherwise reply with the
   outcome, including a definite failure.
@@ -65,7 +65,7 @@ An artifact store adapter may offer `wire.CapabilityArtifactDownload` to let sur
 ([ADR-0025](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0025-serve-artifacts-to-surfaces-through-the-control-plane.md)).
 It is then sent `authorize_download` with an admitted `manifest` and the committed `object_version`, and answers with
 a `download`, an HTTPS URL that reads exactly that version, and its `expires_at`, at most fifteen minutes away. Refuse
-any other version. The control plane fetches the URL itself, only from origins the operator lists, so it must reach
+any other version. dac-plane fetches the URL itself, only from origins the operator lists, so it must reach
 the URL's host; it never stores or forwards it. A store that does not offer the capability is never sent the request,
 and its artifacts' content answers `503` to surfaces.
 
@@ -77,7 +77,7 @@ adapter that passes the conformance suite, and the
 
 ## Test it
 
-The conformance suite plays the control plane and checks the protocol: negotiation, requests, cancels, streams and
+The conformance suite plays dac-plane and checks the protocol: negotiation, requests, cancels, streams and
 reconnects. For a Go adapter, call `conformance.Run` from a test. For one in any language, the runner starts your
 adapter as a command:
 
@@ -102,13 +102,13 @@ the shape.
    [`provision bind-adapter`](../reference/cli.md#bind-adapter). Use one client per registration.
 4. Run the adapter with the settings every adapter reads, under
    [Every adapter](../reference/configuration.md#every-adapter) in the configuration reference.
-5. Check that the control plane logs `adapter connected` for it.
+5. Check that dac-plane logs `adapter connected` for it.
 
 A runtime also needs a harness qualification before dac-plane sends it work:
 [`provision qualify-harness`](../reference/cli.md#qualify-harness).
 
 ## Versions
 
-The kit is versioned apart from the control plane, with tags named `adapterkit/vX.Y.Z`. While it is v0 it speaks
-protocol version 1, and a minor version may change its Go API. Each release's notes name the control-plane versions
+The kit is versioned apart from dac-plane, with tags named `adapterkit/vX.Y.Z`. While it is v0 it speaks
+protocol version 1, and a minor version may change its Go API. Each release's notes name the dac-plane versions
 it works with.

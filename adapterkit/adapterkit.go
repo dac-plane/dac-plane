@@ -1,5 +1,5 @@
-// Package adapterkit connects a provider adapter to the dac-plane control
-// plane (ADR-0008). The adapter dials the control plane over HTTPS, upgrades
+// Package adapterkit connects a provider adapter to dac-plane
+// (ADR-0008). The adapter dials dac-plane over HTTPS, upgrades
 // to one WebSocket carrying ControlFrames, authenticates with an OAuth 2.0
 // client-credentials access token, and negotiates the protocol version before
 // any work. The kit then hands each request, cancel and subscription to the
@@ -9,7 +9,7 @@
 //
 // The kit adds no outcome semantics. A request is answered only with the
 // Handler's reply; a connection lost before the reply leaves the outcome for
-// the control plane to reconcile from observations. A Handler must treat the
+// dac-plane to reconcile from observations. A Handler must treat the
 // operation identifier as its idempotency key. An adapter may advertise
 // wire.CapabilityOperationReplay only when it can answer a replacement
 // delivery from what it already did, across reconnects and process failure.
@@ -60,12 +60,12 @@ type TokenSource func(ctx context.Context) (Token, error)
 
 // Config is how an adapter connects.
 type Config struct {
-	// URL is the control plane's adapter endpoint, https or wss.
+	// URL is dac-plane's adapter endpoint, https or wss.
 	URL string
 	// Token supplies the access token sent on each upgrade request.
 	Token TokenSource
 	// Provider and Role are the registration this adapter speaks for; the
-	// control plane establishes them from the token's binding, and the kit
+	// dac-plane establishes them from the token's binding, and the kit
 	// uses them to stamp events and refuse requests of another role.
 	Provider string
 	Role     wire.Role
@@ -179,7 +179,7 @@ func Run(ctx context.Context, config Config) error {
 			}
 		case <-renew:
 			// The token is close to expiry: open the next connection now and
-			// let this one drain until the control plane closes it.
+			// let this one drain until dac-plane closes it.
 			config.Logger.Info("renewing adapter connection before token expiry")
 		}
 	}
