@@ -67,8 +67,8 @@ Audience: engineers implementing dac-plane, its Surface API and provider adapter
 One modular dac-plane application owns the lifecycle and PostgreSQL. API handling, lifecycle
 transitions, outbox dispatch, reconciliation and the adapter endpoint are modules of that application,
 not separate services ([ADR-0002](../adr/0002-initial-application-boundary.md)). Surfaces use the
-Surface API over HTTPS with replayable events; the web workspace is later and uses the same API
-([ADR-0007](../adr/0007-surface-api-transport-and-authentication.md)). Every provider role, including
+Surface API over HTTPS with replayable events; dac-plane ships no surface of its own, and every surface a
+company builds uses the same API ([ADR-0007](../adr/0007-surface-api-transport-and-authentication.md)). Every provider role, including
 artifact byte storage, is reached through a separate adapter process that opens a TLS WebSocket to the
 application and never writes PostgreSQL; in-process simulators serve tests only
 ([ADR-0008](../adr/0008-adapter-process-boundary-and-wire-transport.md)). Artifact identity, digest
@@ -171,6 +171,9 @@ active contracts and PostgreSQL storage, and the
 providers and deployable, without changing lifecycle ownership.
 
 ## Source decisions
+
+Records written before 2026-11-17 call dac-plane "the control plane" and mention a later web workspace. Neither holds
+today: see the [note on decision records](../adr/README.md).
 
 - [ADR-0001: Go for the control-plane backend](../adr/0001-control-plane-language.md)
 - [ADR-0002: start with a modular-monolith control plane](../adr/0002-initial-application-boundary.md)
