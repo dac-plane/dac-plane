@@ -14,6 +14,7 @@ artifacts, audit, results and reviews. Runtimes and environments do the work and
 
 - [Getting started](getting-started.md): run dac-plane against simulated providers.
 - [Concepts](concepts.md): the records dac-plane owns and how work moves through them.
+- [Build an agent product](build-a-product.md): what you build, what dac-plane provides, and the decisions in order.
 - [Deploy](deploy/index.md) and [operate](operate/index.md) a deployment.
 - [Use the Surface API](use/surface-api.md) from a surface, or [write an adapter](extend/adapters.md) for a provider.
 - Reference: [configuration](reference/configuration.md), [command line](reference/cli.md) and the

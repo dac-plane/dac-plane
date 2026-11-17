@@ -31,6 +31,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Concepts: concepts.md
+  - Build an agent product: build-a-product.md
   - Deploy: deploy/index.md
   - Operate: operate/index.md
   - Use the Surface API: use/surface-api.md
