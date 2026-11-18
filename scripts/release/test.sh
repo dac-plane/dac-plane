@@ -127,7 +127,7 @@ reset; lightweight v0.5.0 "$head"; lightweight adapterkit/v0.5.0 "$head"; good_p
 run "merge: one module disagrees" refuse -- "${merge_env[@]}" "${check[@]}" v0.5.0
 
 reset; lightweight v0.5.0 "$head"; lightweight adapterkit/v0.5.0 "$head"; good_pr; rm "$fixture/docs/releases/v0.5.0.md"
-run "merge: no release notes" refuse -- "${merge_env[@]}" "${check[@]}" v0.5.0
+run "merge: no release notes warns and does not stop it" ok -- "${merge_env[@]}" "${check[@]}" v0.5.0
 
 reset; lightweight v0.5.0-rc.1 "$head"; lightweight adapterkit/v0.5.0-rc.1 "$head"; good_pr
 run "merge: a rehearsal tag" refuse -- "${merge_env[@]}" "${check[@]}" v0.5.0-rc.1
@@ -187,7 +187,7 @@ run "pr: another branch" refuse -- "$here/merged-release-pr.sh" "$head"
 reset
 run "notes: present and linked" ok -- "$here/check-notes.sh"
 reset; rm "$fixture/docs/releases/v0.5.0.md"
-run "notes: missing" refuse -- "$here/check-notes.sh"
+run "notes: missing warns and does not fail" ok -- "$here/check-notes.sh"
 reset; printf '' >"$fixture/docs/releases/README.md"
 run "notes: not linked" refuse -- "$here/check-notes.sh"
 

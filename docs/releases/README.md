@@ -22,14 +22,14 @@ adapter kit's version in every `go.mod`, so no version is edited by hand. The ad
 module: `vX.Y.Z` and `adapterkit/vX.Y.Z` are always tagged together, at the same commit, even when the kit itself did not
 change, so every module requires the release's own version.
 
-1. **Write the notes on `main`, if the release needs them.** release-please writes the change list. A release that adds a
-   database migration since the previous release also needs `docs/releases/vX.Y.Z.md` (copy
-   [template.md](template.md): upgrading, known limits, compatibility), linked in the list above, because a deployer
-   must act. Add it in a normal pull request to `main`. Do not push to the release pull request's branch:
-   release-please rebuilds it from `main` whenever `main` changes and would drop the commit. Merging the notes refreshes
-   the release pull request, and its `Release notes` check, which fails until the notes exist and are linked, then
-   passes. A release with no new migration needs none: the check passes without a file, and the GitHub Release links the
-   changelog instead. You may write notes anyway, and then they must be linked.
+1. **Write the notes on `main`, if the release needs them.** release-please writes the change list. Release notes are
+   for what a deployer must do, so write `docs/releases/vX.Y.Z.md` (copy [template.md](template.md): upgrading, known
+   limits, compatibility) when a release changes something they must act on: a migration, a changed behaviour, a new
+   setting. Most releases need none. The author of such a change adds the note in the pull request that makes it, and
+   the pull request template asks. A release that adds a database migration and has no notes gets a warning from the
+   `Release notes` check, never a failure, and the GitHub Release then links the changelog instead. Notes that exist
+   must be linked. Add them in a normal pull request to `main`, not to the release pull request's branch:
+   release-please rebuilds that from `main` whenever `main` changes and would drop the commit.
 2. **Rehearse (optional).** From the release pull request's head, `just release-tag vX.Y.Z-rc.1`. This path keeps its
    signed tag: you need a signing key that GitHub reports as verified. The workflow publishes to
    `ghcr.io/dac-plane/dry-run` and drafts a prerelease.

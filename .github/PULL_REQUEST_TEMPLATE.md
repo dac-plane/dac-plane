@@ -27,7 +27,7 @@ only what was.
 
 ## Risk Assessment
 
-<!-- What can break, and how likely. -->
+<!-- What can break, and how likely. Does this change need an upgrade step: a migration, a changed behaviour, a new setting? Say what; it goes in the release notes. -->
 
 ## AI Usage Declaration
 
