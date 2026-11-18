@@ -6,9 +6,12 @@ on:
     branches: [main]
   workflow_call:
 
+# An ordinary run is replaced by a newer one on the same ref. A run called by a
+# release carries the caller's workflow name and ref, so it is keyed by commit
+# and never cancelled: another release merging must not stop this one's checks.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.workflow != 'ci' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.workflow == 'ci' }}
 
 permissions:
   contents: read

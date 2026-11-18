@@ -7,9 +7,10 @@ on:
   workflow_call:
   workflow_dispatch:
 
+# See ci.yml: a run called by a release is keyed by commit and never cancelled.
 concurrency:
-  group: security-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: security-${{ github.workflow }}-${{ github.ref }}${{ github.workflow != 'security' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.workflow == 'security' }}
 
 permissions:
   contents: read
