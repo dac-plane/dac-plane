@@ -40,17 +40,25 @@ write_modules() {
 		printf 'module example.com/%s\n\ngo 1.26\n\nrequire %s %s\n' "$(printf '%s' "$module" | tr -c 'a-z0-9\n' '_')" "$kit_module" "$kit" >"$fixture/$module/go.mod"
 	done
 }
+# build_fixture [migration|none]: the previous release v0.4.0, then the release
+# commit, which adds a database migration unless told not to.
 build_fixture() {
-	rm -rf "$fixture" && mkdir -p "$fixture/docs/releases" "$fixture/adapterkit"
+	local mode=${1:-migration}
+	rm -rf "$fixture" && mkdir -p "$fixture/docs/releases" "$fixture/adapterkit" "$fixture/internal/platform/migrations/migrations"
 	cd "$fixture"
 	git init -q -b main
 	git config user.email test@example.com
 	git config user.name test
+	printf 'select 1;\n' >internal/platform/migrations/migrations/00001_first.sql
+	git add -A && git commit -q -m previous && git tag v0.4.0
 	write_modules v0.5.0
 	printf '{".": "0.5.0"}\n' >.release-please-manifest.json
 	printf '# v0.5.0\n' >docs/releases/v0.5.0.md
 	printf -- '- [v0.5.0](v0.5.0.md)\n' >docs/releases/README.md
 	printf 'package kit\n' >adapterkit/kit.go
+	if [[ "$mode" == migration ]]; then
+		printf 'select 2;\n' >internal/platform/migrations/migrations/00002_second.sql
+	fi
 	git add -A && git commit -q -m release
 	git remote add origin "$fixture"
 	head=$(git rev-parse HEAD)
@@ -66,6 +74,10 @@ pulls() { # head branch, head repo, merge commit
 }
 
 # run NAME EXPECT(ok|refuse) -- command...
+# A case may set WARNS (a pattern the output must match) or QUIET (a pattern it must
+# not match) first; run clears both.
+WARNS=""
+QUIET=""
 run() {
 	local name=$1 expect=$2 status=0 output
 	shift 3
@@ -75,6 +87,15 @@ run() {
 		printf 'FAIL %s: expected %s, exit %s\n%s\n' "$name" "$expect" "$status" "$output" >&2
 		failures=$((failures + 1))
 	fi
+	if [[ -n "$WARNS" ]] && ! grep -Eq -- "$WARNS" <<<"$output"; then
+		printf 'FAIL %s: output lacks /%s/\n%s\n' "$name" "$WARNS" "$output" >&2
+		failures=$((failures + 1))
+	fi
+	if [[ -n "$QUIET" ]] && grep -Eq -- "$QUIET" <<<"$output"; then
+		printf 'FAIL %s: output has /%s/\n%s\n' "$name" "$QUIET" "$output" >&2
+		failures=$((failures + 1))
+	fi
+	WARNS="" QUIET=""
 }
 reset() { rm -f "$stub"/*; (cd "$fixture" && git checkout -q -- . && git clean -fdq); }
 
@@ -119,7 +140,8 @@ reset; lightweight v0.5.0 "$head"; lightweight adapterkit/v0.5.0 "$head"; good_p
 run "merge: one module disagrees" refuse -- "${merge_env[@]}" "${check[@]}" v0.5.0
 
 reset; lightweight v0.5.0 "$head"; lightweight adapterkit/v0.5.0 "$head"; good_pr; rm "$fixture/docs/releases/v0.5.0.md"
-run "merge: no release notes" refuse -- "${merge_env[@]}" "${check[@]}" v0.5.0
+WARNS='warning: .*adds a database migration'
+run "merge: no release notes warns and does not stop it" ok -- "${merge_env[@]}" "${check[@]}" v0.5.0
 
 reset; lightweight v0.5.0-rc.1 "$head"; lightweight adapterkit/v0.5.0-rc.1 "$head"; good_pr
 run "merge: a rehearsal tag" refuse -- "${merge_env[@]}" "${check[@]}" v0.5.0-rc.1
@@ -147,6 +169,28 @@ run "signed: a verified rehearsal tag" ok -- "${signed_env[@]}" "${check[@]}" v0
 reset; annotated v0.5 aaaa "$head" true
 run "signed: not a release tag" refuse -- "${signed_env[@]}" "${check[@]}" v0.5
 
+# --- notes-required.sh: exit 0 when notes are required, 1 when they are optional.
+reset
+run "notes-required: a migration since the last release" ok -- "$here/notes-required.sh" v0.5.0
+run "notes-required: no earlier release to compare with" ok -- "$here/notes-required.sh" v0.3.0
+
+# --- a release that adds no migration: its generated changelog is enough.
+build_fixture none
+reset
+run "notes-required: no migration since the last release" refuse -- "$here/notes-required.sh" v0.5.0
+reset; lightweight v0.5.0 "$head"; lightweight adapterkit/v0.5.0 "$head"; good_pr; rm "$fixture/docs/releases/v0.5.0.md"
+QUIET='warning'
+run "merge: no notes and no migration" ok -- "${merge_env[@]}" "${check[@]}" v0.5.0
+reset; lightweight v0.5.0 "$head"; lightweight adapterkit/v0.5.0 "$head"; good_pr
+run "merge: notes written anyway" ok -- "${merge_env[@]}" "${check[@]}" v0.5.0
+reset; rm "$fixture/docs/releases/v0.5.0.md"
+QUIET='warning'
+run "notes: none needed and none written" ok -- "$here/check-notes.sh"
+reset; printf '' >"$fixture/docs/releases/README.md"
+run "notes: written but not linked, even when optional" refuse -- "$here/check-notes.sh"
+build_fixture
+good_pr
+
 # --- merged-release-pr.sh on its own.
 reset; good_pr
 run "pr: a release pull request merge" ok -- "$here/merged-release-pr.sh" "$head"
@@ -159,7 +203,8 @@ run "pr: another branch" refuse -- "$here/merged-release-pr.sh" "$head"
 reset
 run "notes: present and linked" ok -- "$here/check-notes.sh"
 reset; rm "$fixture/docs/releases/v0.5.0.md"
-run "notes: missing" refuse -- "$here/check-notes.sh"
+WARNS='::warning::'
+run "notes: missing warns and does not fail" ok -- "$here/check-notes.sh"
 reset; printf '' >"$fixture/docs/releases/README.md"
 run "notes: not linked" refuse -- "$here/check-notes.sh"
 
