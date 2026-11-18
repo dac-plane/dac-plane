@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QuestionView",
+  "description": "Owner-only text of a question a runtime asked, bound to the attention version used for the decision (ADR-0026).",
+  "type": "object",
+  "required": ["attention_id", "attention_version", "question"],
+  "additionalProperties": false,
+  "properties": {
+    "attention_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "attention_version": { "type": "integer", "minimum": 1 },
+    "question": { "$ref": "../lifecycle/question.schema.json" }
+  }
+}

@@ -5,6 +5,7 @@ package application_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -328,6 +329,61 @@ func TestAttentionRequestedExpiredRefused(t *testing.T) {
 	}
 	if n := f.count(t, "audit_event", "event = 'attention.requested' and outcome = 'rejected' and reason = 'request_expired'"); n != 1 {
 		t.Fatalf("expiry evidence = %d, want 1", n)
+	}
+}
+
+// The answer's text reaches the runtime in the steer, and it is the text the
+// recorded digest covers. No outbox row holds it (ADR-0026).
+func TestAnswerTextIsDeliveredToTheRuntime(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	asked := question("q-1", f.at.Add(time.Hour))
+	asked.Question = &lifecycle.Question{Prompts: []lifecycle.Prompt{
+		{ID: "scope", Text: "Which tests should run?", Options: []lifecycle.PromptOption{{Label: "unit"}, {Label: "all"}}},
+		{ID: "why", Text: "Why does it matter?"},
+	}}
+	f.raise(t, rt, s, 2, asked)
+	request := f.attention(t, s)
+
+	answer := lifecycle.Answer{"scope": {"unit"}, "why": {"Faster feedback \u00e9"}}
+	digest, err := answer.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := f.decideCommand("d-1", request, lifecycle.DecisionAnswer)
+	cmd.AnswerDigest, cmd.Answer = digest, answer
+	f.decide(t, cmd)
+
+	var payload string
+	if err := f.pool.QueryRow(f.ctx, `select payload::text from outbox where tenant_id = $1 and record_id = $2`, f.tenant.String(), request.ID.String()).Scan(&payload); err != nil {
+		t.Fatalf("outbox query: %v", err)
+	}
+	if strings.Contains(payload, "Faster feedback") {
+		t.Fatalf("the delivery row holds the answer's text: %s", payload)
+	}
+
+	steered := f.deliver(t, s)
+	sent := steered.Ledger().Sent()
+	if len(sent) != 1 {
+		t.Fatalf("sent = %d steers, want 1", len(sent))
+	}
+	var body struct {
+		Kind         string           `json:"kind"`
+		AnswerDigest identity.Digest  `json:"answer_digest"`
+		Answer       lifecycle.Answer `json:"answer"`
+	}
+	if err := json.Unmarshal(sent[0].Arguments, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Kind != "answer" || body.AnswerDigest != digest {
+		t.Fatalf("steer = %+v, want the answer decision with its digest", body)
+	}
+	if err := body.Answer.VerifyDigest(body.AnswerDigest); err != nil {
+		t.Fatalf("the delivered text does not match the recorded digest: %v", err)
+	}
+	if body.Answer["why"][0] != "Faster feedback \u00e9" {
+		t.Fatalf("delivered answer = %v", body.Answer)
 	}
 }
 

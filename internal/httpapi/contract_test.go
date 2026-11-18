@@ -247,6 +247,7 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		body   any
 	}{
 		"connector proposal":    {"connector-proposal.schema.json", ConnectorProposalBody{Attention: newID[ids.Attention](t), AttentionVersion: 1, Operation: newID[ids.Operation](t), Connection: connection.ID, Tool: "get_issue", Input: json.RawMessage(`{"number":7}`), InputDigest: identity.DigestOf([]byte(`{"number":7}`))}},
+		"question view":         {"question-view.schema.json", QuestionBody{Attention: newID[ids.Attention](t), AttentionVersion: 1, Question: lifecycle.Question{Prompts: []lifecycle.Prompt{{ID: "scope", Text: "Which tests should run?", Options: []lifecycle.PromptOption{{Label: "unit"}}}}}}},
 		"connection created":    {"connection-created.schema.json", ConnectionCreatedBody{Connection: connection}},
 		"connection list":       {"connection-list.schema.json", ConnectionListBody{Connections: []lifecycle.Connection{connection}}},
 		"connection grant list": {"connection-grant-list.schema.json", ConnectionGrantListBody{Grants: []lifecycle.ConnectionGrant{}}},

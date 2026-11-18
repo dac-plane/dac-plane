@@ -27,7 +27,7 @@ Everything belongs to a tenant: `https://HOST:8443/v1/tenants/{tenant}/...`. Ide
 |---|---|
 | Agents | Create an agent; list, read, revise and retire agents; read an earlier revision of one. |
 | Tasks | Submit a task, to an agent or to providers you name; read it with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
-| Attention | List open attention requests; read one; inspect an owner-only connector proposal; decide it. |
+| Attention | List open attention requests; read one; read the text of a question; inspect an owner-only connector proposal; decide it. |
 | Results | Read an artifact of a revision and download its content; review a revision: accept, request changes or reject. |
 | Budgets | Complete a submission or rework that is waiting on a spend challenge. |
 | Events | Read or stream a task's events, or the whole tenant's. |
@@ -106,6 +106,26 @@ dac-plane relays the content from the artifact store, which a surface never reac
   that ends early did not deliver the artifact; read it again.
 - `503 artifact-unavailable` means the content cannot be read now: the store is not connected to this replica, does not
   offer downloads, refused, or the deployment has not set `DAC_ARTIFACT_DOWNLOAD_ORIGINS`. The record stays readable.
+
+## Questions
+
+A runtime that asks a person something in words raises an attention request of kind `question`. When the adapter
+supplies the text, read it with `GET /attention/{attention}/question`: an ordered list of prompts, each with an `id`,
+a `header`, the `text` and optional `options` (a `label` and a `description`; `other` means a free-text answer is also
+accepted). Only the task owner may read it. Everyone else, including a tenant reader, a request that is not a
+question and a question without stored text, gets `404`. The `ETag` is the attention version to send as `If-Match`
+when deciding. Prompts a runtime marks secret are never offered: dac-plane declines them before any text is stored
+([ADR-0026](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0026-keep-question-and-answer-text-as-product-records.md)).
+
+Answer with a decision of kind `answer`. Its `answer` maps each prompt `id` to a one-element array holding the
+answer, as in `{"scope": ["unit"], "why": ["Faster feedback"]}`, and `answer_digest` is the SHA-256 of that object in
+the canonical form of
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785): keys sorted, no whitespace, strings escaped as `JSON.stringify`
+writes them. dac-plane refuses an answer whose digest differs, that leaves a prompt unanswered, or whose text for a
+prompt with options is not one of its labels (`422`). A question that has stored text must be answered with text. A
+request without stored text, such as one raised by an adapter that does not send it, is answered by digest alone, and
+text sent for it is refused. While a deployment has not run the schema migration that adds question text, an answer
+with text is refused with `503 not-migrated`.
 
 ## Connections and grants
 

@@ -38,6 +38,10 @@ type DecideAttention struct {
 	// AnswerDigest is the digest of the answer's content, carried by an
 	// answer decision only.
 	AnswerDigest identity.Digest
+	// Answer is the text AnswerDigest is the digest of. A question that has
+	// stored text is answered with it; a request without is answered by digest
+	// alone (ADR-0026).
+	Answer lifecycle.Answer
 	// At is the decision time; it must not be after the request's expiry.
 	At time.Time
 }
@@ -59,7 +63,15 @@ func (c DecideAttention) validate() error {
 		if err := c.AnswerDigest.Validate(); err != nil {
 			return fmt.Errorf("%w: an answer carries its content digest: %w", ErrInvalidCommand, err)
 		}
+		if c.Answer != nil {
+			if err := c.Answer.VerifyDigest(c.AnswerDigest); err != nil {
+				return fmt.Errorf("%w: answer: %w", ErrInvalidCommand, err)
+			}
+		}
 		return nil
+	}
+	if c.Answer != nil {
+		return fmt.Errorf("%w: only an answer carries answer text", ErrInvalidCommand)
 	}
 	if c.AnswerDigest != "" {
 		return fmt.Errorf("%w: only an answer carries an answer digest", ErrInvalidCommand)
@@ -187,6 +199,12 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 		}
 	}
 
+	if cmd.Kind == lifecycle.DecisionAnswer {
+		if err := checkAnswerText(ctx, u, tenant, request, cmd); err != nil {
+			return nil, err
+		}
+	}
+
 	decisionID, err := ids.New[ids.Decision]()
 	if err != nil {
 		return nil, err
@@ -230,6 +248,14 @@ func decide(ctx context.Context, u *unit, cmd DecideAttention) (json.RawMessage,
 			Tenant: tenant, Record: lifecycle.RecordAttention, RecordID: request.ID.Untyped(),
 			Event: "decide", From: string(request.State), Version: request.Version,
 		}}
+	}
+
+	if cmd.Answer != nil && !replayed {
+		// The text is stored beside the decision whose digest it is, in the
+		// decision's own transaction.
+		if err := store.InsertDecisionAnswer(ctx, u.uow, tenant, recorded.ID, cmd.Answer, cmd.At.UTC().Truncate(time.Microsecond)); err != nil {
+			return nil, err
+		}
 	}
 
 	var view DecisionView

@@ -214,7 +214,7 @@ func (a *API) decide(w http.ResponseWriter, r *http.Request, actor identity.Auth
 		return err
 	}
 	view, err := application.Decide(r.Context(), a.pool, application.DecideAttention{
-		Command: cmd, Attention: attention, Kind: body.Kind, AnswerDigest: body.AnswerDigest, At: a.options.Now(),
+		Command: cmd, Attention: attention, Kind: body.Kind, AnswerDigest: body.AnswerDigest, Answer: body.Answer, At: a.options.Now(),
 	})
 	if err != nil {
 		return err

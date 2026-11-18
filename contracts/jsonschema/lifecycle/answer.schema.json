@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Answer",
-  "description": "A person's answer to a question (ADR-0026): the prompt id mapped to exactly one string. The digest recorded in the decision is the SHA-256 of this object in the canonical form of RFC 8785.",
+  "description": "A person's answer to a question (ADR-0026): the prompt id mapped to a one-element array holding the answer string. The digest recorded in the decision is the SHA-256 of this object in the canonical form of RFC 8785.",
   "type": "object",
   "minProperties": 1,
   "maxProperties": 8,

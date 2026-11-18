@@ -12,7 +12,7 @@
       },
       {
         "kind": "attention.requested",
-        "payload": {"native_ref": "question-${operation_id}", "kind": "question", "expires_at": "2099-01-01T00:00:00Z"}
+        "payload": {"native_ref": "question-${operation_id}", "kind": "question", "expires_at": "2099-01-01T00:00:00Z", "question": {"prompts": [{"id": "go_ahead", "header": "Go ahead", "text": "Should I go ahead and write the status report?"}]}}
       }
     ],
     "after_decision": [

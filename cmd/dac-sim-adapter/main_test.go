@@ -266,3 +266,98 @@ func TestScenarioEnvironmentServesItsOwnRegistration(t *testing.T) {
 		t.Fatalf("environment port role = %s", set.adapters[1].port.Role())
 	}
 }
+
+// A deployed test reads the answer's text from the simulator's ledger: the
+// steer the runtime received carries it beside the decision (ADR-0026).
+func TestLedgerReportsTheAnswerTextOfASteer(t *testing.T) {
+	tenant := mustNewID(t, ids.New[ids.Tenant])
+	provider := mustNewID(t, ids.New[ids.Provider])
+	operation := mustNewID(t, ids.New[ids.Operation])
+	decision := mustNewID(t, ids.New[ids.Decision])
+	runtime, err := simulator.NewRuntime(simulator.Config{Tenant: tenant, Provider: provider}, simulator.RuntimeScenario{
+		Operations: map[ids.OperationID]simulator.RuntimeOp{
+			operation: {Reply: simulator.Accepted(nil), Effect: simulator.TurnSteered},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newControlHandler(&simulatorSet{runtime: runtime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler.routes())
+	t.Cleanup(server.Close)
+
+	arguments, err := json.Marshal(map[string]any{
+		"decision_id": decision.String(), "kind": "answer",
+		"answer": map[string][]string{"go_ahead": {"Yes, go ahead."}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Send(context.Background(), contracts.Request{
+		Operation: operation, Delivery: mustNewID(t, ids.New[ids.Delivery]), Tenant: tenant,
+		Attempt: mustNewID(t, ids.New[ids.Attempt]), Role: contracts.RoleRuntime,
+		Method: contracts.MethodSteerTurn, Arguments: arguments, Demand: contracts.DemandPerson,
+		Deadline: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	response := controlRequest(t, http.MethodGet, server.URL+"/v1/ledger/runtime/"+operation.String(), nil)
+	defer func() { _ = response.Body.Close() }()
+	var ledger struct {
+		Answer map[string][]string `json:"answer"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&ledger); err != nil || ledger.Answer["go_ahead"][0] != "Yes, go ahead." {
+		t.Fatalf("ledger answer = %v, %v; want the steer's text", ledger.Answer, err)
+	}
+}
+
+// The legacy scenario is what a rollout test gives the previous release, which
+// refuses question text: it raises the same question without any.
+func TestLegacyScenarioAsksItsQuestionWithoutText(t *testing.T) {
+	scenario, err := readScenario(filepath.Join("..", "..", "deploy", "compose", "scenario.dev.legacy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range scenario.Default.Rows {
+		if row.Kind != contracts.EntryAttentionRequested {
+			continue
+		}
+		var requested contracts.AttentionRequested
+		if err := json.Unmarshal(row.Payload, &requested); err != nil || requested.Validate() != nil || requested.Question != nil || requested.Kind != "question" {
+			t.Fatalf("attention.requested = %s: %v", row.Payload, err)
+		}
+		return
+	}
+	t.Fatal("the legacy scenario raises no attention")
+}
+
+// The development scenarios ask their question in words, and the question is
+// one dac-plane accepts, so a deployed lifecycle can read and answer it.
+func TestDevelopmentScenariosAskAValidQuestion(t *testing.T) {
+	for _, name := range []string{"scenario.dev.json", "scenario.artifacts.dev.json"} {
+		scenario, err := readScenario(filepath.Join("..", "..", "deploy", "compose", name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		found := false
+		for _, row := range scenario.Default.Rows {
+			if row.Kind != contracts.EntryAttentionRequested {
+				continue
+			}
+			var requested contracts.AttentionRequested
+			if err := json.Unmarshal(row.Payload, &requested); err != nil || requested.Validate() != nil {
+				t.Fatalf("%s: attention.requested = %s: %v, %v", name, row.Payload, err, requested.Validate())
+			}
+			if requested.Question == nil || len(requested.Question.Prompts) == 0 {
+				t.Fatalf("%s: the simulated question carries no text", name)
+			}
+			found = true
+		}
+		if !found {
+			t.Fatalf("%s raises no attention", name)
+		}
+	}
+}

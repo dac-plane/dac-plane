@@ -166,7 +166,7 @@ configs:
   dev_ca:
     file: ${DAC_CA_FILE:?set DAC_CA_FILE}
   sim_scenario:
-    file: ./scenario.dev.json
+    file: ${DAC_SIM_SCENARIO:-./scenario.dev.json}
 
 secrets:
   runtime_client_secret:

@@ -69,6 +69,16 @@ any other version. dac-plane fetches the URL itself, only from origins the opera
 the URL's host; it never stores or forwards it. A store that does not offer the capability is never sent the request,
 and its artifacts' content answers `503` to surfaces.
 
+A runtime adapter that can ask a person something in words raises an `attention.requested` entry of kind `question`
+with a `question` member: 1 to 8 prompts, each with an `id`, optional `header`, the `text` (at most 2048 characters),
+and optional `options` (a `label` and a `description`; `other` allows a free-text answer as well). dac-plane serves the
+text to the task owner and steers the runtime with the answer: the `steer_turn` arguments of an `answer` decision carry
+`answer`, one string per prompt `id`, beside `answer_digest`. A request outside the bounds is rejected, so decline what
+cannot be shown whole, and never offer a secret prompt: its answer would be stored
+([ADR-0026](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0026-keep-question-and-answer-text-as-product-records.md)).
+A request without a `question` member is still valid and is answered by digest alone, so an adapter that sends none keeps
+working.
+
 [`examples/minimal`](https://github.com/dac-plane/dac-plane/tree/main/adapterkit/examples/minimal) is a complete
 adapter that passes the conformance suite, and the
 [Codex](https://github.com/dac-plane/dac-plane/tree/main/adapters/codex),

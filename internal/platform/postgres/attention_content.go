@@ -45,6 +45,17 @@ func sameJSON(stored, written any) error {
 	return nil
 }
 
+// ContentSchemaAvailable reports whether the database has question and answer
+// text, so a caller can tell a rollout that has not migrated from a request that
+// simply has none.
+func ContentSchemaAvailable(ctx context.Context, q Querier) (bool, error) {
+	err := requireContentSchema(ctx, q)
+	if errors.Is(err, ErrSchemaUnavailable) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // InsertAttentionQuestion stores the text of a question once, beside its
 // request. A second write of the same text is a replay; different text for the
 // same request is a mismatch, never a rewrite (ADR-0026).
