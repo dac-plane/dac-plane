@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -46,11 +47,15 @@ func (w *Worker) decisionRow(ctx context.Context, tenant ids.TenantID, row store
 	if err != nil {
 		return err
 	}
+	arguments, err := w.steerArguments(ctx, tenant, row.Payload)
+	if err != nil {
+		return err
+	}
 	request := contracts.Request{
 		Operation: prepared.operation.ID, Delivery: delivery,
 		Tenant: tenant, Attempt: prepared.attention.Attempt,
 		Role: contracts.RoleRuntime, Method: contracts.MethodSteerTurn,
-		Arguments: row.Payload, Demand: row.Demand, Deadline: body.ExpiresAt,
+		Arguments: arguments, Demand: row.Demand, Deadline: body.ExpiresAt,
 	}
 	if err := request.Validate(); err != nil {
 		return w.exhaustDecision(ctx, tenant, row, prepared, now, reasonInvalidBody)
@@ -62,6 +67,40 @@ func (w *Worker) decisionRow(ctx context.Context, tenant ids.TenantID, row store
 		return w.retryDecision(ctx, tenant, row, prepared, now, contracts.FailureTransportUnavailable)
 	}
 	return w.resolveDecision(ctx, tenant, row, prepared, delivery, reply, now)
+}
+
+// steerArguments is the delivery payload as the runtime receives it. An
+// answer decision gains the answer's text, read from the decision's own record
+// when it is sent: the text is never copied into the outbox, so no delivery row
+// holds it before or after the send (ADR-0026). A decision whose request had no
+// stored question text has none and is steered by its digest alone.
+func (w *Worker) steerArguments(ctx context.Context, tenant ids.TenantID, payload []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return nil, err
+	}
+	var kind, decisionText string
+	if json.Unmarshal(fields["kind"], &kind) != nil || kind != string(lifecycle.DecisionAnswer) ||
+		json.Unmarshal(fields["decision_id"], &decisionText) != nil {
+		return payload, nil
+	}
+	decision, err := ids.Parse[ids.Decision](decisionText)
+	if err != nil {
+		return payload, nil
+	}
+	answer, err := store.GetDecisionAnswer(ctx, w.pool, tenant, decision)
+	if errors.Is(err, store.ErrNotFound) {
+		return payload, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	text, err := json.Marshal(answer)
+	if err != nil {
+		return nil, err
+	}
+	fields["answer"] = text
+	return json.Marshal(fields)
 }
 
 // preparedDecision is a claimed delivery row past its checklist: the request

@@ -45,6 +45,17 @@ The gateway is not given to Codex as an MCP server: Codex 0.165.0 sends MCP tool
 ([ADR-0024](../../docs/adr/0024-relay-connector-tools-to-codex-as-dynamic-tools.md)). `just qualify-codex-connector`
 checks the whole path against a live model.
 
+## Questions
+
+Codex's `item/tool/requestUserInput` becomes an `attention.requested` entry of kind `question`, carrying the prompts
+(`id`, `header`, `text`, `options`, `other`) in a `question` member
+([ADR-0026](../../docs/adr/0026-keep-question-and-answer-text-as-product-records.md)). An `answer` decision is replied
+to Codex as `{"answers": {<prompt id>: {"answers": [<text>]}}}`, and `deny` replies with no answers. The adapter declines
+a request, replying with no answers and raising no attention, when a prompt is marked `isSecret` (a secret must not
+reach the product's records), when the request does not block, or when it falls outside the bounds dac-plane puts on a
+question (up to 8 prompts, 2048 characters of text each, 8 options each, 16 KiB in all, no duplicate ids or labels).
+A header or an option description longer than its bound is shortened; nothing else is.
+
 ## Replay boundary
 
 This adapter deliberately does not advertise `operation.replay`. It writes a `prepared` operation
@@ -54,8 +65,8 @@ Redelivery therefore returns an unknown-outcome error instead of creating anothe
 Mapped threads and turns are resumed from persistent Codex state and the adapter journal.
 
 Approval delivery is narrower: the decision is journaled before its native response, and a prepared
-decision is retried until it is durably marked delivered. Only `approve_once` and `deny` are mapped;
-the adapter never promotes a native approval to standing authority.
+decision is retried until it is durably marked delivered. Only `approve_once` and `deny` are mapped
+for approvals (and `answer` and `deny` for questions); the adapter never promotes a native approval to standing authority.
 
 ## Verification
 

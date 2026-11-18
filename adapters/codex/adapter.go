@@ -670,17 +670,19 @@ func briefPrompt(operation string, brief executionBrief) string {
 }
 
 type decision struct {
-	DecisionID   string          `json:"decision_id"`
-	NativeRef    string          `json:"native_ref"`
-	Kind         string          `json:"kind"`
-	Operation    string          `json:"operation,omitempty"`
-	GrantID      string          `json:"grant_id,omitempty"`
-	Attention    string          `json:"attention"`
-	Attempt      string          `json:"attempt"`
-	AnswerDigest string          `json:"answer_digest,omitempty"`
-	Action       string          `json:"action,omitempty"`
-	Scope        json.RawMessage `json:"scope,omitempty"`
-	ExpiresAt    time.Time       `json:"expires_at"`
+	DecisionID   string `json:"decision_id"`
+	NativeRef    string `json:"native_ref"`
+	Kind         string `json:"kind"`
+	Operation    string `json:"operation,omitempty"`
+	GrantID      string `json:"grant_id,omitempty"`
+	Attention    string `json:"attention"`
+	Attempt      string `json:"attempt"`
+	AnswerDigest string `json:"answer_digest,omitempty"`
+	// Answer is the text an answer decision carries, one string per prompt id.
+	Answer    map[string][]string `json:"answer,omitempty"`
+	Action    string              `json:"action,omitempty"`
+	Scope     json.RawMessage     `json:"scope,omitempty"`
+	ExpiresAt time.Time           `json:"expires_at"`
 }
 
 func (a *Adapter) steer(ctx context.Context, r wire.Request) (wire.Reply, error) {
@@ -694,14 +696,24 @@ func (a *Adapter) steer(ctx context.Context, r wire.Request) (wire.Reply, error)
 		a.logDecisionFailure("invalid_arguments", nil)
 		return rejected(r, wire.FailureInvalidArguments, "invalid decision"), nil
 	}
-	if d.Kind != "approve_once" && d.Kind != "deny" {
+	if d.Kind != "approve_once" && d.Kind != "deny" && d.Kind != "answer" {
 		a.logDecisionFailure("unsupported_decision", nil)
-		return rejected(r, wire.FailureInvalidArguments, "Codex supports approve_once and deny only"), nil
+		return rejected(r, wire.FailureInvalidArguments, "Codex supports approve_once, deny and answer only"), nil
 	}
 	native, err := a.config.Journal.NativeRequest(d.NativeRef)
 	if err != nil {
 		a.logDecisionFailure("native_request_missing", err)
 		return rejected(r, wire.FailureStalePrecondition, "native approval request is absent"), nil
+	}
+	// An approval is approved or denied and a question is answered or denied:
+	// a decision of another kind has no native reply.
+	if question := native.Method == userInputMethod; (question && d.Kind == "approve_once") || (!question && d.Kind == "answer") {
+		a.logDecisionFailure("decision_kind_mismatch", nil)
+		return rejected(r, wire.FailureInvalidArguments, "decision does not fit the native request"), nil
+	}
+	if d.Kind == "answer" && len(d.Answer) == 0 {
+		a.logDecisionFailure("answer_text_missing", nil)
+		return rejected(r, wire.FailureInvalidArguments, "an answer carries its text"), nil
 	}
 	if native.Operation != r.Operation {
 		a.logDecisionFailure("native_operation_mismatch", nil)
@@ -747,11 +759,17 @@ func (a *Adapter) steer(ctx context.Context, r wire.Request) (wire.Reply, error)
 		a.logDecisionFailure("decision_expired", nil)
 		return rejected(r, wire.FailureStalePrecondition, "decision request expired"), nil
 	}
-	choice := "decline"
-	if d.Kind == "approve_once" {
-		choice = "accept"
+	var response map[string]any
+	if native.Method == userInputMethod {
+		response = userInputResponse(d)
+	} else {
+		choice := "decline"
+		if d.Kind == "approve_once" {
+			choice = "accept"
+		}
+		response = map[string]any{"decision": choice}
 	}
-	if err = a.config.Native.Reply(native.RequestID, map[string]any{"decision": choice}); err != nil {
+	if err = a.config.Native.Reply(native.RequestID, response); err != nil {
 		a.logDecisionFailure("native_reply_failed", err)
 		return wire.Reply{}, err
 	}
@@ -1052,7 +1070,7 @@ func (a *Adapter) nativeRequest(m appserver.Message) {
 		go a.dynamicToolCall(m)
 		return
 	}
-	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {
+	if !isNativeAttention(m.Method) {
 		return
 	}
 	thread := nativeThreadID(m)
@@ -1069,7 +1087,7 @@ func (a *Adapter) nativeRequest(m appserver.Message) {
 func (a *Adapter) processNativeRequest(m appserver.Message) {
 	a.nativeMu.Lock()
 	defer a.nativeMu.Unlock()
-	if m.Method != "item/commandExecution/requestApproval" && m.Method != "item/fileChange/requestApproval" {
+	if !isNativeAttention(m.Method) {
 		return
 	}
 	var p struct {
@@ -1087,6 +1105,10 @@ func (a *Adapter) processNativeRequest(m appserver.Message) {
 	}
 	op, err = a.bindObservedTurn(op, p.TurnID)
 	if err != nil {
+		return
+	}
+	if m.Method == userInputMethod {
+		a.raiseQuestion(op, m, p.ItemID)
 		return
 	}
 	action := "process.exec"

@@ -43,11 +43,12 @@ stays digest-only, as the reference application sends today.
 3. **Application and Surface API. Done.** `GET /attention/{attention}/question` (owner only, bound to the attention
    version); the decision accepts the answer text, checks it against `answer_digest` and the question, and stores it
    beside the decision; OpenAPI, the question view schema and the Surface API guide.
-4. **Worker and adapters.** The steer carries the answer text; the Codex adapter maps
-   `item/tool/requestUserInput` to a question attention and the answer back to its response; the simulator and
-   conformance scenarios.
-5. **Documentation and end-to-end.** Surface API guide, adapter pages; a check with the Codex adapter that the
-   delivered text matches the recorded digest.
+4. **Worker and adapters. Done.** The worker reads the answer text from the decision's record when it sends the
+   steer, so no outbox row holds it; the Codex adapter maps `item/tool/requestUserInput` to a question and replies
+   with the answers, declining secret, non-blocking and out-of-bounds requests.
+5. **Documentation and end-to-end. Done.** Surface API guide, adapter guide, Codex README; an application test shows
+   the delivered text verifies against the recorded digest. Not done: a run against a live Codex and model, and a
+   simulator-adapter conformance scenario for questions.
 
 ## Acceptance (from the issue)
 

@@ -62,8 +62,8 @@ would contradict the rule that secrets never reach the product database (ADR-002
 separate decision.
 
 **Retention and redaction.** Question and answer text live as long as the task. They are not copied into audit
-entries, logs, events or the outbox's inspectable evidence: those carry the digest, and the outbox row that delivers
-an answer is cleared of its text once the delivery is settled. An expired or superseded request keeps its question and
+entries, logs, events or the outbox: those carry the digest. The delivery row holds the digest only, and the worker
+reads the text from the decision's own record when it sends the steer, so no outbox row ever holds it. An expired or superseded request keeps its question and
 never accepts an answer.
 
 ## Alternatives considered
