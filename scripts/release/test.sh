@@ -47,7 +47,7 @@ build_fixture() {
 	git config user.email test@example.com
 	git config user.name test
 	write_modules v0.5.0
-	printf '{".": "0.5.0", "adapterkit": "0.5.0"}\n' >.release-please-manifest.json
+	printf '{".": "0.5.0"}\n' >.release-please-manifest.json
 	printf '# v0.5.0\n' >docs/releases/v0.5.0.md
 	printf -- '- [v0.5.0](v0.5.0.md)\n' >docs/releases/README.md
 	printf 'package kit\n' >adapterkit/kit.go

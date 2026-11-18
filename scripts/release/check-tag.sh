@@ -90,15 +90,16 @@ else
 		echo "$tag names $commit, not the checked out commit" >&2
 		exit 1
 	fi
-	# The two components are versioned together, so the kit tag is the same commit.
+	# The kit is tagged with the release, at the same commit.
 	if [[ "$kit_commit" != "$commit" ]]; then
 		echo "$kit_tag names $kit_commit, not $commit" >&2
 		exit 1
 	fi
+	# The kit is versioned with the root module, so every module requires this
+	# release's own version, and the manifest names it.
 	manifest=$(jq -r '."."' .release-please-manifest.json)
-	kit_manifest=$(jq -r '.adapterkit' .release-please-manifest.json)
-	if [[ "v$manifest" != "$tag" || "v$kit_manifest" != "$required" ]]; then
-		echo "the release manifest ($manifest, kit $kit_manifest) does not match $tag and kit $required" >&2
+	if [[ "v$manifest" != "$tag" || "$required" != "$tag" ]]; then
+		echo "the release manifest ($manifest) and the kit version modules require ($required) do not match $tag" >&2
 		exit 1
 	fi
 	if ! "$(dirname "$0")/merged-release-pr.sh" "$commit" >/dev/null; then
