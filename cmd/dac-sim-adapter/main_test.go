@@ -314,6 +314,26 @@ func TestLedgerReportsTheAnswerTextOfASteer(t *testing.T) {
 	}
 }
 
+// The legacy scenario is what a rollout test gives the previous release, which
+// refuses question text: it raises the same question without any.
+func TestLegacyScenarioAsksItsQuestionWithoutText(t *testing.T) {
+	scenario, err := readScenario(filepath.Join("..", "..", "deploy", "compose", "scenario.dev.legacy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range scenario.Default.Rows {
+		if row.Kind != contracts.EntryAttentionRequested {
+			continue
+		}
+		var requested contracts.AttentionRequested
+		if err := json.Unmarshal(row.Payload, &requested); err != nil || requested.Validate() != nil || requested.Question != nil || requested.Kind != "question" {
+			t.Fatalf("attention.requested = %s: %v", row.Payload, err)
+		}
+		return
+	}
+	t.Fatal("the legacy scenario raises no attention")
+}
+
 // The development scenarios ask their question in words, and the question is
 // one dac-plane accepts, so a deployed lifecycle can read and answer it.
 func TestDevelopmentScenariosAskAValidQuestion(t *testing.T) {
