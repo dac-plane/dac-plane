@@ -9,7 +9,6 @@
     ".": {
       "component": "dac-plane",
       "include-component-in-tag": false,
-      "exclude-paths": ["adapterkit"],
       "extra-files": [
         "go.mod",
         "adapters/codex/go.mod",
@@ -17,19 +16,6 @@
         "adapters/s3/go.mod",
         "adapters/github/go.mod"
       ]
-    },
-    "adapterkit": {
-      "component": "adapterkit",
-      "include-component-in-tag": true,
-      "tag-separator": "/",
-      "changelog-path": "CHANGELOG.md"
     }
-  },
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "dac-plane",
-      "components": ["dac-plane", "adapterkit"]
-    }
-  ]
+  }
 }

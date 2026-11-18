@@ -16,8 +16,9 @@ creates with the first release pull request.
 
 A release is decided by merging the release pull request that [release-please](https://github.com/googleapis/release-please)
 opens and keeps current from the conventional commits on `main`. It carries the version bump, the change list and the
-adapter kit's version in every `go.mod`, so no version is edited by hand. The root module and the adapter kit are
-versioned together, so `vX.Y.Z` and `adapterkit/vX.Y.Z` always name the same commit.
+adapter kit's version in every `go.mod`, so no version is edited by hand. The adapter kit is versioned with the root
+module: `vX.Y.Z` and `adapterkit/vX.Y.Z` are always tagged together, at the same commit, even when the kit itself did not
+change, so every module requires the release's own version.
 
 1. **Write the notes in the release pull request.** release-please writes the change list. You add
    `docs/releases/vX.Y.Z.md` (copy [template.md](template.md): upgrading, known limits, compatibility) and link it in
