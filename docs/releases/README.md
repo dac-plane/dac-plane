@@ -48,11 +48,11 @@ cannot be used.
 
 ### What a release holds
 
-The GitHub Release lists `release-manifest.json` (the image digests and the kit version), the compose and contracts bundles,
-and `dac-plane-evidence-vX.Y.Z.tar.gz`: the vulnerability scan, the SBOM and the provenance of each image, for an offline
-audit. The attestations themselves are in GitHub's attestation store and the registry, so
-`gh attestation verify oci://ghcr.io/dac-plane/dac-plane:vX.Y.Z --repo dac-plane/dac-plane` checks them without these
-files.
+The GitHub Release lists `release-manifest.json` (the image digests and the kit version) and the compose and contracts
+bundles. It does not list each image's vulnerability scan, SBOM or provenance: the attestations are in GitHub's
+attestation store and the registry, so `gh attestation verify oci://ghcr.io/dac-plane/dac-plane:vX.Y.Z --repo
+dac-plane/dac-plane` checks them without any file, and the scan, SBOM and provenance of each image stay on the release
+workflow run as its `image-*` artifacts.
 
 ### One-time setup
 

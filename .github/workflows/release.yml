@@ -297,20 +297,14 @@ jobs:
         with:
           path: downloaded
 
-      - name: Collect the evidence
+      # Only what a user takes from the release: the manifest and the two
+      # bundles. The attestations live in GitHub's store and the registry, where
+      # gh attestation verify finds them, and each image's scan, SBOM and
+      # provenance stay on this run as the image-* artifacts.
+      - name: Collect the release files
         run: |
-          mkdir -p assets evidence
+          mkdir -p assets
           cp downloaded/release/* assets/
-          # The attestations live in GitHub's store and the registry, where
-          # gh attestation verify finds them. These files are for an offline
-          # audit, so they go in one bundle rather than thirty release assets.
-          for dir in downloaded/image-*; do
-            name="${dir#downloaded/image-}"
-            cp "$dir/scan.json" "evidence/$name.scan.json"
-            cp "$dir/sbom.cdx.json" "evidence/$name.sbom.cdx.json"
-            cp "$dir/provenance.intoto.jsonl" "evidence/$name.intoto.jsonl"
-          done
-          tar -czf "assets/dac-plane-evidence-$VERSION.tar.gz" -C evidence .
 
       # A final release publishes at once (ADR-0019). gh uploads the assets before
       # publishing, so an immutable release is complete when it appears.
