@@ -2,6 +2,7 @@
 
 ## Notes
 
+- [v0.5.0](v0.5.0.md)
 - [v0.4.0](v0.4.0.md)
 - [v0.3.0](v0.3.0.md)
 - [v0.2.0](v0.2.0.md)
@@ -20,9 +21,11 @@ adapter kit's version in every `go.mod`, so no version is edited by hand. The ad
 module: `vX.Y.Z` and `adapterkit/vX.Y.Z` are always tagged together, at the same commit, even when the kit itself did not
 change, so every module requires the release's own version.
 
-1. **Write the notes in the release pull request.** release-please writes the change list. You add
-   `docs/releases/vX.Y.Z.md` (copy [template.md](template.md): upgrading, known limits, compatibility) and link it in
-   the list above. The `Release notes` check fails the pull request until both exist.
+1. **Write the notes on `main`.** release-please writes the change list. You add `docs/releases/vX.Y.Z.md` (copy
+   [template.md](template.md): upgrading, known limits, compatibility) and link it in the list above, in a normal pull
+   request to `main`. Do not push to the release pull request's branch: release-please rebuilds it from `main` whenever
+   `main` changes and would drop the commit. Merging the notes refreshes the release pull request, and its `Release
+   notes` check, which fails until both exist, then passes.
 2. **Rehearse (optional).** From the release pull request's head, `just release-tag vX.Y.Z-rc.1`. This path keeps its
    signed tag: you need a signing key that GitHub reports as verified. The workflow publishes to
    `ghcr.io/dac-plane/dry-run` and drafts a prerelease.
