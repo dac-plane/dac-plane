@@ -99,7 +99,6 @@ func TestUserInputThatCannotBeShownIsDeclined(t *testing.T) {
 	long := strings.Repeat("x", 2049)
 	for name, params := range map[string]string{
 		"secret prompt": `{"threadId":"thread-1","turnId":"turn-1","itemId":"ask-1","isBlocking":true,"questions":[{"id":"token","header":"Token","question":"Paste the token","isSecret":true}]}`,
-		"not blocking":  `{"threadId":"thread-1","turnId":"turn-1","itemId":"ask-1","isBlocking":false,"questions":[{"id":"a","header":"A","question":"Why?"}]}`,
 		"no questions":  `{"threadId":"thread-1","turnId":"turn-1","itemId":"ask-1","isBlocking":true,"questions":[]}`,
 		"too long":      `{"threadId":"thread-1","turnId":"turn-1","itemId":"ask-1","isBlocking":true,"questions":[{"id":"a","header":"A","question":"` + long + `"}]}`,
 		"duplicate ids": `{"threadId":"thread-1","turnId":"turn-1","itemId":"ask-1","isBlocking":true,"questions":[{"id":"a","header":"A","question":"Why?"},{"id":"a","header":"B","question":"How?"}]}`,
@@ -134,5 +133,37 @@ func TestDecisionKindMustFitTheNativeRequest(t *testing.T) {
 	}
 	if got := f.lastReply(t); got != "" {
 		t.Fatalf("native reply = %s, want none for a rejected decision", got)
+	}
+}
+
+// Codex answers request_user_input with "unavailable in Default mode" unless the
+// thread turns the feature on, so every thread must (observed live on 0.165.0).
+func TestThreadsEnableRequestUserInput(t *testing.T) {
+	f := setup(t)
+	if _, err := f.adapter.Send(context.Background(), startRequest(validStart)); err != nil {
+		t.Fatal(err)
+	}
+	f.native.mu.Lock()
+	defer f.native.mu.Unlock()
+	for _, call := range f.native.calls {
+		if call.method != "thread/start" {
+			continue
+		}
+		if !strings.Contains(string(call.params), `"features":{"default_mode_request_user_input":true}`) {
+			t.Fatalf("thread/start params = %s, want request_user_input enabled", call.params)
+		}
+		return
+	}
+	t.Fatal("no thread/start call")
+}
+
+// Codex 0.165.0 sends isBlocking false for request_user_input in Default mode
+// yet still waits for the reply (observed live), so it is a question like any other.
+func TestNonBlockingUserInputIsStillAQuestion(t *testing.T) {
+	f := setup(t)
+	f.raiseUserInput(t, `{"threadId":"thread-1","turnId":"turn-1","itemId":"ask-1","isBlocking":false,"questions":[{"id":"a","header":"A","question":"Why?"}]}`)
+	waitFor(t, func() bool { return len(f.attentionEntries(t)) == 1 })
+	if got := f.lastReply(t); got != "" {
+		t.Fatalf("native reply = %s, want none until the question is answered", got)
 	}
 }

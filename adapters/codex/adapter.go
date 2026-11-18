@@ -152,7 +152,7 @@ func (a *Adapter) reconstruct() error {
 		if err := a.addEnvironment(ctx, op.Environment); err != nil {
 			return err
 		}
-		resume := map[string]any{"threadId": op.ThreadID, "model": a.config.Model, "modelProvider": a.config.Provider}
+		resume := map[string]any{"threadId": op.ThreadID, "model": a.config.Model, "modelProvider": a.config.Provider, "config": threadConfig()}
 		if op.Environment != "" {
 			resume["environments"] = a.threadEnvironments(op.Environment)
 		}
@@ -568,7 +568,7 @@ func (a *Adapter) start(ctx context.Context, r wire.Request) (wire.Reply, error)
 	if err = a.addEnvironment(ctx, environment); err != nil {
 		return wire.Reply{}, err
 	}
-	threadStart := map[string]any{"cwd": a.config.Workspace, "model": a.config.Model, "modelProvider": a.config.Provider, "approvalPolicy": "on-request", "sandbox": "workspace-write"}
+	threadStart := map[string]any{"cwd": a.config.Workspace, "model": a.config.Model, "modelProvider": a.config.Provider, "approvalPolicy": "on-request", "sandbox": "workspace-write", "config": threadConfig()}
 	if environment != "" {
 		threadStart["environments"] = a.threadEnvironments(environment)
 	}

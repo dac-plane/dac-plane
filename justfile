@@ -238,6 +238,14 @@ qualify-codex-runtime: stack-certs
     set +a
     go test -count=1 -timeout=15m -tags=codexqualification -run "${DAC_CODEX_QUALIFICATION_TEST:-TestCodexRuntimeQualification}" ./internal/codexqualification/
 
+# Have a live Codex model ask a person a question and receive the answer's text
+# (ADR-0026): the owner reads the question over the Surface API and answers it in
+# words, and the artifact the model writes carries a marker only the answer names.
+[doc('Qualify Codex asking a question a person answers in words (needs Docker and DAC_CODEX_API_KEY_FILE)')]
+[group('test')]
+qualify-codex-question:
+    DAC_CODEX_QUALIFICATION_TEST=TestCodexQuestionQualification {{ just_executable() }} qualify-codex-runtime
+
 # Have a live Codex model call a connector tool through the gateway (ADR-0022):
 # the simulated connector answers, an always grant runs unasked and an ask grant
 # waits for approval. Needs no external application account.

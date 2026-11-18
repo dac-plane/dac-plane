@@ -52,9 +52,12 @@ Codex's `item/tool/requestUserInput` becomes an `attention.requested` entry of k
 ([ADR-0026](../../docs/adr/0026-keep-question-and-answer-text-as-product-records.md)). An `answer` decision is replied
 to Codex as `{"answers": {<prompt id>: {"answers": [<text>]}}}`, and `deny` replies with no answers. The adapter declines
 a request, replying with no answers and raising no attention, when a prompt is marked `isSecret` (a secret must not
-reach the product's records), when the request does not block, or when it falls outside the bounds dac-plane puts on a
+reach the product's records) or when it falls outside the bounds dac-plane puts on a
 question (up to 8 prompts, 2048 characters of text each, 8 options each, 16 KiB in all, no duplicate ids or labels).
-A header or an option description longer than its bound is shortened; nothing else is.
+A header or an option description longer than its bound is shortened; nothing else is. Every thread is started with
+`features.default_mode_request_user_input`, without which Codex 0.165.0 answers the tool with "unavailable in Default
+mode". In that mode Codex sends `isBlocking: false` yet waits for the reply, so a question is raised either way.
+`just qualify-codex-question` checks the whole path against a live model.
 
 ## Replay boundary
 

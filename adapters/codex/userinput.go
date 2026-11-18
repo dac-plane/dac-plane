@@ -13,6 +13,13 @@ import (
 // in words. It becomes a question attention (ADR-0026).
 const userInputMethod = "item/tool/requestUserInput"
 
+// threadConfig turns on Codex's request_user_input tool for a thread. Without it
+// the tool answers "unavailable in Default mode" and the model can never ask the
+// person a question (observed on app-server 0.165.0, which ships the flag).
+func threadConfig() map[string]any {
+	return map[string]any{"features": map[string]any{"default_mode_request_user_input": true}}
+}
+
 func isNativeAttention(method string) bool {
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", userInputMethod:
@@ -61,8 +68,8 @@ func (a *Adapter) raiseQuestion(op journal.Operation, m appserver.Message, itemI
 		return
 	}
 	question, ok := questionOf(p)
-	if !p.IsBlocking || !ok {
-		a.declineUserInput(m, "user_input_declined")
+	if !ok {
+		a.declineUserInput(m, "user_input_out_of_bounds_or_secret")
 		return
 	}
 	request := journal.NativeRequest{NativeRef: itemID, Operation: op.ID, Method: m.Method, Session: a.session, RequestID: m.ID}

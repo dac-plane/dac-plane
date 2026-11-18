@@ -47,8 +47,8 @@ stays digest-only, as the reference application sends today.
    steer, so no outbox row holds it; the Codex adapter maps `item/tool/requestUserInput` to a question and replies
    with the answers, declining secret, non-blocking and out-of-bounds requests.
 5. **Documentation and end-to-end. Done.** Surface API guide, adapter guide, Codex README; an application test shows
-   the delivered text verifies against the recorded digest. Not done: a run against a live Codex and model, and a
-   simulator-adapter conformance scenario for questions.
+   the delivered text verifies against the recorded digest. A live run against Codex 0.165.0 and a real model passed
+   (`just qualify-codex-question`). Not done: a simulator-adapter conformance scenario for questions.
 
 ## Acceptance (from the issue)
 
