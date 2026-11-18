@@ -98,6 +98,12 @@ func entryFixtures(t *testing.T) map[string]fixture {
 		"requested question": {requestedContract, schematest.Marshal(t, AttentionRequested{
 			NativeRef: "widget-1", Kind: lifecycle.AttentionQuestion, ExpiresAt: now.Add(time.Hour),
 		})},
+		"requested question with text": {requestedContract, schematest.Marshal(t, AttentionRequested{
+			NativeRef: "widget-3", Kind: lifecycle.AttentionQuestion, ExpiresAt: now.Add(time.Hour),
+			Question: &lifecycle.Question{Prompts: []lifecycle.Prompt{
+				{ID: "scope", Header: "Scope", Text: "Which tests should run?", Options: []lifecycle.PromptOption{{Label: "unit"}, {Label: "all", Description: "Unit and integration"}}, Other: true},
+			}},
+		})},
 		"requested approval": {requestedContract, schematest.Marshal(t, AttentionRequested{
 			NativeRef: "widget-2", Kind: lifecycle.AttentionActionApproval, Action: "fs.write",
 			ActionDigest: identity.DigestOf([]byte(`{"path":"main.go"}`)), ExpiresAt: now.Add(time.Hour),
@@ -138,6 +144,19 @@ func TestContractConformanceEntryPayloads(t *testing.T) {
 		{"requested bad action class", "requested approval", func(d map[string]any) { d["action"] = "FS.Write" }},
 		{"requested bad digest", "requested approval", func(d map[string]any) { d["action_digest"] = "md5:zz" }},
 		{"requested question carries scope", "requested question", func(d map[string]any) { d["scope"] = map[string]any{"class": "global"} }},
+		{"question text on an approval", "requested approval", func(d map[string]any) {
+			d["question"] = map[string]any{"prompts": []any{map[string]any{"id": "a", "text": "Why?"}}}
+		}},
+		{"question without prompts", "requested question with text", func(d map[string]any) { d["question"] = map[string]any{"prompts": []any{}} }},
+		{"question prompt without text", "requested question with text", func(d map[string]any) {
+			d["question"] = map[string]any{"prompts": []any{map[string]any{"id": "a"}}}
+		}},
+		{"question prompt marked secret", "requested question with text", func(d map[string]any) {
+			d["question"] = map[string]any{"prompts": []any{map[string]any{"id": "a", "text": "Token?", "secret": true}}}
+		}},
+		{"question accepts other without options", "requested question with text", func(d map[string]any) {
+			d["question"] = map[string]any{"prompts": []any{map[string]any{"id": "a", "text": "Why?", "other": true}}}
+		}},
 		{"consumed empty native ref", "consumed", func(d map[string]any) { d["native_ref"] = "" }},
 		{"consumed smuggles an attention", "consumed", func(d map[string]any) { d["attention_id"] = "x" }},
 		{"stopped without active-run flag", "stopped", func(d map[string]any) { delete(d, "had_active_run") }},

@@ -53,6 +53,16 @@ func newID[K any](t *testing.T) ids.ID[K] {
 	return id
 }
 
+func answerWithText(t *testing.T) DecisionRequest {
+	t.Helper()
+	answer := lifecycle.Answer{"scope": {"unit"}}
+	digest, err := answer.Digest()
+	if err != nil {
+		t.Fatalf("Digest() error = %v", err)
+	}
+	return DecisionRequest{Kind: lifecycle.DecisionAnswer, AnswerDigest: digest, Answer: answer}
+}
+
 func digestOf(text string) identity.Digest { return identity.DigestOf([]byte(text)) }
 
 func validRequests(t *testing.T) map[string]struct {
@@ -84,6 +94,7 @@ func validRequests(t *testing.T) map[string]struct {
 		"assert review":                      {assertionContract, schematest.Marshal(t, SpendAssertionRequest{ReviewKey: "review-1", Assertion: assertion})},
 		"deny":                               {decisionContract, schematest.Marshal(t, DecisionRequest{Kind: lifecycle.DecisionDeny})},
 		"answer":                             {decisionContract, schematest.Marshal(t, DecisionRequest{Kind: lifecycle.DecisionAnswer, AnswerDigest: digestOf("answer")})},
+		"answer with text":                   {decisionContract, schematest.Marshal(t, answerWithText(t))},
 		"cancel":                             {cancelContract, []byte(`{}`)},
 		"accept":                             {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionAccept})},
 		"request changes":                    {reviewContract, schematest.Marshal(t, ReviewRequest{Revision: newID[ids.Revision](t), Disposition: lifecycle.DispositionRequestChanges, Rework: rework})},
@@ -145,6 +156,9 @@ func TestSurfaceSchemaAndGoRejectTheSameInvalidRequests(t *testing.T) {
 		{"assert malformed proof", "assert submission", func(d map[string]any) { d["assertion"].(map[string]any)["proof"] = "md5:x" }},
 		{"decision unknown kind", "deny", func(d map[string]any) { d["kind"] = "maybe" }},
 		{"answer without digest", "answer", func(d map[string]any) { delete(d, "answer_digest") }},
+		{"deny with answer text", "deny", func(d map[string]any) { d["answer"] = map[string]any{"scope": []any{"unit"}} }},
+		{"answer text with two strings", "answer with text", func(d map[string]any) { d["answer"] = map[string]any{"scope": []any{"a", "b"}} }},
+		{"empty answer text", "answer with text", func(d map[string]any) { d["answer"] = map[string]any{} }},
 		{"deny with digest", "deny", func(d map[string]any) { d["answer_digest"] = string(digestOf("x")) }},
 		{"cancel with field", "cancel", func(d map[string]any) { d["reason"] = "x" }},
 		{"review unknown disposition", "accept", func(d map[string]any) { d["disposition"] = "approve" }},

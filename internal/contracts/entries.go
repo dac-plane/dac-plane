@@ -218,13 +218,24 @@ type AttentionRequested struct {
 	Action       identity.ActionClass    `json:"action,omitempty"`
 	ActionDigest identity.Digest         `json:"action_digest,omitempty"`
 	ExpiresAt    time.Time               `json:"expires_at"`
+	// Question is the text a question puts to a person; only a question
+	// carries it, and a question without one is valid (ADR-0026).
+	Question *lifecycle.Question `json:"question,omitempty"`
 }
 
-// Validate reports whether the request names a known kind, and an approval
-// carries its action exactly.
+// Validate reports whether the request names a known kind, an approval
+// carries its action exactly, and only a question carries question text.
 func (a AttentionRequested) Validate() error {
 	if !validRef(a.NativeRef) || a.ExpiresAt.IsZero() || !slices.Contains(lifecycle.AttentionKinds(), a.Kind) {
 		return fmt.Errorf("%w: attention.requested requires a bounded native reference, a known kind and an expiry", ErrInvalid)
+	}
+	if a.Question != nil {
+		if a.Kind != lifecycle.AttentionQuestion {
+			return fmt.Errorf("%w: only a question may carry question text", ErrInvalid)
+		}
+		if err := a.Question.Validate(); err != nil {
+			return fmt.Errorf("%w: attention.requested question: %w", ErrInvalid, err)
+		}
 	}
 	if a.Kind == lifecycle.AttentionActionApproval {
 		if a.Scope != (identity.Scope{}) {
