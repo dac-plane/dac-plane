@@ -10,6 +10,7 @@
     "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
     "role": { "enum": ["runtime", "environment", "enforcement", "artifact_store", "connector"] },
     "artifact_store_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+    "name": { "type": "string", "pattern": "^\\S([^\\n\\r]*\\S)?$", "maxLength": 100 },
     "updated_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
   },
   "if": { "required": ["artifact_store_id"] },

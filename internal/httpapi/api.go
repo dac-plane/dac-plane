@@ -126,6 +126,8 @@ func (a *API) Routes() []string {
 
 func (a *API) routes() []route {
 	return []route{
+		{"GET " + prefix + "/tasks", a.authenticated(a.listTasks)},
+		{"GET " + prefix + "/providers", a.authenticated(a.listProviders)},
 		{"POST " + prefix + "/tasks", a.authenticated(a.submitTask)},
 		{"GET " + prefix + "/tasks/{task}", a.authenticated(a.getTask)},
 		{"POST " + prefix + "/tasks/{task}/spend-assertions", a.authenticated(a.assertSpend)},

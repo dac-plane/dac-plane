@@ -27,7 +27,7 @@ operations:
   unbind         -tenant TENANT -issuer URL -subject SUB
   grant-reader   -tenant TENANT -principal ID
   revoke-reader  -tenant TENANT -principal ID
-  register-provider  -tenant TENANT -role ROLE [-id ID] [-artifact-store ID]
+  register-provider  -tenant TENANT -role ROLE [-id ID] [-artifact-store ID] [-name NAME]
                  roles: runtime, environment, enforcement, artifact_store, connector
   bind-adapter   -tenant TENANT -provider ID -role ROLE -issuer URL -subject SUB
   unbind-adapter -issuer URL -subject SUB
@@ -87,7 +87,7 @@ func parse(args []string) (operation, error) {
 	flags := flag.NewFlagSet("provision "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var tenantText, principalText, providerText, storeText, idText, kind, role, issuer, subject, mode string
-	var settingsText, ceilingText, deniesText string
+	var settingsText, ceilingText, deniesText, providerName string
 	flags.StringVar(&tenantText, "tenant", "", "tenant identifier")
 	flags.StringVar(&principalText, "principal", "", "principal identifier")
 	flags.StringVar(&idText, "id", "", "identifier for the record to create")
@@ -95,6 +95,7 @@ func parse(args []string) (operation, error) {
 	flags.StringVar(&providerText, "provider", "", "provider identifier")
 	flags.StringVar(&role, "role", "", "provider role")
 	flags.StringVar(&storeText, "artifact-store", "", "artifact store provider a runtime exports to")
+	flags.StringVar(&providerName, "name", "", "name a person calls the provider")
 	flags.StringVar(&issuer, "issuer", "", "OpenID Connect issuer URL")
 	flags.StringVar(&subject, "subject", "", "subject identifier within the issuer")
 	flags.StringVar(&mode, "mode", "", "harness mode: live or shadow")
@@ -210,7 +211,7 @@ func parse(args []string) (operation, error) {
 			return map[string]string{"tenant_id": tenant.String(), "principal_id": principal.String()}, err
 		}, nil
 	case "register-provider":
-		if err := need([]string{"tenant", "role"}, "id", "artifact-store"); err != nil {
+		if err := need([]string{"tenant", "role"}, "id", "artifact-store", "name"); err != nil {
 			return nil, err
 		}
 		tenant, err := requiredID[ids.Tenant]("tenant", tenantText)
@@ -230,10 +231,13 @@ func parse(args []string) (operation, error) {
 			artifactStore = &store
 		}
 		return func(ctx context.Context, p *Provisioner) (map[string]string, error) {
-			provider, err := p.RegisterProvider(ctx, tenant, id, contracts.Role(role), artifactStore)
+			provider, err := p.RegisterProvider(ctx, tenant, id, contracts.Role(role), artifactStore, providerName)
 			result := map[string]string{"tenant_id": tenant.String(), "provider_id": provider.String(), "role": role}
 			if artifactStore != nil {
 				result["artifact_store_id"] = artifactStore.String()
+			}
+			if providerName != "" {
+				result["name"] = providerName
 			}
 			return result, err
 		}, nil

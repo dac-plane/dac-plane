@@ -25,12 +25,32 @@ func PutProviderRegistration(ctx context.Context, u *UnitOfWork, registration co
 		value := registration.ArtifactStore.String()
 		store = &value
 	}
-	_, err := u.Exec(ctx, `
-		insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at)
-		values ($1, $2, $3, $4, $5)
+	version, err := SchemaVersion(ctx, u)
+	if err != nil {
+		return err
+	}
+	if version < listSchemaVersion {
+		if registration.Name != "" {
+			return ErrSchemaUnavailable
+		}
+		_, err = u.Exec(ctx, `
+			insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, updated_at)
+			values ($1, $2, $3, $4, $5)
+			on conflict (tenant_id, provider_id, role) do update
+			set artifact_store_id = excluded.artifact_store_id, updated_at = excluded.updated_at`,
+			registration.Tenant.String(), registration.Provider.String(), string(registration.Role), store, registration.UpdatedAt,
+		)
+		return err
+	}
+	// Registering again without a name keeps the one it has.
+	_, err = u.Exec(ctx, `
+		insert into provider_registration (tenant_id, provider_id, role, artifact_store_id, display_name, updated_at)
+		values ($1, $2, $3, $4, $5, $6)
 		on conflict (tenant_id, provider_id, role) do update
-		set artifact_store_id = excluded.artifact_store_id, updated_at = excluded.updated_at`,
-		registration.Tenant.String(), registration.Provider.String(), string(registration.Role), store, registration.UpdatedAt,
+		set artifact_store_id = excluded.artifact_store_id,
+		    display_name = coalesce(excluded.display_name, provider_registration.display_name),
+		    updated_at = excluded.updated_at`,
+		registration.Tenant.String(), registration.Provider.String(), string(registration.Role), store, textOrNil(registration.Name), registration.UpdatedAt,
 	)
 	return err
 }

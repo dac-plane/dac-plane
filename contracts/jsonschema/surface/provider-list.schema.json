@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProviderList",
+  "description": "The runtime and environment providers of the tenant a surface may name when creating an agent or submitting a task (ADR-0028). It holds what a person needs to choose one: no adapter identity, endpoint or credential, and no artifact store.",
+  "type": "object",
+  "required": ["providers"],
+  "additionalProperties": false,
+  "properties": {
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["provider_id", "role"],
+        "additionalProperties": false,
+        "properties": {
+          "provider_id": { "$ref": "../identity/common.schema.json#/$defs/uuidv7" },
+          "role": { "enum": ["runtime", "environment"] },
+          "name": { "type": "string", "pattern": "^\\S([^\\n\\r]*\\S)?$", "maxLength": 100 },
+          "harness_mode": { "enum": ["off", "shadow", "live"] }
+        },
+        "if": { "properties": { "role": { "const": "environment" } } },
+        "then": { "not": { "required": ["harness_mode"] } }
+      }
+    }
+  }
+}

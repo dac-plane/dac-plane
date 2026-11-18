@@ -12,6 +12,52 @@
   ],
   "paths": {
     "/v1/tenants/{tenant}/tasks": {
+      "get": {
+        "operationId": "listTasks",
+        "summary": "List tasks",
+        "description": "The tasks the principal may read, newest first by creation: its own, or the tenant's for a tenant reader. Pages are keyed by creation time, which never changes, so a task submitted between two pages is not skipped or repeated; walk older pages with next_cursor until it is absent. An updated task does not move. Read the tenant's event stream for what changed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/TaskState"
+          },
+          {
+            "$ref": "#/components/parameters/TaskAgent"
+          },
+          {
+            "$ref": "#/components/parameters/TaskLimit"
+          },
+          {
+            "$ref": "#/components/parameters/TaskCursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of tasks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/task-list.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      },
       "post": {
         "operationId": "submitTask",
         "summary": "Submit a task",
@@ -2048,6 +2094,45 @@
         },
         "description": "Only the task owner may read the prompts a runtime put to a person before answering. Other actors, including tenant readers, and requests that are not a question or have no stored text receive 404. The ETag is the attention version for the decision. Answer with kind answer, the answer text keyed by prompt id, and answer_digest, the SHA-256 of that text in the canonical form of RFC 8785 (ADR-0026)."
       }
+    },
+    "/v1/tenants/{tenant}/providers": {
+      "get": {
+        "operationId": "listProviders",
+        "summary": "List providers",
+        "description": "The tenant's runtime and environment providers, the two roles a surface names when creating an agent or submitting a task. Each has an identifier, its role, an optional name set by trusted provisioning and, for a runtime, its harness mode (work is steered only through a live harness). No adapter identity, endpoint or credential, and no artifact store, is listed. Every principal of the tenant may read it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/ProviderRole"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The providers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../jsonschema/surface/provider-list.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem422"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2180,6 +2265,54 @@
         "description": "Resume after this cursor; Last-Event-ID takes precedence.",
         "schema": {
           "$ref": "../jsonschema/surface/event.schema.json#/$defs/cursor"
+        }
+      },
+      "TaskState": {
+        "name": "state",
+        "in": "query",
+        "required": false,
+        "description": "Only tasks in this state.",
+        "schema": {
+          "enum": ["draft", "queued", "running", "waiting_input", "verifying", "ready_for_review", "cancelling", "succeeded", "failed", "rejected", "cancelled"]
+        }
+      },
+      "TaskAgent": {
+        "name": "agent",
+        "in": "query",
+        "required": false,
+        "description": "Only tasks delegated to this agent.",
+        "schema": {
+          "$ref": "../jsonschema/identity/common.schema.json#/$defs/uuidv7"
+        }
+      },
+      "TaskLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "The page size, 50 by default.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "TaskCursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "The next_cursor of the page before.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "ProviderRole": {
+        "name": "role",
+        "in": "query",
+        "required": false,
+        "description": "Only providers in this role.",
+        "schema": {
+          "enum": ["runtime", "environment"]
         }
       },
       "LastEventID": {

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskList",
+  "description": "One page of the tasks a principal may read, newest first by creation (ADR-0028). next_cursor is sent back as cursor for the following page; it is absent on the last page.",
+  "type": "object",
+  "required": ["tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "../lifecycle/task.schema.json" }
+    },
+    "next_cursor": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$", "maxLength": 128 }
+  }
+}

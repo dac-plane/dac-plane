@@ -178,15 +178,16 @@ func (p *Provisioner) SetTenantReader(ctx context.Context, tenant ids.TenantID, 
 // RegisterProvider registers provider in role in an existing tenant. A zero
 // provider gets a new identifier. A provider may be registered in several
 // roles; registering it again in the same role changes only its artifact
-// store. A runtime's artifact store must already be registered as one.
-func (p *Provisioner) RegisterProvider(ctx context.Context, tenant ids.TenantID, provider ids.ProviderID, role contracts.Role, artifactStore *ids.ProviderID) (ids.ProviderID, error) {
+// store and its name, and an omitted name keeps the one it has. A runtime's
+// artifact store must already be registered as one.
+func (p *Provisioner) RegisterProvider(ctx context.Context, tenant ids.TenantID, provider ids.ProviderID, role contracts.Role, artifactStore *ids.ProviderID, name string) (ids.ProviderID, error) {
 	if provider.IsZero() {
 		var err error
 		if provider, err = ids.New[ids.Provider](); err != nil {
 			return ids.ProviderID{}, err
 		}
 	}
-	registration := contracts.ProviderRegistration{Tenant: tenant, Provider: provider, Role: role, ArtifactStore: artifactStore, UpdatedAt: p.now().UTC()}
+	registration := contracts.ProviderRegistration{Tenant: tenant, Provider: provider, Role: role, ArtifactStore: artifactStore, Name: name, UpdatedAt: p.now().UTC()}
 	if err := registration.Validate(); err != nil {
 		return ids.ProviderID{}, err
 	}

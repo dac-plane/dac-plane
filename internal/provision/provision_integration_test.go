@@ -262,29 +262,29 @@ func TestProvisionAdapterLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.RegisterProvider(ctx, mustID[ids.Tenant](t), ids.ProviderID{}, contracts.RoleRuntime, nil); !errors.Is(err, store.ErrNotFound) {
+	if _, err := p.RegisterProvider(ctx, mustID[ids.Tenant](t), ids.ProviderID{}, contracts.RoleRuntime, nil, ""); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("RegisterProvider(unknown tenant) error = %v, want ErrNotFound", err)
 	}
-	environment, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleEnvironment, nil)
+	environment, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleEnvironment, nil, "")
 	if err != nil {
 		t.Fatalf("RegisterProvider(environment) error = %v", err)
 	}
-	if _, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, &environment); !errors.Is(err, provision.ErrConflict) {
+	if _, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, &environment, ""); !errors.Is(err, provision.ErrConflict) {
 		t.Fatalf("RegisterProvider(store is an environment) error = %v, want ErrConflict", err)
 	}
-	artifactStore, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleArtifactStore, nil)
+	artifactStore, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleArtifactStore, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, nil)
+	runtime, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleRuntime, &artifactStore); err != nil || again != runtime {
+	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleRuntime, &artifactStore, ""); err != nil || again != runtime {
 		t.Fatalf("RegisterProvider(add store) = %v, %v", again, err)
 	}
 	// A harness provider is both a runtime and an environment.
-	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleEnvironment, nil); err != nil || again != runtime {
+	if again, err := p.RegisterProvider(ctx, tenant, runtime, contracts.RoleEnvironment, nil, ""); err != nil || again != runtime {
 		t.Fatalf("RegisterProvider(second role) = %v, %v", again, err)
 	}
 
@@ -332,14 +332,14 @@ func TestProvisionQualifyHarnessSeedsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifactStore, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleArtifactStore, nil)
+	artifactStore, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleArtifactStore, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.QualifyHarness(ctx, tenant, artifactStore, lifecycle.HarnessLive); !errors.Is(err, provision.ErrConflict) {
 		t.Fatalf("QualifyHarness(not a runtime) error = %v, want ErrConflict", err)
 	}
-	runtime, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, nil)
+	runtime, err := p.RegisterProvider(ctx, tenant, ids.ProviderID{}, contracts.RoleRuntime, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
