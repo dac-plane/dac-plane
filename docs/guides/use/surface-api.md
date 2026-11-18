@@ -117,8 +117,9 @@ question and a question without stored text, gets `404`. The `ETag` is the atten
 when deciding. Prompts a runtime marks secret are never offered: dac-plane declines them before any text is stored
 ([ADR-0026](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0026-keep-question-and-answer-text-as-product-records.md)).
 
-Answer with a decision of kind `answer`. Its `answer` maps each prompt `id` to exactly one string, and
-`answer_digest` is the SHA-256 of that object in the canonical form of
+Answer with a decision of kind `answer`. Its `answer` maps each prompt `id` to a one-element array holding the
+answer, as in `{"scope": ["unit"], "why": ["Faster feedback"]}`, and `answer_digest` is the SHA-256 of that object in
+the canonical form of
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785): keys sorted, no whitespace, strings escaped as `JSON.stringify`
 writes them. dac-plane refuses an answer whose digest differs, that leaves a prompt unanswered, or whose text for a
 prompt with options is not one of its labels (`422`). A question that has stored text must be answered with text. A

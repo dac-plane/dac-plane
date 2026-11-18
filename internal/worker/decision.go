@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -95,12 +96,29 @@ func (w *Worker) steerArguments(ctx context.Context, tenant ids.TenantID, payloa
 	if err != nil {
 		return nil, err
 	}
-	text, err := json.Marshal(answer)
+	return withAnswer(fields, answer)
+}
+
+// withAnswer adds the answer to the payload's fields and encodes the result
+// without HTML escaping: json.Marshal writes <, > and & as six bytes each, which
+// can push an answer the API accepted past the request's size bound (ADR-0027).
+func withAnswer(fields map[string]json.RawMessage, answer lifecycle.Answer) ([]byte, error) {
+	text, err := marshalPlain(answer)
 	if err != nil {
 		return nil, err
 	}
 	fields["answer"] = text
-	return json.Marshal(fields)
+	return marshalPlain(fields)
+}
+
+func marshalPlain(v any) ([]byte, error) {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(out.Bytes(), "\n"), nil
 }
 
 // preparedDecision is a claimed delivery row past its checklist: the request

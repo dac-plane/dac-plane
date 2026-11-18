@@ -124,7 +124,8 @@ func validText(s string) bool {
 	return true
 }
 
-// Answer maps a prompt id to the person's answer, one string per prompt.
+// Answer maps a prompt id to the person's answer: a one-element list holding
+// one string per prompt, as {"scope": ["unit"]}.
 type Answer map[string][]string
 
 // UnmarshalJSON decodes an answer and rejects a null answer or a null element,

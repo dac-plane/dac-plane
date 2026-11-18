@@ -62,8 +62,8 @@ would contradict the rule that secrets never reach the product database (ADR-002
 separate decision.
 
 **Retention and redaction.** Question and answer text live as long as the task. They are not copied into audit
-entries, logs, events or the outbox: those carry the digest. The delivery row holds the digest only, and the worker
-reads the text from the decision's own record when it sends the steer, so no outbox row ever holds it. An expired or superseded request keeps its question and
+entries, logs, events or the outbox's inspectable evidence: those carry the digest, and the outbox row that delivers
+an answer is cleared of its text once the delivery is settled. An expired or superseded request keeps its question and
 never accepts an answer.
 
 ## Alternatives considered
@@ -82,10 +82,6 @@ never accepts an answer.
 - During a rollout that has not migrated (ADR-0011), a binary on schema 18 raises a question without its text,
   reads no text and answers `503 not-migrated` to a decision that carries answer text; digest-only decisions keep
   working.
-- A live run against Codex app-server 0.165.0 and Camer's `deepseek-v4-flash-0731` found two facts the schema did not
-  show: the tool answers "unavailable in Default mode" unless the thread sets
-  `features.default_mode_request_user_input`, which the adapter now does; and Codex sends `isBlocking: false` in that
-  mode yet waits for the reply, so the adapter raises a question whatever `isBlocking` says.
 - Two tables and one migration (schema 19); two schema members (`question`, `answer`) and one read operation.
 - Adapters built with kit v0.3.0 and v0.4.0 keep working: they send no question and get no answer text.
 - The reference application can show a question and send an answer's text; its browser digest check becomes a

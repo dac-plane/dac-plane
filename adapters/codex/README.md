@@ -56,7 +56,8 @@ reach the product's records) or when it falls outside the bounds dac-plane puts 
 question (up to 8 prompts, 2048 characters of text each, 8 options each, 16 KiB in all, no duplicate ids or labels).
 A header or an option description longer than its bound is shortened; nothing else is. Every thread is started with
 `features.default_mode_request_user_input`, without which Codex 0.165.0 answers the tool with "unavailable in Default
-mode". In that mode Codex sends `isBlocking: false` yet waits for the reply, so a question is raised either way.
+mode". In that mode Codex sends `isBlocking: false` yet waits for the reply, so a question is raised either way
+([ADR-0027](../../docs/adr/0027-attach-answer-text-at-send-time-and-enable-codex-questions.md)).
 `just qualify-codex-question` checks the whole path against a live model.
 
 ## Replay boundary
