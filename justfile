@@ -41,7 +41,7 @@ default:
 
 # Fast local gate: no PostgreSQL-backed, image, stack, or operations runs.
 [group('ci')]
-ci-fast: fmt-check mod-check notices-check deps-check vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-github-adapter test-conformance vuln lint-workflows docs-check
+ci-fast: fmt-check mod-check notices-check deps-check test-release-scripts vet vet-integration test test-race test-codex-adapter test-e2b-adapter test-s3-adapter test-github-adapter test-conformance vuln lint-workflows docs-check
 
 # Full local equivalent of the parallel GitHub PR checks. This is intentionally
 # slower and is best used for final local verification or CI diagnosis.
@@ -625,6 +625,12 @@ release-tag version:
       tags+=("$kit")
     fi
     git push origin "${tags[@]}"
+
+# What the release path accepts and refuses, pinned with a stub gh and no GitHub.
+[doc('Test the scripts that decide whether a commit may be released')]
+[group('release')]
+test-release-scripts:
+    scripts/release/test.sh
 
 # A release-please pull request must carry its hand-written notes before it merges.
 [doc('Check the release notes for the version in the release manifest exist and are linked')]

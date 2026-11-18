@@ -8,10 +8,9 @@ on:
   push:
     branches: [main]
 
-concurrency:
-  group: release-please
-  cancel-in-progress: false
-
+# No workflow-level group: GitHub keeps one pending run per group, so a release
+# merge queued behind a long run would be replaced by the next push, and its
+# replacement cannot start the release. Each job that must not overlap has its own.
 permissions: {}
 
 jobs:
@@ -55,6 +54,10 @@ jobs:
     if: needs.decide.outputs.due == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # One release merge never waits behind, or replaces, another commit's run.
+    concurrency:
+      group: release-tag-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
@@ -99,6 +102,11 @@ jobs:
     if: ${{ !cancelled() && needs.decide.result == 'success' && needs.tag.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The pull request is rebuilt from main each time, so a newer run may replace
+    # a queued one; two never edit it at once.
+    concurrency:
+      group: release-please-pull-request
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write

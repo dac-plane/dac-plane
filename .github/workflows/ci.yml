@@ -55,6 +55,9 @@ jobs:
         with:
           just-version: ${{ env.JUST_VERSION }}
 
+      - name: Test the release scripts
+        run: just test-release-scripts
+
       - name: Check formatting
         run: just fmt-check
 

@@ -30,7 +30,7 @@ fi
 required=$(for module in . adapters/codex adapters/e2b adapters/s3 adapters/github; do
 	(cd "$module" && go mod edit -json | jq -r --arg kit "$kit_module" '.Require[] | select(.Path == $kit) | .Version')
 done | sort -u)
-if [[ $(wc -l <<<"$required") != 1 || "$required" == *-* || -z "$required" ]]; then
+if [[ "$required" == *$'\n'* || "$required" == *-* || -z "$required" ]]; then
 	echo "modules must require one released kit version, found: $required" >&2
 	exit 1
 fi
