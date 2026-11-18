@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -13,17 +14,19 @@ import (
 
 // Bounds on question and answer text (ADR-0026). A question is a short prompt to
 // a person, not a document: an adapter that exceeds a bound has its request
-// rejected rather than truncated.
+// rejected rather than truncated. A *Chars bound counts Unicode code points, as
+// JSON Schema's maxLength does, so the published schema and Go agree on
+// non-ASCII text; the *Bytes bounds cap the whole question or answer.
 const (
 	MaxPrompts           = 8
-	MaxPromptIDBytes     = 64
-	MaxPromptHeaderBytes = 128
-	MaxPromptTextBytes   = 2048
+	MaxPromptIDChars     = 64
+	MaxPromptHeaderChars = 128
+	MaxPromptTextChars   = 2048
 	MaxPromptOptions     = 8
-	MaxOptionLabelBytes  = 256
-	MaxOptionDescBytes   = 512
+	MaxOptionLabelChars  = 256
+	MaxOptionDescChars   = 512
 	MaxQuestionBytes     = 16 * 1024
-	MaxAnswerTextBytes   = MaxPromptTextBytes
+	MaxAnswerTextChars   = MaxPromptTextChars
 	MaxAnswerBytes       = 16 * 1024
 )
 
@@ -77,14 +80,14 @@ func (q Question) Validate() error {
 }
 
 func (p Prompt) validate() error {
-	if p.ID == "" || len(p.ID) > MaxPromptIDBytes || !validText(p.ID) {
-		return fmt.Errorf("%w: a prompt id is 1 to %d bytes of text", ErrInvalid, MaxPromptIDBytes)
+	if p.ID == "" || utf8.RuneCountInString(p.ID) > MaxPromptIDChars || !validText(p.ID) {
+		return fmt.Errorf("%w: a prompt id is 1 to %d bytes of text", ErrInvalid, MaxPromptIDChars)
 	}
-	if len(p.Header) > MaxPromptHeaderBytes || !validText(p.Header) {
-		return fmt.Errorf("%w: a prompt header is at most %d bytes of text", ErrInvalid, MaxPromptHeaderBytes)
+	if utf8.RuneCountInString(p.Header) > MaxPromptHeaderChars || !validText(p.Header) {
+		return fmt.Errorf("%w: a prompt header is at most %d bytes of text", ErrInvalid, MaxPromptHeaderChars)
 	}
-	if p.Text == "" || len(p.Text) > MaxPromptTextBytes || !validText(p.Text) {
-		return fmt.Errorf("%w: a prompt text is 1 to %d bytes of text", ErrInvalid, MaxPromptTextBytes)
+	if p.Text == "" || utf8.RuneCountInString(p.Text) > MaxPromptTextChars || !validText(p.Text) {
+		return fmt.Errorf("%w: a prompt text is 1 to %d bytes of text", ErrInvalid, MaxPromptTextChars)
 	}
 	if len(p.Options) > MaxPromptOptions {
 		return fmt.Errorf("%w: a prompt has at most %d options", ErrInvalid, MaxPromptOptions)
@@ -94,8 +97,8 @@ func (p Prompt) validate() error {
 	}
 	labels := make(map[string]bool, len(p.Options))
 	for _, o := range p.Options {
-		if o.Label == "" || len(o.Label) > MaxOptionLabelBytes || !validText(o.Label) ||
-			len(o.Description) > MaxOptionDescBytes || !validText(o.Description) {
+		if o.Label == "" || utf8.RuneCountInString(o.Label) > MaxOptionLabelChars || !validText(o.Label) ||
+			utf8.RuneCountInString(o.Description) > MaxOptionDescChars || !validText(o.Description) {
 			return fmt.Errorf("%w: an option has a label and an optional description within bounds", ErrInvalid)
 		}
 		if labels[o.Label] {
@@ -124,6 +127,28 @@ func validText(s string) bool {
 // Answer maps a prompt id to the person's answer, one string per prompt.
 type Answer map[string][]string
 
+// UnmarshalJSON decodes an answer and rejects a null answer or a null element,
+// which the default decoder would turn into an empty string and so into a
+// different digest than the schema's non-string value was meant to carry.
+func (a *Answer) UnmarshalJSON(data []byte) error {
+	var raw map[string][]*string
+	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
+		return fmt.Errorf("%w: an answer is an object of prompt id to strings", ErrInvalid)
+	}
+	out := make(Answer, len(raw))
+	for id, texts := range raw {
+		out[id] = make([]string, len(texts))
+		for i, text := range texts {
+			if text == nil {
+				return fmt.Errorf("%w: an answer is made of strings, never null", ErrInvalid)
+			}
+			out[id][i] = *text
+		}
+	}
+	*a = out
+	return nil
+}
+
 // Validate reports whether the answer is well formed and within its bounds. Whether
 // it fits a particular question is CheckAgainst's concern.
 func (a Answer) Validate() error {
@@ -132,11 +157,11 @@ func (a Answer) Validate() error {
 	}
 	total := 0
 	for id, texts := range a {
-		if id == "" || len(id) > MaxPromptIDBytes || !validText(id) {
+		if id == "" || utf8.RuneCountInString(id) > MaxPromptIDChars || !validText(id) {
 			return fmt.Errorf("%w: an answer names a prompt by its id", ErrInvalid)
 		}
-		if len(texts) != 1 || len(texts[0]) > MaxAnswerTextBytes || !validText(texts[0]) {
-			return fmt.Errorf("%w: each prompt takes one answer of at most %d bytes of text", ErrInvalid, MaxAnswerTextBytes)
+		if len(texts) != 1 || utf8.RuneCountInString(texts[0]) > MaxAnswerTextChars || !validText(texts[0]) {
+			return fmt.Errorf("%w: each prompt takes one answer of at most %d bytes of text", ErrInvalid, MaxAnswerTextChars)
 		}
 		total += len(id) + len(texts[0])
 	}

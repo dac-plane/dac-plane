@@ -16,35 +16,35 @@ Needed by: the reference application (#97), whose question flow cannot complete 
 | The connector proposal is the precedent | `application.GetConnectorProposal`: owner-only, 404 for anyone else, bound to the attention version | The question read follows the same rules. |
 | The proposal's content lives in a product table | `store.ConnectorCall` keyed by operation | A product record is the existing pattern for content a surface must read back. |
 
-## Open decisions (need an answer before the ADR)
+## Decisions (accepted, ADR-0026)
 
-1. **Where question and answer text live.** Recommended: product records in PostgreSQL, one row per attention
-   (question) and per decision (answer), size-bounded, because both are short, must be read back by a surface and
-   must be delivered by the worker. Alternative: artifact store (heavier, needs a presign path, suits rich content,
-   which is out of scope).
-2. **Who may read them.** Recommended: the task owner only, 404 otherwise, as the connector proposal. The issue
-   says "responders"; responders are not always the owner, so the ADR must pick: owner only, or the attention's
-   responder set.
-3. **Secret questions.** Codex marks a question `isSecret`. Recommended: refuse to store a secret answer (answer is
-   delivered once, never persisted, only its digest recorded) or decline `isSecret` questions in this issue.
-4. **Retention and redaction.** Recommended: keep text for the attention's life plus the task's retention; redact
-   from audit and logs (digest only, as the connector gateway keeps credentials out of frames).
-5. **Multi-question requests.** Codex sends several questions per request. Recommended: carry them as an ordered
-   list of `{id, header, text, options}` and take answers as a map by id, so the digest covers the canonical
-   encoding of the whole answer.
+1. **Storage.** Product records in PostgreSQL, one row per attention (question) and per decision (answer).
+2. **Readers.** The task owner only, 404 otherwise, as the connector proposal. Widening to a responder set waits
+   until an attention can name other responders.
+3. **Secret prompts.** Declined at the adapter: the native request is answered with no answers, no attention is
+   raised, no text is stored.
+4. **Retention.** Text lives as long as the task, stays out of audit, logs and events, and the delivery outbox row
+   is cleared of its text once settled.
+5. **Shape.** An ordered list of prompts; answers keyed by prompt id, one string each; the digest is SHA-256 over
+   the answer in RFC 8785 form. Limits count characters (code points), as the schemas do.
 
-## Stages (after the decisions)
+Codex 0.165.0, the pinned version, has `item/tool/requestUserInput` (read from its generated schema, not a live run).
+A decision on a question that has stored text must carry the matching answer; one on a question without stored text
+stays digest-only, as the reference application sends today.
 
-1. **Decision and contracts.** ADR-0026; question content on `attention.requested`; answer content on the
-   decision command; JSON Schemas, agreement tests, kit mirror, capability negotiation so kit v0.3.0 and v0.4.0
-   adapters keep working.
-2. **Persistence.** Migration for question and answer content; digest check on write; owner-scoped read.
+## Stages
+
+1. **Decision and contracts. Done (PR 167).** ADR-0026; `lifecycle.Question` and `lifecycle.Answer`; question and
+   answer schemas; optional `question` on `attention.requested`; optional `answer` on the decision request. The kit
+   needs no change: evidence entries are generic and both members are optional.
+2. **Persistence.** Migration for question and answer text; digest check on write; owner-scoped read.
 3. **Application and Surface API.** `GET /attention/{attention}/question`, bound to the attention version; the
-   decision body accepts the answer text and checks it against `answer_digest`; OpenAPI and problems.
-4. **Worker and adapters.** Steer carries the answer text; the Codex adapter maps `item/tool/requestUserInput`
-   to a question attention and the answer back to its response; the simulator and conformance scenarios.
-5. **Deployment and documentation.** Surface API guide, adapter pages, configuration reference if touched; an
-   end-to-end check with the Codex adapter that the delivered text matches the recorded digest.
+   decision accepts the answer text and checks it against `answer_digest`; OpenAPI and problems.
+4. **Worker and adapters.** The steer carries the answer text; the Codex adapter maps
+   `item/tool/requestUserInput` to a question attention and the answer back to its response; the simulator and
+   conformance scenarios.
+5. **Documentation and end-to-end.** Surface API guide, adapter pages; a check with the Codex adapter that the
+   delivered text matches the recorded digest.
 
 ## Acceptance (from the issue)
 

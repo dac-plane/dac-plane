@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dac-plane/dac-plane/internal/identity"
+	"github.com/dac-plane/dac-plane/internal/testsupport/schematest"
 )
 
 func testQuestion() Question {
@@ -30,7 +31,7 @@ func TestQuestionValidate(t *testing.T) {
 		"too many prompts":      tooMany,
 		"duplicate id":          {Prompts: []Prompt{{ID: "a", Text: "x"}, {ID: "a", Text: "y"}}},
 		"empty text":            {Prompts: []Prompt{{ID: "a"}}},
-		"long text":             {Prompts: []Prompt{{ID: "a", Text: strings.Repeat("x", MaxPromptTextBytes+1)}}},
+		"long text":             {Prompts: []Prompt{{ID: "a", Text: strings.Repeat("x", MaxPromptTextChars+1)}}},
 		"control character":     {Prompts: []Prompt{{ID: "a", Text: "x\x07"}}},
 		"invalid utf-8":         {Prompts: []Prompt{{ID: "a", Text: "x\xff"}}},
 		"other without options": {Prompts: []Prompt{{ID: "a", Text: "x", Other: true}}},
@@ -39,7 +40,7 @@ func TestQuestionValidate(t *testing.T) {
 		"too large in total": {Prompts: func() []Prompt {
 			var ps []Prompt
 			for i := range MaxPrompts {
-				ps = append(ps, Prompt{ID: string(rune('a' + i)), Text: strings.Repeat("x", MaxPromptTextBytes)})
+				ps = append(ps, Prompt{ID: string(rune('a' + i)), Text: strings.Repeat("x", MaxPromptTextChars)})
 			}
 			return ps
 		}()},
@@ -66,7 +67,7 @@ func TestAnswerCheckAgainst(t *testing.T) {
 		"two strings":      {"scope": {"unit", "all"}, "why": {"x"}},
 		"empty answer":     {},
 		"control char":     {"scope": {"unit"}, "why": {"x\x00"}},
-		"too long a reply": {"scope": {"unit"}, "why": {strings.Repeat("x", MaxAnswerTextBytes+1)}},
+		"too long a reply": {"scope": {"unit"}, "why": {strings.Repeat("x", MaxAnswerTextChars+1)}},
 	} {
 		if err := a.CheckAgainst(q); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: CheckAgainst() error = %v, want ErrInvalid", name, err)
@@ -112,5 +113,45 @@ func TestAnswerVerifyDigest(t *testing.T) {
 	}
 	if err := (Answer{"scope": {"all"}, "why": {"Faster feedback"}}).VerifyDigest(digest); !errors.Is(err, ErrAnswerDigest) {
 		t.Errorf("VerifyDigest() of another answer error = %v, want ErrAnswerDigest", err)
+	}
+}
+
+// TestSchemaAndGoCountTextTheSame pins that a limit means characters in both:
+// 1025 and 2048 two-byte characters are within the 2048-character bound in the
+// schema and in Go alike, and one more is outside it in both.
+func TestSchemaAndGoCountTextTheSame(t *testing.T) {
+	question := func(n int) []byte {
+		return schematest.Marshal(t, Question{Prompts: []Prompt{{ID: "a", Text: strings.Repeat("\u00e9", n)}}})
+	}
+	answer := func(n int) []byte {
+		return schematest.Marshal(t, Answer{"a": {strings.Repeat("\u00e9", n)}})
+	}
+	for _, tc := range []struct {
+		name     string
+		contract schematest.Contract
+		data     []byte
+		valid    bool
+	}{
+		{"question at the limit", questionContract, question(MaxPromptTextChars), true},
+		{"question over the limit", questionContract, question(MaxPromptTextChars + 1), false},
+		{"answer at the limit", answerContract, answer(MaxAnswerTextChars), true},
+		{"answer over the limit", answerContract, answer(MaxAnswerTextChars + 1), false},
+	} {
+		schemaErr := schematest.Accepts(t, schematest.Compile(t, tc.contract.Schema), tc.data)
+		goErr := tc.contract.GoAccept(tc.data)
+		if (schemaErr == nil) != tc.valid || (goErr == nil) != tc.valid {
+			t.Errorf("%s: schema error = %v, Go error = %v, want valid = %v", tc.name, schemaErr, goErr, tc.valid)
+		}
+	}
+}
+
+func TestAnswerRejectsNull(t *testing.T) {
+	for _, data := range []string{`{"a":[null]}`, `null`, `{"a":null}`} {
+		if err := answerContract.GoAccept([]byte(data)); err == nil {
+			t.Errorf("Go accepted %s", data)
+		}
+		if schematest.Accepts(t, schematest.Compile(t, answerContract.Schema), []byte(data)) == nil {
+			t.Errorf("schema accepted %s", data)
+		}
 	}
 }

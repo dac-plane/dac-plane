@@ -33,8 +33,8 @@ answer, which is what the product database is for. The artifact store stays for 
 presigned read per question and suits the rich content this decision leaves out of scope.
 
 **A question is an ordered list of prompts.** Each prompt has an `id`, a `header`, the question `text` and optional
-`options` of `label` and `description`. At most 8 prompts, 2 KiB of text per prompt and 16 KiB for the whole
-question; an adapter that exceeds them has its `attention.requested` entry rejected. The question travels in the
+`options` of `label` and `description`. At most 8 prompts, 2048 characters of text per prompt (counted as
+JSON Schema counts them, in Unicode code points) and 16 KiB for the whole question; an adapter that exceeds them has its `attention.requested` entry rejected. The question travels in the
 existing `attention.requested` evidence entry as an optional `question` member, so a request without one is valid and
 an older adapter keeps working.
 
