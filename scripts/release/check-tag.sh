@@ -20,9 +20,10 @@ if [[ "$tag" == *-rc.* ]]; then
 	final=false
 fi
 
-# The release links these notes; a rehearsal finds out before a final tag does.
-if [[ ! -f "docs/releases/${tag%%-*}.md" ]]; then
-	echo "docs/releases/${tag%%-*}.md is missing" >&2
+# A release that adds a migration links its notes; a rehearsal finds out before a
+# final tag does. Any other release is described by its generated changelog.
+if [[ ! -f "docs/releases/${tag%%-*}.md" ]] && "$(dirname "$0")/notes-required.sh" "${tag%%-*}"; then
+	echo "docs/releases/${tag%%-*}.md is missing, and this release adds a database migration" >&2
 	exit 1
 fi
 

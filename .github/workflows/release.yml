@@ -314,7 +314,11 @@ jobs:
           if [[ "$FINAL" == true ]]; then
             since="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .published_at)"
             {
-              printf '## Upgrading\n\nBefore upgrading refer to [the release notes](https://github.com/%s/blob/%s/docs/releases/%s.md) for compatibility, upgrade steps and known limits.\n\n' "$GITHUB_REPOSITORY" "$VERSION" "$VERSION"
+              if [[ -f "docs/releases/$VERSION.md" ]]; then
+                printf '## Upgrading\n\nBefore upgrading refer to [the release notes](https://github.com/%s/blob/%s/docs/releases/%s.md) for compatibility, upgrade steps and known limits.\n\n' "$GITHUB_REPOSITORY" "$VERSION" "$VERSION"
+              else
+                printf '## Upgrading\n\nThis release adds no database migration, so it has no separate release notes. See [the changelog](https://github.com/%s/blob/%s/docs/releases/CHANGELOG.md) for what changed, and `release-manifest.json` for the image digests.\n\n' "$GITHUB_REPOSITORY" "$VERSION"
+              fi
               scripts/release/resolved-issues.sh "$since"
             } >notes.md
             flags+=(--notes-file notes.md)
