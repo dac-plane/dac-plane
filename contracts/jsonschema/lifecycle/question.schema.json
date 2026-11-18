@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Question",
+  "description": "The ordered prompts a runtime put to a person (ADR-0026). A prompt with options accepts one of their labels, or free text when other is set; a prompt without options accepts free text. A prompt a runtime marks secret is never carried.",
+  "type": "object",
+  "required": ["prompts"],
+  "additionalProperties": false,
+  "properties": {
+    "prompts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/prompt" }
+    }
+  },
+  "$defs": {
+    "prompt": {
+      "type": "object",
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "header": { "type": "string", "maxLength": 128 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "options": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["label"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "description": { "type": "string", "maxLength": 512 }
+            }
+          }
+        },
+        "other": { "type": "boolean" }
+      },
+      "dependentRequired": { "other": ["options"] }
+    }
+  }
+}

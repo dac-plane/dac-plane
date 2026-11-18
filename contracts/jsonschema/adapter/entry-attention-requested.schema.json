@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AttentionRequested",
-  "description": "Payload of an attention.requested entry. The request names the native reference it answers and never carries product identities; only an action approval names a governed action and its digest.",
+  "description": "Payload of an attention.requested entry. The request names the native reference it answers and never carries product identities; only an action approval names a governed action and its digest, and only a question carries the question text (ADR-0026).",
   "type": "object",
   "required": ["native_ref", "kind", "expires_at"],
   "additionalProperties": false,
@@ -11,9 +11,18 @@
     "kind": { "enum": ["question", "action_approval", "authentication_handoff", "blocked_work"] },
     "action": { "$ref": "../identity/common.schema.json#/$defs/actionClass" },
     "action_digest": { "$ref": "../identity/common.schema.json#/$defs/digest" },
-    "expires_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" }
+    "expires_at": { "$ref": "../identity/common.schema.json#/$defs/timestamp" },
+    "question": { "$ref": "../lifecycle/question.schema.json" }
   },
-  "if": { "properties": { "kind": { "const": "action_approval" } } },
-  "then": { "required": ["action", "action_digest"] },
-  "else": { "not": { "anyOf": [{ "required": ["action"] }, { "required": ["action_digest"] }, { "required": ["scope"] }] } }
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "action_approval" } } },
+      "then": { "required": ["action", "action_digest"] },
+      "else": { "not": { "anyOf": [{ "required": ["action"] }, { "required": ["action_digest"] }, { "required": ["scope"] }] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "question" } } },
+      "else": { "not": { "required": ["question"] } }
+    }
+  ]
 }

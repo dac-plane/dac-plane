@@ -39,6 +39,8 @@ var (
 	agentRevisionContract = schematest.GoContract[AgentRevision](filepath.Join(schemaDir, "agent-revision.schema.json"))
 	connectionContract    = schematest.GoContract[Connection](filepath.Join(schemaDir, "connection.schema.json"))
 	connGrantContract     = schematest.GoContract[ConnectionGrant](filepath.Join(schemaDir, "connection-grant.schema.json"))
+	questionContract      = schematest.GoContract[Question](filepath.Join(schemaDir, "question.schema.json"))
+	answerContract        = schematest.GoContract[Answer](filepath.Join(schemaDir, "answer.schema.json"))
 )
 
 type record struct {
@@ -139,6 +141,8 @@ func validRecords(t *testing.T) map[string]record {
 	}
 
 	return map[string]record{
+		"question":            {questionContract, schematest.Marshal(t, testQuestion())},
+		"answer":              {answerContract, schematest.Marshal(t, testAnswer())},
 		"migration item":      {migrationItemContract, schematest.Marshal(t, MigrationItem{Tenant: task.Tenant, Migration: newMigration(t).ID, SourceAttempt: attempt.ID, State: MigrationItemQueued, ClaimEpoch: 1, UpdatedAt: testNow})},
 		"aborting item":       {migrationItemContract, schematest.Marshal(t, abortingMigrationItem)},
 		"manifest":            {manifestContract, schematest.Marshal(t, manifest)},

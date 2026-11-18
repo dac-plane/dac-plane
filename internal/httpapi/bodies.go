@@ -82,6 +82,8 @@ func (r SpendAssertionRequest) Validate() error {
 type DecisionRequest struct {
 	Kind         lifecycle.DecisionKind `json:"kind"`
 	AnswerDigest identity.Digest        `json:"answer_digest,omitempty"`
+	// Answer is the text AnswerDigest is the digest of (ADR-0026).
+	Answer lifecycle.Answer `json:"answer,omitempty"`
 }
 
 // Validate reports whether the body is well formed.
@@ -94,6 +96,14 @@ func (r DecisionRequest) Validate() error {
 	}
 	if r.AnswerDigest != "" && r.AnswerDigest.Validate() != nil {
 		return fmt.Errorf("%w: malformed answer_digest", application.ErrInvalidCommand)
+	}
+	if r.Answer != nil {
+		if r.Kind != lifecycle.DecisionAnswer {
+			return fmt.Errorf("%w: only an answer carries answer", application.ErrInvalidCommand)
+		}
+		if err := r.Answer.VerifyDigest(r.AnswerDigest); err != nil {
+			return fmt.Errorf("%w: answer: %w", application.ErrInvalidCommand, err)
+		}
 	}
 	return nil
 }

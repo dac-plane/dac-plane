@@ -1,48 +1,54 @@
-# Let a surface read and download a result's artifacts
+# Serve a question's content and deliver the answer's text
 
-Tracker: https://github.com/dac-plane/dac-plane/issues/153
-Branch: `feat/153-artifact-download`, from `main` at `8f71cc4`.
-Decision: `docs/adr/0025-serve-artifacts-to-surfaces-through-the-control-plane.md`.
-Needed by: the reference application (#97), whose reviewer must read the review before accepting it.
+Tracker: https://github.com/dac-plane/dac-plane/issues/157
+Branch: `feat/157-attention-content-and-answer`, from `main` at `93078cf`.
+Decision: ADR-0026 (to be written once the open decisions below are settled).
+Needed by: the reference application (#97), whose question flow cannot complete without it.
 
-## Where the tree stands
+## Where the tree stands (investigation, #157 "Investigate first")
 
 | Finding | Evidence | Consequence |
 |---|---|---|
-| The Surface API lists artifact identifiers only | `result-revision.schema.json`, `docs/guides/use/surface-api.md` "Artifacts" | A record read and a content read are added. |
-| The admitted record already has what a surface shows | `lifecycle/artifact.schema.json`: kind, media type, size, digest, attempt, commit time | The record read serves it as it is. |
-| The verification holds the committed object version | `GetArtifactVerification`, `artifact-verification.schema.json` | The download names that exact version. |
-| The artifact store role has no read | `contracts.Methods(RoleArtifactStore)` | A new method, behind a negotiated capability. |
-| A result is bounded to 64 KiB | `adapterkit/wire/codec.go` | Bytes cannot travel in replies; the store presigns a read. |
-| The store is unpublished | `docs/guides/deploy/index.md` | The control plane fetches and relays; surfaces never reach the store. |
-| A connection's requests are sent directly, outside operations | `application.connectionRequest` | The download request follows that path. |
+| An attention request has no human-readable content | `lifecycle.AttentionRequest`; `contracts.AttentionRequested` carries kind, native ref, expiry, and for approvals the action and digest | A question's text has no home today. |
+| An answer decision carries only `answer_digest` | `lifecycle/attention.go` "stored outside the decision record"; `application.DecideAttention` validates the digest and nothing else | No operation accepts the answer's text; the worker's steer body has the digest only. |
+| The Codex adapter never raises a question | `adapters/codex/adapter.go` emits `attention.requested` with kind `action_approval` only; `steer` rejects every decision except `approve_once` and `deny` | The kind `question` and decision `answer` exist in the domain but no real runtime uses them. |
+| Codex has a native question request | `codex app-server generate-json-schema --experimental` (0.169.0): server request `item/tool/requestUserInput`, params `questions[]` of `{id, header, question, options[]?, isOther, isSecret}` plus `isBlocking`; response `{answers: {<question id>: {answers: [string]}}}` | The adapter can map it to a question attention and answer it with text. It is marked EXPERIMENTAL; the adapter pins 0.165.0, so availability on the pin is unverified. |
+| The connector proposal is the precedent | `application.GetConnectorProposal`: owner-only, 404 for anyone else, bound to the attention version | The question read follows the same rules. |
+| The proposal's content lives in a product table | `store.ConnectorCall` keyed by operation | A product record is the existing pattern for content a surface must read back. |
 
-## Stages
+## Open decisions (need an answer before the ADR)
 
-1. **Decision and contracts.** ADR-0025; `authorize_download`, `artifact.download`, `DownloadRequest` and
-   `DownloadAuthorized` with JSON Schemas, frame enum, agreement tests and the kit mirror.
-2. **Adapters.** The S3 adapter presigns a versioned GET of the objects bucket and offers the capability; the
-   simulator's byte store and the simulator adapter's HTTPS fixture serve downloads; conformance scenarios.
-3. **Application and Surface API.** Owner-scoped record read; the content read with origin checks, length and
-   digest checks, safe headers; `serve` settings; OpenAPI and problems.
-4. **Deployment and documentation.** Compose wiring for the reference and development stacks; the Surface API
-   guide, configuration reference and adapter pages; an end-to-end check in the artifact store stack.
+1. **Where question and answer text live.** Recommended: product records in PostgreSQL, one row per attention
+   (question) and per decision (answer), size-bounded, because both are short, must be read back by a surface and
+   must be delivered by the worker. Alternative: artifact store (heavier, needs a presign path, suits rich content,
+   which is out of scope).
+2. **Who may read them.** Recommended: the task owner only, 404 otherwise, as the connector proposal. The issue
+   says "responders"; responders are not always the owner, so the ADR must pick: owner only, or the attention's
+   responder set.
+3. **Secret questions.** Codex marks a question `isSecret`. Recommended: refuse to store a secret answer (answer is
+   delivered once, never persisted, only its digest recorded) or decline `isSecret` questions in this issue.
+4. **Retention and redaction.** Recommended: keep text for the attention's life plus the task's retention; redact
+   from audit and logs (digest only, as the connector gateway keeps credentials out of frames).
+5. **Multi-question requests.** Codex sends several questions per request. Recommended: carry them as an ordered
+   list of `{id, header, text, options}` and take answers as a map by id, so the digest covers the canonical
+   encoding of the whole answer.
 
-## Decisions
+## Stages (after the decisions)
 
-Recorded as each stage settles them.
+1. **Decision and contracts.** ADR-0026; question content on `attention.requested`; answer content on the
+   decision command; JSON Schemas, agreement tests, kit mirror, capability negotiation so kit v0.3.0 and v0.4.0
+   adapters keep working.
+2. **Persistence.** Migration for question and answer content; digest check on write; owner-scoped read.
+3. **Application and Surface API.** `GET /attention/{attention}/question`, bound to the attention version; the
+   decision body accepts the answer text and checks it against `answer_digest`; OpenAPI and problems.
+4. **Worker and adapters.** Steer carries the answer text; the Codex adapter maps `item/tool/requestUserInput`
+   to a question attention and the answer back to its response; the simulator and conformance scenarios.
+5. **Deployment and documentation.** Surface API guide, adapter pages, configuration reference if touched; an
+   end-to-end check with the Codex adapter that the delivered text matches the recorded digest.
 
-- The download request carries the admitted manifest and the verification's object version; both the S3 adapter and
-  the simulator refuse any version but the committed one and any manifest but its receipt, with `stale_precondition`.
-- The S3 adapter presigns for five minutes (the protocol allows fifteen) and keeps no state for downloads.
-- The control plane offers `artifact.download` in its own hello. The first stack run answered 503 because it did not:
-  capabilities are selected only when both sides offer them. `TestAdapterWireSelectsArtifactDownloads` now guards it.
-- The content response holds back its last 64 KiB until the digest of the whole body is checked; removing the hold
-  makes `TestSurfaceServesArtifactsThroughTheControlPlane` fail, because a wrong body is then delivered complete.
-- A store that states another length is refused with 502 before any byte; one that states none is checked while
-  relaying and aborted. S3 always states it.
-- `SSL_CERT_FILE` already gives `serve` the stack's roots, so the compose stacks set only
-  `DAC_ARTIFACT_DOWNLOAD_ORIGINS=https://artifact-store:8443`; `DAC_ARTIFACT_DOWNLOAD_CA_FILE` is for deployments
-  that keep the store's roots apart.
-- Downloads are logged with tenant, task, artifact and principal; the presigned URL never is, and transport errors
-  are stripped of it before logging.
+## Acceptance (from the issue)
+
+- Accepted ADR on where content is kept and who reads it.
+- A responder reads the question; a non-responder gets 404.
+- A runtime receives the answer's text, shown end to end with the Codex adapter.
+- The recorded digest matches the delivered content, shown by a test.
