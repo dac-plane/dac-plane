@@ -4,6 +4,7 @@ package application_test
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -146,6 +147,36 @@ func TestAttentionRequestedCreatesRequestAndWaits(t *testing.T) {
 	}
 	if task, attempt := f.states(t, s); task != lifecycle.TaskWaitingInput || attempt != lifecycle.AttemptWaitingInput {
 		t.Fatalf("states = %s/%s, want waiting_input/waiting_input", task, attempt)
+	}
+}
+
+// A question's text is stored with its request, as the runtime put it, and a
+// question without text is still raised (ADR-0026).
+func TestAttentionRequestedStoresTheQuestionText(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	asked := question("q-1", f.at.Add(time.Hour))
+	asked.Question = &lifecycle.Question{Prompts: []lifecycle.Prompt{
+		{ID: "scope", Header: "Scope", Text: "Which tests should run?", Options: []lifecycle.PromptOption{{Label: "unit"}, {Label: "all"}}},
+	}}
+	if got := f.raise(t, rt, s, 2, asked); got.Applied != 1 {
+		t.Fatalf("Ingest() = %+v, want the question applied", got)
+	}
+	request := f.attention(t, s)
+	stored, _, err := store.GetAttentionQuestion(f.ctx, f.pool, f.tenant, request.ID)
+	if err != nil || len(stored.Prompts) != 1 || stored.Prompts[0].Text != "Which tests should run?" {
+		t.Fatalf("GetAttentionQuestion() = %+v, %v; want the text the runtime asked", stored, err)
+	}
+}
+
+func TestAttentionRequestedWithoutTextStoresNone(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, lifecycle.HarnessLive)
+	s, rt := f.executing(t, "n-1")
+	f.raise(t, rt, s, 2, question("q-1", f.at.Add(time.Hour)))
+	if _, _, err := store.GetAttentionQuestion(f.ctx, f.pool, f.tenant, f.attention(t, s).ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetAttentionQuestion() error = %v, want ErrNotFound", err)
 	}
 }
 

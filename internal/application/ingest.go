@@ -684,6 +684,15 @@ func (a entryApplier) attentionRequested(ctx context.Context, entry contracts.En
 		}
 		return 0, err
 	}
+	// A question's text is stored with its request. During a rollout that has
+	// not migrated (ADR-0011) the request is still raised, without text: a
+	// question the person cannot read is better than a runtime left waiting on
+	// a request the product refused.
+	if payload.Question != nil {
+		if err := store.InsertAttentionQuestion(ctx, a.uow, a.event.Tenant, request.ID, *payload.Question, a.step.At); err != nil && !errors.Is(err, store.ErrSchemaUnavailable) {
+			return 0, err
+		}
+	}
 	return entryApplied, nil
 }
 

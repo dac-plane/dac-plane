@@ -79,7 +79,10 @@ never accepts an answer.
 
 ## Consequences
 
-- Two tables and one migration; two schema members (`question`, `answer`) and one read operation.
+- During a rollout that has not migrated (ADR-0011), a binary on schema 18 raises a question without its text,
+  reads no text and answers `503 not-migrated` to a decision that carries answer text; digest-only decisions keep
+  working.
+- Two tables and one migration (schema 19); two schema members (`question`, `answer`) and one read operation.
 - Adapters built with kit v0.3.0 and v0.4.0 keep working: they send no question and get no answer text.
 - The reference application can show a question and send an answer's text; its browser digest check becomes a
   consistency check, not the only record.

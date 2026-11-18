@@ -175,12 +175,12 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	h.compose("run", "--rm", "--no-deps", "migrate-next")
 	h.health("replica-a")
 	h.health("replica-b")
-	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "19" {
-		t.Fatalf("schema version = %q, want 19", version)
+	if version := h.sql("select max(version_id) from goose_db_version where is_applied"); version != "20" {
+		t.Fatalf("schema version = %q, want 20", version)
 	}
 	output, err := h.composeOutput("run", "--rm", "--no-deps", "old-schema-check")
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
-		t.Fatalf("old image at schema 19 = %v, output %q", err, output)
+		t.Fatalf("old image at schema 20 = %v, output %q", err, output)
 	}
 	h.decide(attention)
 	ready := h.waitTask(submitted.Task.ID, lifecycle.TaskReadyForReview)
@@ -215,7 +215,7 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 		}
 		return evidence.Deliveries >= 1 && evidence.Agent != nil
 	})
-	t.Logf("upgrade evidence: schema=19 images=%s,%s ledger=%+v delegated=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID), h.ledgerEvidence(delegated.Operation.ID))
+	t.Logf("upgrade evidence: schema=20 images=%s,%s ledger=%+v delegated=%+v", h.replicaA, h.replicaB, h.ledgerEvidence(submitted.Operation.ID), h.ledgerEvidence(delegated.Operation.ID))
 }
 
 func (h *harness) agentRequest() httpapi.AgentRequest {
