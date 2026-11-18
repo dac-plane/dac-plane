@@ -20,10 +20,10 @@ if [[ "$tag" == *-rc.* ]]; then
 	final=false
 fi
 
-# The release links these notes; a rehearsal finds out before a final tag does.
-if [[ ! -f "docs/releases/${tag%%-*}.md" ]]; then
-	echo "docs/releases/${tag%%-*}.md is missing" >&2
-	exit 1
+# A release that adds a migration should link notes, but a missing file warns and
+# does not stop it: the release body links the changelog instead.
+if [[ ! -f "docs/releases/${tag%%-*}.md" ]] && "$(dirname "$0")/notes-required.sh" "${tag%%-*}"; then
+	echo "warning: docs/releases/${tag%%-*}.md is missing, and this release adds a database migration" >&2
 fi
 
 # Every module in the tree must require the same kit version.
