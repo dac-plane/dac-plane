@@ -203,7 +203,12 @@ func TestRequestsAreRefusedBeforeAnyCommandRuns(t *testing.T) {
 		{"revoke without key", unitRequest{"POST", base + "/authority-grants/" + grant + "/revoke", `{}`, auth}, 400},
 		{"revoke nonempty body", unitRequest{"POST", base + "/authority-grants/" + grant + "/revoke", `{"force":true}`, with(map[string]string{"Idempotency-Key": "r1"})}, 400},
 		{"events bad limit", unitRequest{"GET", base + "/events?limit=0", "", auth}, 422},
-		{"unknown route", unitRequest{"GET", base + "/tasks", "", auth}, 405},
+		{"unsupported method", unitRequest{"DELETE", base + "/tasks", "", auth}, 405},
+		{"task list bad limit", unitRequest{"GET", base + "/tasks?limit=0", "", auth}, 422},
+		{"task list unknown state", unitRequest{"GET", base + "/tasks?state=done", "", auth}, 422},
+		{"task list malformed cursor", unitRequest{"GET", base + "/tasks?cursor=nope", "", auth}, 422},
+		{"task list malformed agent", unitRequest{"GET", base + "/tasks?agent=nope", "", auth}, 422},
+		{"provider list unnameable role", unitRequest{"GET", base + "/providers?role=artifact_store", "", auth}, 422},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

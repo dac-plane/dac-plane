@@ -130,7 +130,7 @@ func TestQuestionAndAnswerTextRoundTrip(t *testing.T) {
 func TestQuestionTextBeforeTheContentSchema(t *testing.T) {
 	ctx, pool := setupTestDB(t)
 	f := seedTenant(t, ctx, pool)
-	if _, err := pool.Exec(ctx, `update goose_db_version set is_applied = false where version_id = 19`); err != nil {
+	if _, err := pool.Exec(ctx, `update goose_db_version set is_applied = false where version_id >= 19`); err != nil {
 		t.Fatal(err)
 	}
 	attention, decision := mustID[ids.Attention](t), mustID[ids.Decision](t)

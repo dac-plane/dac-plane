@@ -247,6 +247,9 @@ func TestSurfaceSchemasAcceptGoResponses(t *testing.T) {
 		body   any
 	}{
 		"connector proposal":    {"connector-proposal.schema.json", ConnectorProposalBody{Attention: newID[ids.Attention](t), AttentionVersion: 1, Operation: newID[ids.Operation](t), Connection: connection.ID, Tool: "get_issue", Input: json.RawMessage(`{"number":7}`), InputDigest: identity.DigestOf([]byte(`{"number":7}`))}},
+		"task list":             {"task-list.schema.json", TaskListBody{Tasks: []lifecycle.Task{delegated}, NextCursor: formatTaskCursor(application.TaskCursor{CreatedAt: testNow, Task: delegated.ID})}},
+		"last task page":        {"task-list.schema.json", TaskListBody{Tasks: []lifecycle.Task{}}},
+		"provider list":         {"provider-list.schema.json", ProviderListBody{Providers: []ProviderBody{{Provider: newID[ids.Provider](t), Role: contracts.RoleRuntime, Name: "Codex on Camer", HarnessMode: lifecycle.HarnessLive}, {Provider: newID[ids.Provider](t), Role: contracts.RoleEnvironment}}}},
 		"question view":         {"question-view.schema.json", QuestionBody{Attention: newID[ids.Attention](t), AttentionVersion: 1, Question: lifecycle.Question{Prompts: []lifecycle.Prompt{{ID: "scope", Text: "Which tests should run?", Options: []lifecycle.PromptOption{{Label: "unit"}}}}}}},
 		"connection created":    {"connection-created.schema.json", ConnectionCreatedBody{Connection: connection}},
 		"connection list":       {"connection-list.schema.json", ConnectionListBody{Connections: []lifecycle.Connection{connection}}},

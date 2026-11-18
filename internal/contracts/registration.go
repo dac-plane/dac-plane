@@ -3,7 +3,9 @@ package contracts
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dac-plane/dac-plane/internal/identity"
 	"github.com/dac-plane/dac-plane/internal/ids"
@@ -21,7 +23,22 @@ type ProviderRegistration struct {
 	Provider      ids.ProviderID  `json:"provider_id"`
 	Role          Role            `json:"role"`
 	ArtifactStore *ids.ProviderID `json:"artifact_store_id,omitempty"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	// Name is what a person calls the provider: one line of at most
+	// MaxProviderNameChars characters, set by trusted provisioning (ADR-0028).
+	Name      string    `json:"name,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MaxProviderNameChars bounds a registration's name.
+const MaxProviderNameChars = 100
+
+// ValidProviderName reports whether name is empty or one line of at most
+// MaxProviderNameChars characters without surrounding space.
+func ValidProviderName(name string) error {
+	if name != "" && (!utf8.ValidString(name) || utf8.RuneCountInString(name) > MaxProviderNameChars || strings.TrimSpace(name) != name || strings.ContainsAny(name, "\n\r")) {
+		return fmt.Errorf("%w: a provider name is one line of at most %d characters", ErrInvalid, MaxProviderNameChars)
+	}
+	return nil
 }
 
 // Validate reports whether the registration is complete and only a runtime
@@ -32,6 +49,9 @@ func (r ProviderRegistration) Validate() error {
 	}
 	if !slices.Contains(Roles(), r.Role) {
 		return fmt.Errorf("%w: unknown provider role", ErrInvalid)
+	}
+	if err := ValidProviderName(r.Name); err != nil {
+		return err
 	}
 	if r.ArtifactStore != nil && (r.Role != RoleRuntime || r.ArtifactStore.IsZero() || *r.ArtifactStore == r.Provider) {
 		return fmt.Errorf("%w: only a runtime names an artifact store, and not itself", ErrInvalid)

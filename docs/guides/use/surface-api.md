@@ -25,8 +25,9 @@ Everything belongs to a tenant: `https://HOST:8443/v1/tenants/{tenant}/...`. Ide
 
 | Area | Operations |
 |---|---|
+| Providers | List the runtime and environment providers you may name. |
 | Agents | Create an agent; list, read, revise and retire agents; read an earlier revision of one. |
-| Tasks | Submit a task, to an agent or to providers you name; read it with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
+| Tasks | Submit a task, to an agent or to providers you name; list the tasks you may read; read one with its attempt, open attention and revisions; read one attempt or revision; request cancellation. |
 | Attention | List open attention requests; read one; read the text of a question; inspect an owner-only connector proposal; decide it. |
 | Results | Read an artifact of a revision and download its content; review a revision: accept, request changes or reject. |
 | Budgets | Complete a submission or rework that is waiting on a spend challenge. |
@@ -88,6 +89,27 @@ stopped. If the cursor can no longer be honoured, the server sends a reset carry
 client then reads the record again rather than assuming it missed nothing.
 
 `/v1/tenants/{tenant}/events` is the same for every task in the tenant the principal can read.
+
+## Listing tasks
+
+`GET /tasks` lists the tasks the principal may read, newest first by creation: its own, or the tenant's for a tenant
+reader. Narrow it with `state` and `agent`, and page it with `limit` (1 to 200, 50 by default) and `cursor`. A page
+carries `next_cursor` while another follows; send it back as `cursor`, and stop when it is absent.
+
+Pages are keyed by creation time, which never changes. A task submitted while you page is not skipped or repeated: it
+sorts before the first page, so you meet it by listing again, and a task whose state changes does not move. Each entry
+is the task record, without its attempt or revisions; read `GET /tasks/{task}` for those. To learn what changed,
+read the [event stream](#events) from a cursor rather than listing again
+([ADR-0028](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0028-list-tasks-by-creation-and-providers-by-role.md)).
+
+## Providers
+
+`GET /providers` lists the tenant's runtime and environment providers, the two roles you name when you create an agent
+or submit a task, so a person can choose one instead of pasting an identifier. Filter with `role`. Each entry has its
+`provider_id`, its `role`, a `name` when the operator gave one with `provision register-provider -name`, and, for a
+runtime, its `harness_mode`: work is steered only through a `live` harness. Every principal of the tenant may read it.
+Adapter identities, endpoints, credentials and the artifact store a runtime uses are not listed, and neither is
+whether an adapter is connected, which no single replica can say for the others.
 
 ## Artifacts
 

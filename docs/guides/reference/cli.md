@@ -112,12 +112,16 @@ Removes the permission `grant-reader` gives.
 ### `register-provider`
 
 ```text
-dac-plane provision register-provider -tenant TENANT -role ROLE [-id ID] [-artifact-store ID]
+dac-plane provision register-provider -tenant TENANT -role ROLE [-id ID] [-artifact-store ID] [-name NAME]
 ```
 
 Registers a provider in one of the roles `runtime`, `environment`, `enforcement` or `artifact_store`. A provider can
 be registered in several roles. A runtime names the artifact store it uploads to with `-artifact-store`, which must
-already be registered in that role. Registering a provider again in the same role changes only its artifact store.
+already be registered in that role. `-name` is what a person calls the provider, one line of at most 100
+characters; the Surface API lists it with the tenant's runtime and environment providers
+([ADR-0028](https://github.com/dac-plane/dac-plane/blob/main/docs/adr/0028-list-tasks-by-creation-and-providers-by-role.md)).
+Registering a provider again in the same role changes only its artifact store and its name, and omitting `-name` keeps
+the name it has.
 
 ### `bind-adapter`
 
