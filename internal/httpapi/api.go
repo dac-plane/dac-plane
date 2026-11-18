@@ -139,6 +139,7 @@ func (a *API) routes() []route {
 		{"GET " + prefix + "/attention", a.authenticated(a.listAttention)},
 		{"GET " + prefix + "/attention/{attention}", a.authenticated(a.getAttention)},
 		{"GET " + prefix + "/attention/{attention}/connector-call", a.authenticated(a.getConnectorProposal)},
+		{"GET " + prefix + "/attention/{attention}/question", a.authenticated(a.getQuestion)},
 		{"POST " + prefix + "/attention/{attention}/decisions", a.authenticated(a.decide)},
 		{"GET " + prefix + "/events", a.authenticated(a.tenantEvents)},
 		{"POST " + prefix + "/agents", a.authenticated(a.createAgent)},

@@ -40,8 +40,9 @@ stays digest-only, as the reference application sends today.
 2. **Persistence. Done.** Migration 00019 (`attention_question`, `decision_answer`, append-only); store reads and writes
    with replay comparison; ingestion stores a question's text; a binary on schema 18 raises the question without text
    (ADR-0011). The owner-scoped read comes with the API stage.
-3. **Application and Surface API.** `GET /attention/{attention}/question`, bound to the attention version; the
-   decision accepts the answer text and checks it against `answer_digest`; OpenAPI and problems.
+3. **Application and Surface API. Done.** `GET /attention/{attention}/question` (owner only, bound to the attention
+   version); the decision accepts the answer text, checks it against `answer_digest` and the question, and stores it
+   beside the decision; OpenAPI, the question view schema and the Surface API guide.
 4. **Worker and adapters.** The steer carries the answer text; the Codex adapter maps
    `item/tool/requestUserInput` to a question attention and the answer back to its response; the simulator and
    conformance scenarios.
