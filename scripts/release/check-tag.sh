@@ -101,10 +101,8 @@ else
 		echo "the release manifest ($manifest, kit $kit_manifest) does not match $tag and kit $required" >&2
 		exit 1
 	fi
-	merged=$(gh api "repos/$repository/commits/$commit/pulls" 2>/dev/null | jq --arg commit "$commit" \
-		'[.[] | select(.merged_at != null and .base.ref == "main" and .merge_commit_sha == $commit and (.head.ref | startswith("release-please--")))] | length' 2>/dev/null || true)
-	if [[ "$merged" != 1 ]]; then
-		echo "$commit is not the merge of a release-please pull request" >&2
+	if ! "$(dirname "$0")/merged-release-pr.sh" "$commit" >/dev/null; then
+		echo "$commit is not the merge of a release-please pull request opened from this repository" >&2
 		exit 1
 	fi
 fi

@@ -63,6 +63,10 @@ files.
   that can write contents and pull requests, and the workflow uses it. Without it, close and reopen the release pull
   request, or push an empty commit to its branch, to start the checks.
 - **Protect `main`.** Require the checks and limit who can merge to the owner, which is what makes the merge a decision.
+- **Protect `release-please--*`.** A branch protection rule for that pattern, limiting who may push to it to the identity
+  that opens the release pull request (the Actions bot, or the account or App behind `RELEASE_PLEASE_TOKEN`). The release
+  workflows accept only a pull request opened from such a branch of this repository, and a branch anyone can push to
+  would let that person put the release pull request's name on other changes.
 - A package new to this repository starts private, so the clean room's login passes and an anonymous pull fails. Make it
   public in [its settings](https://github.com/orgs/dac-plane/packages) when you add a new image.
 

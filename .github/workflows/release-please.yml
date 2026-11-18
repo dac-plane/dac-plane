@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.manifest.outputs.version }}
       due: ${{ steps.manifest.outputs.due }}
@@ -29,14 +32,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The manifest changes only when a release pull request merges, so a
-      # version without a tag is a release that has not started.
+      # version without a tag is a release that has not started. It starts only
+      # if this commit is that merge: a commit that edits the manifest any other
+      # way is not the decision to release, and nothing is tagged for it.
       - name: Read the manifest
         id: manifest
         run: |
           version="$(jq -er '."."' .release-please-manifest.json)"
           due=false
           if [[ -z "$(git ls-remote --tags origin "refs/tags/v$version")" ]]; then
-            due=true
+            if scripts/release/merged-release-pr.sh "$GITHUB_SHA" >/dev/null; then
+              due=true
+            else
+              echo "::warning::The manifest names v$version, which has no tag, but $GITHUB_SHA is not the merge of a release-please pull request. Nothing is tagged."
+            fi
           fi
           printf 'version=%s\ndue=%s\n' "$version" "$due" >>"$GITHUB_OUTPUT"
 
@@ -55,6 +64,14 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.decide.outputs.version }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Decided again here, not trusted from the job before: tags are made only
+      # for the merge of a release-please pull request.
+      - name: Check this is a release pull request merge
+        run: scripts/release/merged-release-pr.sh "$GITHUB_SHA" >/dev/null
+
       - name: Tag the merge commit
         run: |
           for tag in "v$VERSION" "adapterkit/v$VERSION"; do
@@ -72,11 +89,7 @@ jobs:
       # request, and skips creating releases itself, so this is what tells it.
       - name: Mark the release pull request tagged
         run: |
-          number="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.head.ref | startswith("release-please--"))][0].number // empty')"
-          if [[ -z "$number" ]]; then
-            echo "no release pull request produced $GITHUB_SHA" >&2
-            exit 1
-          fi
+          number="$(scripts/release/merged-release-pr.sh "$GITHUB_SHA")"
           gh label create "autorelease: tagged" --repo "$GITHUB_REPOSITORY" --color ededed 2>/dev/null || true
           gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
 
@@ -111,6 +124,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      pull-requests: read
     uses: ./.github/workflows/release.yml
     with:
       tag: v${{ needs.decide.outputs.version }}
