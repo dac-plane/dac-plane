@@ -130,13 +130,15 @@ func (s *serving) get(t *testing.T, addr, path string, plain bool) (int, string)
 func (s *serving) waitReady(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
+	code, body := 0, ""
 	for time.Now().Before(deadline) {
-		if code, _ := s.get(t, s.cfg.OpsAddr, "/readyz", true); code == http.StatusOK {
+		if code, body = s.get(t, s.cfg.OpsAddr, "/readyz", true); code == http.StatusOK {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("never ready")
+	// The last answer names what was missing: the listeners, the database or the schema.
+	t.Fatalf("never ready: last /readyz answer %d %q", code, strings.TrimSpace(body))
 }
 
 func TestServeExposesTLSListenersAndReadiness(t *testing.T) {
