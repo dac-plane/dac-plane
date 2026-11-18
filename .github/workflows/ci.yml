@@ -7,7 +7,7 @@ on:
   workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +22,26 @@ env:
   JUST_VERSION: 1.57.0
 
 jobs:
+  # A pull request release-please opens carries the version bump and the change
+  # list; the hand-written notes are added to it before it merges.
+  release-notes:
+    name: Release notes
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+          go-cache: 'false'
+
+      - name: Check the release notes
+        run: just release-notes-check
+
   check:
     name: Static checks
     runs-on: ubuntu-latest

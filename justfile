@@ -608,7 +608,7 @@ release-push target platform version kit repository:
     docker buildx build --target {{ target }} --platform {{ platform }} --provenance=false --sbom=false --build-arg VERSION={{ version }} --build-arg REVISION="$(git rev-parse HEAD)" --build-arg KIT_VERSION={{ kit }} --output "type=registry,name={{ repository }},push-by-digest=true,rewrite-timestamp=true" --metadata-file "$work/push.json" .
     test "$(cat "$work/digest")" = "$(jq -r '."containerimage.digest"' "$work/push.json")"
 
-# Sign and push a release's tags from this commit, reusing a kit tag that already exists.
+# Sign and push a rehearsal's tags (or a release's, if its release pull request cannot be used) from this commit, reusing a kit tag that already exists.
 [group('release')]
 release-tag version:
     #!/usr/bin/env bash
@@ -625,6 +625,12 @@ release-tag version:
       tags+=("$kit")
     fi
     git push origin "${tags[@]}"
+
+# A release-please pull request must carry its hand-written notes before it merges.
+[doc('Check the release notes for the version in the release manifest exist and are linked')]
+[group('release')]
+release-notes-check:
+    scripts/release/check-notes.sh
 
 # Run live qualification against a release's published digests, with no local build.
 [group('release')]
