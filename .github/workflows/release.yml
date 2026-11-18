@@ -21,7 +21,6 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: read
 
 env:
   JUST_VERSION: 1.57.0
@@ -31,6 +30,10 @@ jobs:
     name: Verify the tags
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # check-tag.sh asks which pull request merged the release commit.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.tag.outputs.version }}
       kit: ${{ steps.tag.outputs.kit }}
