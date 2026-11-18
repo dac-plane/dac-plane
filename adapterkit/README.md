@@ -4,7 +4,7 @@ Build a provider adapter for [dac-plane](https://github.com/dac-plane/dac-plane)
 dac-plane, negotiates the ControlFrame protocol, keeps the connection alive and hands your code each request.
 
 ```sh
-go get github.com/dac-plane/dac-plane/adapterkit@v0.4.0
+go get github.com/dac-plane/dac-plane/adapterkit@latest
 ```
 
 Implement `adapterkit.Handler` and call `adapterkit.Run`:
@@ -31,7 +31,7 @@ takes standing instructions; dac-plane sends the field only to a connection that
 Test a Go adapter with `conformance.Run`. For an adapter in any other language:
 
 ```sh
-go run github.com/dac-plane/dac-plane/adapterkit/cmd/adapter-conformance@v0.4.0 -fixture examples/minimal/fixture.json -- ./my-adapter
+go run github.com/dac-plane/dac-plane/adapterkit/cmd/adapter-conformance@latest -fixture examples/minimal/fixture.json -- ./my-adapter
 ```
 
 ## Versions

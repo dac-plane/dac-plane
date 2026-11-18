@@ -1,13 +1,22 @@
 name: release
 
-# Rebuilds a release from its signed tags and stops on the first failure
-# (ADR-0018). Nothing publishes except from a tag.
+# Rebuilds a release from its tags and stops on the first failure (ADR-0018).
+# Nothing publishes except from a tag. A rehearsal is a signed -rc tag pushed by
+# a maintainer; a final release is the merge commit of a release-please pull
+# request, tagged and passed in by the release-please workflow, and its tags are
+# checked against that merge instead of a signature (scripts/release/check-tag.sh).
 on:
   push:
     tags: ['v*']
+  workflow_call:
+    inputs:
+      tag:
+        description: The final release tag, already created at the commit this run was started on.
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -21,6 +30,10 @@ jobs:
     name: Verify the tags
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # check-tag.sh asks which pull request merged the release commit.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.tag.outputs.version }}
       kit: ${{ steps.tag.outputs.kit }}
@@ -42,7 +55,7 @@ jobs:
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: scripts/release/check-tag.sh "$TAG" >>"$GITHUB_OUTPUT"
 
   ci:
@@ -284,16 +297,14 @@ jobs:
         with:
           path: downloaded
 
-      - name: Collect the evidence
+      # Only what a user takes from the release: the manifest and the two
+      # bundles. The attestations live in GitHub's store and the registry, where
+      # gh attestation verify finds them, and each image's scan, SBOM and
+      # provenance stay on this run as the image-* artifacts.
+      - name: Collect the release files
         run: |
           mkdir -p assets
           cp downloaded/release/* assets/
-          for dir in downloaded/image-*; do
-            name="${dir#downloaded/image-}"
-            cp "$dir/scan.json" "assets/$name.scan.json"
-            cp "$dir/sbom.cdx.json" "assets/$name.sbom.cdx.json"
-            cp "$dir/provenance.intoto.jsonl" "assets/$name.intoto.jsonl"
-          done
 
       # A final release publishes at once (ADR-0019). gh uploads the assets before
       # publishing, so an immutable release is complete when it appears.

@@ -6,9 +6,12 @@ on:
     branches: [main]
   workflow_call:
 
+# An ordinary run is replaced by a newer one on the same ref. A run called by a
+# release carries the caller's workflow name and ref, so it is keyed by commit
+# and never cancelled: another release merging must not stop this one's checks.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.workflow != 'ci' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.workflow == 'ci' }}
 
 permissions:
   contents: read
@@ -22,6 +25,26 @@ env:
   JUST_VERSION: 1.57.0
 
 jobs:
+  # A pull request release-please opens carries the version bump and the change
+  # list; the hand-written notes are added to it before it merges.
+  release-notes:
+    name: Release notes
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tools
+        uses: ./.github/actions/setup
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+          go-cache: 'false'
+
+      - name: Check the release notes
+        run: just release-notes-check
+
   check:
     name: Static checks
     runs-on: ubuntu-latest
@@ -34,6 +57,9 @@ jobs:
         uses: ./.github/actions/setup
         with:
           just-version: ${{ env.JUST_VERSION }}
+
+      - name: Test the release scripts
+        run: just test-release-scripts
 
       - name: Check formatting
         run: just fmt-check

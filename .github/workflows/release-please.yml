@@ -1,0 +1,138 @@
+name: release-please
+
+# Opens and keeps current the release pull request from the conventional commits
+# on main. Merging it is the decision to release: this workflow then tags the
+# merge commit and runs the release workflow on it, which publishes only after
+# its gate passes. Nothing here publishes.
+on:
+  push:
+    branches: [main]
+
+# No workflow-level group: GitHub keeps one pending run per group, so a release
+# merge queued behind a long run would be replaced by the next push, and its
+# replacement cannot start the release. Each job that must not overlap has its own.
+permissions: {}
+
+jobs:
+  decide:
+    name: Is a release due
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      version: ${{ steps.manifest.outputs.version }}
+      due: ${{ steps.manifest.outputs.due }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The manifest changes only when a release pull request merges, so a
+      # version without a tag is a release that has not started. It starts only
+      # if this commit is that merge: a commit that edits the manifest any other
+      # way is not the decision to release, and nothing is tagged for it.
+      - name: Read the manifest
+        id: manifest
+        run: |
+          version="$(jq -er '."."' .release-please-manifest.json)"
+          due=false
+          if [[ -z "$(git ls-remote --tags origin "refs/tags/v$version")" ]]; then
+            if scripts/release/merged-release-pr.sh "$GITHUB_SHA" >/dev/null; then
+              due=true
+            else
+              echo "::warning::The manifest names v$version, which has no tag, but $GITHUB_SHA is not the merge of a release-please pull request. Nothing is tagged."
+            fi
+          fi
+          printf 'version=%s\ndue=%s\n' "$version" "$due" >>"$GITHUB_OUTPUT"
+
+  tag:
+    name: Tag the release
+    needs: decide
+    if: needs.decide.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # One release merge never waits behind, or replaces, another commit's run.
+    concurrency:
+      group: release-tag-${{ github.sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      # The built-in token on purpose: its tags start no workflow of their own,
+      # so the release runs once, from the call below.
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.decide.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Decided again here, not trusted from the job before: tags are made only
+      # for the merge of a release-please pull request.
+      - name: Check this is a release pull request merge
+        run: scripts/release/merged-release-pr.sh "$GITHUB_SHA" >/dev/null
+
+      - name: Tag the merge commit
+        run: |
+          for tag in "v$VERSION" "adapterkit/v$VERSION"; do
+            existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null || true)"
+            if [[ -n "$existing" && "$existing" != "$GITHUB_SHA" ]]; then
+              echo "$tag already names $existing, not $GITHUB_SHA" >&2
+              exit 1
+            fi
+            if [[ -z "$existing" ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" >/dev/null
+            fi
+          done
+
+      # release-please finds the last release by the label on its merged pull
+      # request, and skips creating releases itself, so this is what tells it.
+      - name: Mark the release pull request tagged
+        run: |
+          number="$(scripts/release/merged-release-pr.sh "$GITHUB_SHA")"
+          gh label create "autorelease: tagged" --repo "$GITHUB_REPOSITORY" --color ededed 2>/dev/null || true
+          gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+
+  pull-request:
+    name: Release pull request
+    needs: [decide, tag]
+    if: ${{ !cancelled() && needs.decide.result == 'success' && needs.tag.result != 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The pull request is rebuilt from main each time, so a newer run may replace
+    # a queued one; two never edit it at once.
+    concurrency:
+      group: release-please-pull-request
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # A pull request opened with the built-in token starts no workflow, so
+      # its checks do not run. Set RELEASE_PLEASE_TOKEN to a token that can open
+      # pull requests (a fine-grained personal access token or a GitHub App
+      # token) to have them run; without it the checks need a nudge.
+      - name: Open or update the release pull request
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  release:
+    name: Release ${{ needs.decide.outputs.version }}
+    needs: [decide, tag]
+    if: needs.decide.outputs.due == 'true'
+    permissions:
+      contents: write
+      issues: read
+      packages: write
+      id-token: write
+      attestations: write
+      pull-requests: read
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: v${{ needs.decide.outputs.version }}
