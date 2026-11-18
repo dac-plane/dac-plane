@@ -222,6 +222,10 @@ func parse(args []string) (operation, error) {
 		if err != nil {
 			return nil, err
 		}
+		// A bad name is a usage error, answered before the database opens.
+		if err := contracts.ValidProviderName(providerName); err != nil {
+			return nil, fmt.Errorf("%w: -name: %v", errUsage, err)
+		}
 		var artifactStore *ids.ProviderID
 		if set["artifact-store"] {
 			store, err := requiredID[ids.Provider]("artifact-store", storeText)

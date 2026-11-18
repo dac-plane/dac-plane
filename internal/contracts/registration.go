@@ -32,6 +32,15 @@ type ProviderRegistration struct {
 // MaxProviderNameChars bounds a registration's name.
 const MaxProviderNameChars = 100
 
+// ValidProviderName reports whether name is empty or one line of at most
+// MaxProviderNameChars characters without surrounding space.
+func ValidProviderName(name string) error {
+	if name != "" && (!utf8.ValidString(name) || utf8.RuneCountInString(name) > MaxProviderNameChars || strings.TrimSpace(name) != name || strings.ContainsAny(name, "\n\r")) {
+		return fmt.Errorf("%w: a provider name is one line of at most %d characters", ErrInvalid, MaxProviderNameChars)
+	}
+	return nil
+}
+
 // Validate reports whether the registration is complete and only a runtime
 // names an artifact store other than itself.
 func (r ProviderRegistration) Validate() error {
@@ -41,8 +50,8 @@ func (r ProviderRegistration) Validate() error {
 	if !slices.Contains(Roles(), r.Role) {
 		return fmt.Errorf("%w: unknown provider role", ErrInvalid)
 	}
-	if r.Name != "" && (!utf8.ValidString(r.Name) || utf8.RuneCountInString(r.Name) > MaxProviderNameChars || strings.TrimSpace(r.Name) != r.Name || strings.ContainsAny(r.Name, "\n\r")) {
-		return fmt.Errorf("%w: a provider name is one line of at most %d characters", ErrInvalid, MaxProviderNameChars)
+	if err := ValidProviderName(r.Name); err != nil {
+		return err
 	}
 	if r.ArtifactStore != nil && (r.Role != RoleRuntime || r.ArtifactStore.IsZero() || *r.ArtifactStore == r.Provider) {
 		return fmt.Errorf("%w: only a runtime names an artifact store, and not itself", ErrInvalid)

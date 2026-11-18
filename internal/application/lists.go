@@ -70,6 +70,13 @@ func ListTasks(ctx context.Context, pool *pgxpool.Pool, actor identity.Authoriza
 			if err != nil {
 				return err
 			}
+			// The position query and this read are separate statements, and a
+			// worker may have moved the task between them: it is returned only
+			// if it still matches what was asked for, so a page can hold fewer
+			// tasks than the limit but never one the filter excludes.
+			if !matchesState(task, query.State) {
+				continue
+			}
 			page.Tasks = append(page.Tasks, task)
 		}
 		if more {
@@ -79,6 +86,12 @@ func ListTasks(ctx context.Context, pool *pgxpool.Pool, actor identity.Authoriza
 		return nil
 	})
 	return page, err
+}
+
+// matchesState reports whether the task is in the state asked for, any state
+// when none is.
+func matchesState(task lifecycle.Task, state lifecycle.TaskState) bool {
+	return state == "" || task.State == state
 }
 
 func containsState(state lifecycle.TaskState) bool {
