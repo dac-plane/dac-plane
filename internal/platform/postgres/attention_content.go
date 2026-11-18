@@ -1,10 +1,10 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"time"
 
 	"github.com/dac-plane/dac-plane/internal/ids"
@@ -23,6 +23,24 @@ func requireContentSchema(ctx context.Context, q Querier) error {
 	}
 	if version < contentSchemaVersion {
 		return ErrSchemaUnavailable
+	}
+	return nil
+}
+
+// sameJSON reports ErrPayloadMismatch unless the stored value and the one being
+// written have the same JSON form. The form, not the Go value, is what is stored:
+// an empty option list and a missing one are the same record.
+func sameJSON(stored, written any) error {
+	a, err := json.Marshal(stored)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(written)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(a, b) {
+		return ErrPayloadMismatch
 	}
 	return nil
 }
@@ -53,10 +71,7 @@ func InsertAttentionQuestion(ctx context.Context, u *UnitOfWork, tenant ids.Tena
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(stored, question) {
-		return ErrPayloadMismatch
-	}
-	return nil
+	return sameJSON(stored, question)
 }
 
 // GetAttentionQuestion reads the text of a request's question and when it was
@@ -93,8 +108,9 @@ func GetAttentionQuestion(ctx context.Context, q Querier, tenant ids.TenantID, a
 }
 
 // InsertDecisionAnswer stores the text of an answer once, beside the decision
-// whose digest it is. The caller has already checked it against that digest.
-func InsertDecisionAnswer(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, decision ids.DecisionID, attention ids.AttentionID, answer lifecycle.Answer, at time.Time) error {
+// whose digest it is; the decision names its request, so the text cannot be
+// attached to another. The caller has already checked it against that digest.
+func InsertDecisionAnswer(ctx context.Context, u *UnitOfWork, tenant ids.TenantID, decision ids.DecisionID, answer lifecycle.Answer, at time.Time) error {
 	if err := answer.Validate(); err != nil {
 		return err
 	}
@@ -106,9 +122,9 @@ func InsertDecisionAnswer(ctx context.Context, u *UnitOfWork, tenant ids.TenantI
 		return err
 	}
 	inserted, err := insertReturning(ctx, u, `
-		insert into decision_answer (tenant_id, decision_id, attention_id, content, created_at)
-		values ($1, $2, $3, $4::jsonb, $5)`,
-		tenant.String(), decision.String(), attention.String(), string(content), at,
+		insert into decision_answer (tenant_id, decision_id, content, created_at)
+		values ($1, $2, $3::jsonb, $4)`,
+		tenant.String(), decision.String(), string(content), at,
 	)
 	if err != nil || inserted {
 		return err
@@ -117,10 +133,7 @@ func InsertDecisionAnswer(ctx context.Context, u *UnitOfWork, tenant ids.TenantI
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(stored, answer) {
-		return ErrPayloadMismatch
-	}
-	return nil
+	return sameJSON(stored, answer)
 }
 
 // GetDecisionAnswer reads the text of a decision's answer. A decision without

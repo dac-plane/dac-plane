@@ -42,6 +42,17 @@ func TestQuestionAndAnswerTextRoundTrip(t *testing.T) {
 	if _, _, err := store.InsertAttention(ctx, uow, request); err != nil {
 		t.Fatalf("InsertAttention() error = %v", err)
 	}
+	emptyRequest, err := lifecycle.NewAttentionRequest(lifecycle.AttentionRequest{
+		ID: mustID[ids.Attention](t), Tenant: f.tenant, Task: task.ID, Attempt: attempt.ID,
+		Kind: lifecycle.AttentionQuestion, PolicyGeneration: 1,
+		Responders: []ids.PrincipalID{f.principal}, ExpiresAt: now.Add(time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAttentionRequest() error = %v", err)
+	}
+	if _, _, err := store.InsertAttention(ctx, uow, emptyRequest); err != nil {
+		t.Fatalf("InsertAttention() error = %v", err)
+	}
 
 	if _, _, err := store.GetAttentionQuestion(ctx, uow, f.tenant, request.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetAttentionQuestion() before a write error = %v, want ErrNotFound", err)
@@ -51,6 +62,14 @@ func TestQuestionAndAnswerTextRoundTrip(t *testing.T) {
 	}
 	if err := store.InsertAttentionQuestion(ctx, uow, f.tenant, request.ID, question, now); err != nil {
 		t.Errorf("replayed InsertAttentionQuestion() error = %v, want nil", err)
+	}
+	// An empty option list is the same record as a missing one.
+	emptyOptions := lifecycle.Question{Prompts: []lifecycle.Prompt{{ID: "e", Text: "Anything else?", Options: []lifecycle.PromptOption{}}}}
+	if err := store.InsertAttentionQuestion(ctx, uow, f.tenant, emptyRequest.ID, emptyOptions, now); err != nil {
+		t.Fatalf("InsertAttentionQuestion() with empty options error = %v", err)
+	}
+	if err := store.InsertAttentionQuestion(ctx, uow, f.tenant, emptyRequest.ID, emptyOptions, now); err != nil {
+		t.Errorf("replayed InsertAttentionQuestion() with empty options error = %v, want nil", err)
 	}
 	other := lifecycle.Question{Prompts: []lifecycle.Prompt{{ID: "x", Text: "A different question?"}}}
 	if err := store.InsertAttentionQuestion(ctx, uow, f.tenant, request.ID, other, now); !errors.Is(err, store.ErrPayloadMismatch) {
@@ -72,14 +91,14 @@ func TestQuestionAndAnswerTextRoundTrip(t *testing.T) {
 	if _, _, _, err := store.DecideAttention(ctx, uow, decision, 1, tr); err != nil {
 		t.Fatalf("DecideAttention() error = %v", err)
 	}
-	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision.ID, request.ID, answer, now); err != nil {
+	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision.ID, answer, now); err != nil {
 		t.Fatalf("InsertDecisionAnswer() error = %v", err)
 	}
-	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision.ID, request.ID, answer, now); err != nil {
+	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision.ID, answer, now); err != nil {
 		t.Errorf("replayed InsertDecisionAnswer() error = %v, want nil", err)
 	}
 	changed := lifecycle.Answer{"scope": {"all"}, "why": {"x"}}
-	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision.ID, request.ID, changed, now); !errors.Is(err, store.ErrPayloadMismatch) {
+	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision.ID, changed, now); !errors.Is(err, store.ErrPayloadMismatch) {
 		t.Errorf("InsertDecisionAnswer() of other text error = %v, want ErrPayloadMismatch", err)
 	}
 	read, err := store.GetDecisionAnswer(ctx, uow, f.tenant, decision.ID)
@@ -121,7 +140,7 @@ func TestQuestionTextBeforeTheContentSchema(t *testing.T) {
 	if err := store.InsertAttentionQuestion(ctx, uow, f.tenant, attention, question, time.Now().UTC()); !errors.Is(err, store.ErrSchemaUnavailable) {
 		t.Errorf("InsertAttentionQuestion() error = %v, want ErrSchemaUnavailable", err)
 	}
-	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision, attention, lifecycle.Answer{"a": {"b"}}, time.Now().UTC()); !errors.Is(err, store.ErrSchemaUnavailable) {
+	if err := store.InsertDecisionAnswer(ctx, uow, f.tenant, decision, lifecycle.Answer{"a": {"b"}}, time.Now().UTC()); !errors.Is(err, store.ErrSchemaUnavailable) {
 		t.Errorf("InsertDecisionAnswer() error = %v, want ErrSchemaUnavailable", err)
 	}
 	if _, _, err := store.GetAttentionQuestion(ctx, uow, f.tenant, attention); !errors.Is(err, store.ErrNotFound) {
