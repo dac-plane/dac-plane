@@ -270,7 +270,7 @@ func TestCursorRoundTripAndRejection(t *testing.T) {
 		t.Fatal("stream tags collide across scope or tenant")
 	}
 	for _, text := range []string{"", "3", "3.4", "0.1." + cursor.Stream, "3.-1." + cursor.Stream, "a.b." + cursor.Stream,
-		"3.4.5", "3.4.2127374679870", "3.4." + strings.ToUpper(cursor.Stream), "3.04." + cursor.Stream, "3. 4." + cursor.Stream, "3.4." + cursor.Stream + ".x",
+		"3.4.5", "3.4.2127374679870", "3.4.ABCDEF012345", "3.04." + cursor.Stream, "3. 4." + cursor.Stream, "3.4." + cursor.Stream + ".x",
 		"9223372036854775808.4." + cursor.Stream} {
 		if _, err := parseCursor(text); err == nil {
 			t.Errorf("parseCursor(%q) accepted", text)

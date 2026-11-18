@@ -65,13 +65,21 @@ func TestDevelopmentStackLifecycle(t *testing.T) {
 		return list.value.Attention[0], true
 	})
 
+	// The simulated runtime asks its question in words: read it and answer it in
+	// words, as a person would (ADR-0026).
+	question := request[httpapi.QuestionBody](t, ctx, client, token, http.MethodGet, "/attention/"+attention.ID.String()+"/question", nil, nil, http.StatusOK)
+	if len(question.value.Question.Prompts) != 1 {
+		t.Fatalf("question = %+v, want the simulator's one prompt", question.value.Question)
+	}
+	answer := lifecycle.Answer{question.value.Question.Prompts[0].ID: {"Yes, go ahead."}}
+	digest, err := answer.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	request[httpapi.DecisionBody](t, ctx, client, token, http.MethodPost, "/attention/"+attention.ID.String()+"/decisions", map[string]string{
 		"Idempotency-Key": "stack-decision-" + strconv.FormatInt(time.Now().UnixNano(), 10),
-		"If-Match":        strconv.Quote(strconv.FormatUint(attention.Version, 10)),
-	}, httpapi.DecisionRequest{
-		Kind:         lifecycle.DecisionAnswer,
-		AnswerDigest: "sha256:da5f2e58d7277762a4907c15c2cba4a079b259f959e947966b9df6c68b23f267",
-	}, http.StatusCreated)
+		"If-Match":        question.header.Get("ETag"),
+	}, httpapi.DecisionRequest{Kind: lifecycle.DecisionAnswer, AnswerDigest: digest, Answer: answer}, http.StatusCreated)
 
 	taskPath := "/tasks/" + submitted.value.Task.ID.String()
 	ready := poll(t, ctx, "result revision", func() (responseValue[httpapi.TaskBody], bool) {

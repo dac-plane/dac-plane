@@ -15,6 +15,7 @@ import (
 
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/ids"
+	"github.com/dac-plane/dac-plane/internal/lifecycle"
 	"github.com/dac-plane/dac-plane/internal/simulator"
 )
 
@@ -189,13 +190,25 @@ func (h *controlHandler) ledger(w http.ResponseWriter, r *http.Request) {
 			agent = start.Agent
 		}
 	}
+	// The answer text the latest steer_turn of the operation carried, so a
+	// deployed test can read what a person's answer delivered to the runtime.
+	var answer lifecycle.Answer
+	for _, request := range ledger.Sent() {
+		var steer struct {
+			Answer lifecycle.Answer `json:"answer"`
+		}
+		if request.Operation == operation && request.Method == contracts.MethodSteerTurn && json.Unmarshal(request.Arguments, &steer) == nil {
+			answer = steer.Answer
+		}
+	}
 	controlJSON(w, http.StatusOK, struct {
 		Deliveries int                          `json:"deliveries"`
 		Effects    int                          `json:"effects"`
 		Cancels    int                          `json:"cancels"`
 		Applied    []appliedEffect              `json:"applied"`
 		Agent      *contracts.AgentInstructions `json:"agent,omitempty"`
-	}{ledger.Deliveries(operation), ledger.Effects(operation), ledger.Cancels(operation), applied, agent})
+		Answer     lifecycle.Answer             `json:"answer,omitempty"`
+	}{ledger.Deliveries(operation), ledger.Effects(operation), ledger.Cancels(operation), applied, agent, answer})
 }
 
 func (h *controlHandler) artifact(w http.ResponseWriter, r *http.Request) {

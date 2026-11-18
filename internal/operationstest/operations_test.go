@@ -23,6 +23,7 @@ import (
 
 	"github.com/dac-plane/dac-plane/internal/contracts"
 	"github.com/dac-plane/dac-plane/internal/httpapi"
+	"github.com/dac-plane/dac-plane/internal/identity"
 	"github.com/dac-plane/dac-plane/internal/ids"
 	"github.com/dac-plane/dac-plane/internal/lifecycle"
 )
@@ -110,7 +111,8 @@ func TestBackupAndRestore(t *testing.T) {
 	h.startSimulator()
 	submitted := h.submit()
 	attention := h.waitAttention()
-	h.decide(attention)
+	answered := h.answer(attention)
+	h.assertAnswerDelivered(submitted.Operation.ID, answered)
 	before := h.waitTask(submitted.Task.ID, lifecycle.TaskReadyForReview)
 	artifact := before.body.Revisions[0].Revision.Artifacts[0]
 	metadataBefore := h.artifactMetadata(artifact)
@@ -182,6 +184,9 @@ func TestRollingUpgradeAcrossMigration(t *testing.T) {
 	if err == nil || !strings.Contains(output, "schema version is outside the range") {
 		t.Fatalf("old image at schema 20 = %v, output %q", err, output)
 	}
+	// This question was raised while the database was still at schema 18, so it
+	// has no stored text and is answered by digest alone (ADR-0011, ADR-0026).
+	apiRequest[struct{}](h, "replica-a", http.MethodGet, "/attention/"+attention.ID.String()+"/question", nil, nil, http.StatusNotFound)
 	h.decide(attention)
 	ready := h.waitTask(submitted.Task.ID, lifecycle.TaskReadyForReview)
 	h.review(submitted.Task.ID, ready)
@@ -388,7 +393,8 @@ type ledgerEvidence struct {
 	Applied    []struct {
 		Kind string `json:"kind"`
 	} `json:"applied"`
-	Agent *contracts.AgentInstructions `json:"agent"`
+	Agent  *contracts.AgentInstructions `json:"agent"`
+	Answer lifecycle.Answer             `json:"answer"`
 }
 
 func (h *harness) ledgerEvidence(operation ids.OperationID) ledgerEvidence {
@@ -517,6 +523,49 @@ func (h *harness) waitAttention() lifecycle.AttentionRequest {
 		return true
 	})
 	return attention
+}
+
+// answer reads the question the simulated runtime asked and answers it in
+// words, as a person would, returning the answer it sent.
+func (h *harness) answer(attention lifecycle.AttentionRequest) lifecycle.Answer {
+	question := apiRequest[httpapi.QuestionBody](h, "replica-a", http.MethodGet, "/attention/"+attention.ID.String()+"/question", nil, nil, http.StatusOK).body
+	if len(question.Question.Prompts) != 1 {
+		h.t.Fatalf("question = %+v, want the simulator's one prompt", question.Question)
+	}
+	answer := lifecycle.Answer{question.Question.Prompts[0].ID: {"Yes, go ahead."}}
+	digest, err := answer.Digest()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	apiRequest[httpapi.DecisionBody](h, "replica-a", http.MethodPost, "/attention/"+attention.ID.String()+"/decisions", map[string]string{
+		"Idempotency-Key": "ops-answer-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		"If-Match":        strconv.Quote(strconv.FormatUint(attention.Version, 10)),
+	}, httpapi.DecisionRequest{Kind: lifecycle.DecisionAnswer, AnswerDigest: digest, Answer: answer}, http.StatusCreated)
+	return answer
+}
+
+// assertAnswerDelivered waits for the simulated runtime to report the answer's
+// text in the steer it received.
+func (h *harness) assertAnswerDelivered(operation ids.OperationID, want lifecycle.Answer) {
+	h.wait("the answer's text delivered to the runtime", func() bool {
+		got := h.ledgerEvidence(operation).Answer
+		if got == nil {
+			return false
+		}
+		if err := got.VerifyDigest(mustDigest(h.t, want)); err != nil {
+			h.t.Fatalf("delivered answer %v does not match what was sent %v", got, want)
+		}
+		return true
+	})
+}
+
+func mustDigest(t *testing.T, answer lifecycle.Answer) identity.Digest {
+	t.Helper()
+	digest, err := answer.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 func (h *harness) decide(attention lifecycle.AttentionRequest) {

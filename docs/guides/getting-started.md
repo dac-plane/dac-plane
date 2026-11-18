@@ -123,16 +123,27 @@ until attention=$(curl -fsS "${api[@]}" "${auth[@]}" "$base/attention" |
 jq '{attention_id, state, version}' <<<"$attention"
 ```
 
-Answer it. dac-plane records the SHA-256 digest of the answer. `If-Match` carries the version of the request you
-are answering, so an answer to a request that changed in the meantime is refused rather than applied to the wrong
-version.
+Read the question it asked. Only the task's owner can.
 
 ```bash
-answer_digest="sha256:$(printf 'Yes, go ahead.' | shasum -a 256 | cut -d' ' -f1)"
-curl -fsS "${api[@]}" "${auth[@]}" -X POST "$base/attention/$(jq -r .attention_id <<<"$attention")/decisions" \
+id=$(jq -r .attention_id <<<"$attention")
+question=$(curl -fsS "${api[@]}" "${auth[@]}" "$base/attention/$id/question")
+jq -c '.question.prompts[] | {id, text}' <<<"$question"
+```
+
+Answer it in words. The answer maps each prompt `id` to a one-element array, and `answer_digest` is the SHA-256 of
+that object written compactly with its keys sorted (`jq -cS` does this for one prompt). dac-plane refuses an answer
+whose digest differs. `If-Match` carries the version of the request you are answering, so an answer to a request
+that changed in the meantime is refused rather than applied to the wrong version.
+
+```bash
+prompt=$(jq -r '.question.prompts[0].id' <<<"$question")
+answer=$(jq -cnS --arg p "$prompt" '{($p): ["Yes, go ahead."]}')
+answer_digest="sha256:$(printf '%s' "$answer" | shasum -a 256 | cut -d' ' -f1)"
+curl -fsS "${api[@]}" "${auth[@]}" -X POST "$base/attention/$id/decisions" \
   -H "Idempotency-Key: $(uuidgen)" -H "If-Match: \"$(jq -r .version <<<"$attention")\"" \
   -H 'Content-Type: application/json' \
-  -d '{"kind": "answer", "answer_digest": "'"$answer_digest"'"}' | jq -c '{kind, state}'
+  -d '{"kind": "answer", "answer": '"$answer"', "answer_digest": "'"$answer_digest"'"}' | jq -c '{kind, state}'
 ```
 
 ## Review the result

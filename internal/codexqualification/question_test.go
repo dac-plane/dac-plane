@@ -25,7 +25,7 @@ func TestCodexQuestionQualification(t *testing.T) {
 	token := &tokenSource{t: t, ctx: ctx, client: client}
 
 	submitted := submit(t, ctx, client, token,
-		"Use the request_user_input tool exactly once to ask the user one question: id fruit, header Fruit, question \"Which fruit should I record?\", with the options apple and banana. Wait for the answer. Then use exec_command exactly once with sandbox_permissions require_escalated to write the answer exactly as the user gave it, followed by one newline, to answer.txt with printf. Do not use another file-writing tool.",
+		"Use the request_user_input tool exactly once to ask the user one question: id fruit, header Fruit, question \"Which fruit should I record?\", with no options, so the user answers in free text. Wait for the answer. Then use exec_command exactly once with sandbox_permissions require_escalated to write the answer exactly as the user gave it, followed by one newline, to answer.txt with printf. Do not use another file-writing tool.",
 		"answer.txt contains the answer the user gave to the question")
 	marker := "teal-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	asked := false
@@ -47,12 +47,12 @@ func TestCodexQuestionQualification(t *testing.T) {
 			t.Fatalf("question = %+v, want the one prompt the task asked for", read.value.Question)
 		}
 		prompt := prompts[0]
-		// Free text proves the answer's words reached the model; a prompt that
-		// accepts only its options is answered with one of them.
-		answered = marker
+		// Only free text proves the answer's words reached the model: a fixed
+		// option is named in the task, so the model could write it unasked.
 		if len(prompt.Options) > 0 && !prompt.Other {
-			answered = prompt.Options[0].Label
+			t.Fatalf("prompt = %+v, want one that accepts free text", prompt)
 		}
+		answered = marker
 		answer := lifecycle.Answer{prompt.ID: {answered}}
 		digest, err := answer.Digest()
 		if err != nil {
