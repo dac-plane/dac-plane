@@ -78,7 +78,12 @@ jobs:
       - name: Tag the merge commit
         run: |
           for tag in "v$VERSION" "adapterkit/v$VERSION"; do
-            existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null || true)"
+            # gh prints the error body of a 404 on stdout, so a missing tag is read
+            # from the exit status, never from the captured text.
+            existing=""
+            if sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null)"; then
+              existing="$sha"
+            fi
             if [[ -n "$existing" && "$existing" != "$GITHUB_SHA" ]]; then
               echo "$tag already names $existing, not $GITHUB_SHA" >&2
               exit 1
