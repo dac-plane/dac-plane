@@ -4,7 +4,7 @@
 
 ## What this is
 
-`dac-plane` is a provider-neutral control plane for delegated agent work. It owns the durable
+`dac-plane` is the open source, provider-neutral platform for building agent products. It owns the durable
 product lifecycle—tasks, attempts, attention, decisions, budgets, artifacts, audit, result
 revisions and reviews—while agent runtimes and execution environments remain replaceable
 integrations.
