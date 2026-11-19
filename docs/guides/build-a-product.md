@@ -17,12 +17,12 @@ dac-plane provides, and lists the decisions in the order to make them.
 | Access to your users' external accounts, with the credential kept out of the surface and the runtime | dac-plane and a connector adapter. See [Connect external applications](use/connectors.md). |
 | The agent runtime, the environment its work runs in, and the store for its output | A provider you choose, connected through an adapter. dac-plane ships adapters for Codex, E2B and S3-compatible stores; any other provider needs [its own adapter](extend/adapters.md). |
 
-dac-plane owns the record of the work (tasks, approvals, budgets, results, audit), and the providers report what they
+dac-plane owns the work and its state (tasks, approvals, budgets, results, audit), and the providers report what they
 observed. That is what lets you change a surface or a provider later without changing the others.
 
 ## What your users see
 
-Your users see only your surface. Which parts of the record it shows is your decision. Everything it can show is
+Your users see only your surface. Which parts of the work it shows is your decision. Everything it can show is
 available through the Surface API: the agents, each task and its status, the questions an agent is waiting on, the
 results to review and the events as work proceeds. A surface that is a chat bot might show a question as a message with
 buttons, and a result as a file to download and a review prompt. Nothing in dac-plane requires a screen.

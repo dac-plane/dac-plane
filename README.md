@@ -2,16 +2,17 @@
 
 The open source platform for building agent products. Give your users agents that do real work, on the surfaces, agent runtimes and environments you choose.
 
-You deploy and operate it yourself; dac-plane is not a hosted service.
+You deploy and operate it yourself; dac-plane is not a hosted service. It has no user interface of its own: you build the surface, and dac-plane owns the work, from submission to review. See [why dac-plane](docs/guides/why-dac-plane.md).
 
 ![dac-plane sits between the surfaces where people ask for work and the providers that do it. Surfaces such as web, chat, Slack, IDEs, tickets, schedules, the API and apps call it through the Surface API. Agent runtimes, environments, enforcement gateways and artifact stores connect to it through adapters. An OIDC identity provider issues the tokens.](docs/guides/assets/overview.png)
 
-It currently runs Codex in E2B sandboxes with S3-compatible artifact storage, and other providers can connect through the [adapter kit](adapterkit/README.md). It is ready for self-hosted pilots. See the [known limits](docs/releases/v0.1.0.md#known-limits) before you rely on it.
+> It currently runs Codex in E2B sandboxes with S3-compatible artifact storage, and other providers can connect through the [adapter kit](adapterkit/README.md). It is ready for self-hosted pilots. See the [known limits](docs/releases/v0.1.0.md#known-limits) before you rely on it.
 
 ## Documentation
 
 The [user guide](https://dac-plane.github.io/dac-plane/) is published from [`docs/guides`](docs/guides/index.md):
 
+* [Why dac-plane](docs/guides/why-dac-plane.md) - who it is for, what makes it different, what it is not, and how it relates to other tools
 * [Build an agent product](docs/guides/build-a-product.md) - what you build, what dac-plane provides, and the decisions in order
 * [Getting started](docs/guides/getting-started.md) - run it locally and take one task from submission to review
 * [Deploy](docs/guides/deploy/index.md) and [operate](docs/guides/operate/index.md) - a deployment with real providers: configuring, backing up, upgrading and rotating credentials

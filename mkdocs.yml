@@ -29,6 +29,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Why dac-plane: why-dac-plane.md
   - Getting started: getting-started.md
   - Concepts: concepts.md
   - Build an agent product: build-a-product.md
