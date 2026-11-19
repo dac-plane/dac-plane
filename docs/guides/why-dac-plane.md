@@ -2,7 +2,7 @@
 
 dac-plane is for a company that wants to offer agents to its own users, under its own name: in Slack, a web app, an IDE,
 a ticket system or an application of its own. You build the surface and choose the providers. dac-plane runs behind
-them and owns the work, from submission to review, so your users see your product and never dac-plane.
+them and owns the work, from submission to review, so your users see your product and never dac-plane. You do not have to build the machinery that runs and governs the work: the task lifecycle, approvals, budgets, results, review and audit.
 
 For example, a support-software company could ship an in-app agent that takes a customer's request, asks for approval
 before it acts, and returns a result the customer reviews, with each customer's agents, budgets and results kept apart.
@@ -23,6 +23,10 @@ before it acts, and returns a result the customer reviews, with each customer's 
 
 * **Not an assistant or an agent app.** There is no chat interface to give your users. If you want a finished assistant
   for yourself or your team, use one of those instead.
+* **Not a persistent assistant.** dac-plane does not give an agent a conversation or a computer of its own. Work runs as
+  tasks, and an environment is stopped when its attempt ends. Memory across tasks and routines are planned
+  ([#150](https://github.com/dac-plane/dac-plane/issues/150),
+  [#151](https://github.com/dac-plane/dac-plane/issues/151)).
 * **Not an agent framework.** It does not define how an agent reasons. A runtime does that, and dac-plane runs and
   governs it.
 * **Not a hosted service or a model provider.** You deploy it and bring your own runtimes, environments, stores and
