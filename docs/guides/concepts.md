@@ -2,12 +2,12 @@
 
 dac-plane sits between the places people ask for work and the agents that do it. People and their tools submit work
 through the Surface API. Agent runtimes, the environments they run in, and the stores that keep their output connect
-through adapters. dac-plane keeps the record of what was asked, what happened, who decided what, and what came back.
+through adapters. dac-plane runs the work and owns its state: what was asked, what happened, who decided what, and what came back.
 
-## The record
+## What dac-plane owns
 
 dac-plane owns these records. No provider writes them; a provider reports what it observed, and dac-plane decides
-whether that changes the record.
+whether that changes the task.
 
 | Record | What it is |
 |---|---|
@@ -49,7 +49,7 @@ WebSocket to dac-plane; dac-plane never connects out to an adapter. There are fo
 | `artifact_store` | Holds the bytes of committed artifacts. | An S3-compatible store such as SeaweedFS |
 | `enforcement` | Enforces policy on governed actions on the execution path. | A policy or tool gateway |
 
-Any of them can be replaced without changing the record. To connect a new one, [write an adapter](extend/adapters.md).
+Any of them can be replaced without losing the tasks, approvals and results. To connect a new one, [write an adapter](extend/adapters.md).
 
 ## Identity
 
