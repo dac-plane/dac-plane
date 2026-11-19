@@ -28,9 +28,9 @@ Question answered: **What is dac-plane, and how do the tools around it connect?*
 
 Audience: anyone new to the project.
 
-dac-plane owns the record of delegated work. Surfaces call it through the Surface API. Agent runtimes,
+dac-plane owns delegated work and its state. Surfaces call it through the Surface API. Agent runtimes,
 environments, enforcement gateways and artifact stores connect to it through adapters and never write
-the record. An OIDC identity provider issues the tokens that people and adapters present. The tools
+that state. An OIDC identity provider issues the tokens that people and adapters present. The tools
 named in each layer are examples of what fits there.
 
 Open the source at [excalidraw.com](https://excalidraw.com) to edit it, then export the PNG at about

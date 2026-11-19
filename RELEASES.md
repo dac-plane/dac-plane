@@ -5,7 +5,7 @@ by following [docs/releases](docs/releases/README.md).
 
 ## Versioning
 
-The control plane uses semantic versions, tagged `vX.Y.Z`.
+dac-plane uses semantic versions, tagged `vX.Y.Z`.
 
 The adapter kit is versioned separately, tagged `adapterkit/vX.Y.Z`. While it is v0, a minor version may change its Go
 API. Kit v1.0.0 follows its first external consumer. A release may reuse an older kit tag if the kit has not changed.
@@ -40,7 +40,7 @@ Only the latest release receives fixes. No support objective has been establishe
 
 | Artifact | Where |
 |---|---|
-| Control plane image | `ghcr.io/dac-plane/dac-plane` |
+| dac-plane image | `ghcr.io/dac-plane/dac-plane` |
 | Adapter images | `ghcr.io/dac-plane/dac-codex-adapter`, `dac-e2b-adapter`, `dac-s3-adapter` |
 | Adapter kit | Go module `github.com/dac-plane/dac-plane/adapterkit` |
 | Image digests, SBOMs, provenance, scan results, Compose stack, contracts | Assets of each [GitHub Release](https://github.com/dac-plane/dac-plane/releases) |
