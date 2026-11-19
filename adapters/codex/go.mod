@@ -6,7 +6,7 @@ toolchain go1.27.4
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/dac-plane/dac-plane/adapterkit v0.4.0 // x-release-please-version
+	github.com/dac-plane/dac-plane/adapterkit v0.5.0 // x-release-please-version
 	go.etcd.io/bbolt v1.5.0
 )
 
