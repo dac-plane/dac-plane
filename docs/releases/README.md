@@ -47,7 +47,7 @@ change, so every module requires the release's own version.
 5. **Check it as a stranger would.** From a checkout of the tag, run `just release-verify vX.Y.Z`. Record the digests
    and results in the evidence note.
 6. **Advance the upgrade test's pin.** This is the one step the release does not do for you. The rolling-upgrade test
-   ([ADR-0011](../adr/0011-roll-out-schema-changes-compatibly.md)) starts the last released image against the new
+   ([ADR-0011](../adr/0011-roll-compatible-binaries-before-schema-migrations.md)) starts the last released image against the new
    schema, and the [`justfile`](../../justfile) names that image in `previous_release` and `previous_release_image`. A
    release cannot move the pin itself: the image digest exists only once the release has published, so the pin can
    change only in a later commit. Until it moves, every pull request is tested as an upgrade from the old release, not
