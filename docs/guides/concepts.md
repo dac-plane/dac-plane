@@ -40,7 +40,7 @@ and records the task cancelled once they confirm.
 ## Providers and adapters
 
 A provider is anything that does part of the work. Each connects through its own adapter process, which opens a TLS
-WebSocket to dac-plane; dac-plane never connects out to an adapter. There are four roles:
+WebSocket to dac-plane; dac-plane never connects out to an adapter. There are five roles:
 
 | Role | Does | Example |
 |---|---|---|
@@ -48,6 +48,7 @@ WebSocket to dac-plane; dac-plane never connects out to an adapter. There are fo
 | `environment` | Provides the workspace the agent's commands run in, and stops it. | E2B sandboxes |
 | `artifact_store` | Holds the bytes of committed artifacts. | An S3-compatible store such as SeaweedFS |
 | `enforcement` | Enforces policy on governed actions on the execution path. | A policy or tool gateway |
+| `connector` | Holds the credential for an external account and acts on it for the agent. See [Connect external applications](use/connectors.md). | GitHub |
 
 Any of them can be replaced without losing the tasks, approvals and results. To connect a new one, [write an adapter](extend/adapters.md).
 
