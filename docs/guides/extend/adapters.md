@@ -1,8 +1,8 @@
 # Write an adapter
 
 An adapter connects one provider to dac-plane in one role: a `runtime` that runs an agent, an `environment` that
-provides the workspace, an `artifact_store` that keeps the output, or an `enforcement` gateway. dac-plane ships
-adapters for Codex, E2B and S3-compatible stores; any other provider needs its own. This page covers what an adapter
+provides the workspace, an `artifact_store` that keeps the output, an `enforcement` gateway, or a `connector` that acts on an external
+account. dac-plane ships adapters for Codex, E2B, S3-compatible stores and GitHub; any other provider needs its own. This page covers what an adapter
 does, how to build one with the Go adapter kit, how to test it, and how to connect it to a deployment.
 
 ## What an adapter does
